@@ -1,0 +1,31 @@
+name: Deploy AIT Inventory Assets to cPanel (bigt.cc)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  web-deploy:
+    name: 📦 Sync AIT HTML Files to /public_html/ait/
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📦 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🚀 Sync AIT Assets to /public_html/ait/
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USER }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./
+          server-dir: /public_html/ait/
+          exclude: |
+            .git/**
+            .github/**
+            *.js
+            *.json
+            *.md
+            scratch/**
