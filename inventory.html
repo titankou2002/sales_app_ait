@@ -5,23 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
   <script>
-    // 🚀 立即分流判定：Sales 業務端 還是 Client 客戶查詢端
     const currentQuery = window.location.search;
     const isClient = currentQuery.includes("view=client") || currentQuery.includes("customer") || currentQuery.includes("clientName");
-    
-    // 動態設定網頁 Title
     document.title = isClient ? "高雅瓷庫存查詢系統" : "高雅瓷業務APP";
-    
-    // 🎨 內嵌 base64 SVG 圖標（黑底白T，無需外部 png 檔）
-    // 業務端：深黑底 + 白色T；客戶端：深金底 + 白色T
-    const iconB64Sales  = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcng9IjEwMCIgZmlsbD0iIzBmMTcyYSIvPjxwYXRoIGQ9Ik0yNDQuODM3IDQ0MkgxNjcuMzM0VjIxMy4zNEg2NVY3MEgyNDQuODM3VjQ0MlogTTM1MC43NDUgMzIwLjI3NUgzNTAuOTM0VjQ0MkgyNjMuNjQ4VjM2OC4wNTVIMjY0LjI1NUwyODYuMjIyIDM0Ny40NDJWNDEyLjQyMkgzMjUuMzVWMzIwLjI3NUwzNTAuNzQ1IDI5OC42MDFWMzIwLjI3NVogTTM2My43ODUgMjUzLjI1OEwyNjQuMDQ5IDM0My4zMjNMMjY0LjA0NCAxNzIuMDU1TDM2My43ODUgMjUzLjI1OFogTTQ0OCAyMTMuMzRIMzQ3LjkyM0wzMTIuNzM0IDE3OS4yMTFINDI2LjkzMlYxMDQuMTI5SDI2My42NDhWNzBINDQ4VjIxMy4zNFoiIGZpbGw9IiNmZmZmZmYiLz48L3N2Zz4=";
-    const iconB64Client = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcng9IjEwMCIgZmlsbD0iIzFhMTIwMCIvPjxyZWN0IHg9IjQiIHk9IjQiIHdpZHRoPSI1MDQiIGhlaWdodD0iNTA0IiByeD0iOTgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2QwOTcwMCIgc3Ryb2tlLXdpZHRoPSI4Ii8+PHBhdGggZD0iTTI0NC44MzcgNDQySDE2Ny4zMzRWMjEzLjM0SDY1VjcwSDI0NC44MzdWNDQyWiBNMzUwLjc0NSAzMjAuMjc1SDM1MC45MzRWNDQySDI2My42NDhWMzY4LjA1NUgyNjQuMjU1TDI4Ni4yMjIgMzQ3LjQ0MlY0MTIuNDIySDMyNS4zNVYzMjAuMjc1TDM1MC43NDUgMjk4LjYwMVYzMjAuMjc1WiBNMzYzLjc4NSAyNTMuMjU4TDI2NC4wNDkgMzQzLjMyM0wyNjQuMDQ0IDE3Mi4wNTVMMzYzLjc4NSAyNTMuMjU4WiBNNDQ4IDIxMy4zNEgzNDcuOTIzTDMxMi43MzQgMTc5LjIxMUg0MjYuOTMyVjEwNC4xMjlIMjYzLjY0OFY3MEg0NDhWMjEzLjM0WiIgZmlsbD0iI2ZmZDk2MCIvPjwvc3ZnPg==";
-    const iconB64 = isClient ? iconB64Client : iconB64Sales;
     const appTitle = isClient ? "高雅瓷庫存查詢系統" : "高雅瓷業務APP";
-    
-    document.write(`<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,${iconB64}">`);
-    document.write(`<link rel="apple-touch-icon" href="data:image/svg+xml;base64,${iconB64}">`);
-    document.write(`<link rel="apple-touch-icon" sizes="180x180" href="data:image/svg+xml;base64,${iconB64}">`);
+    document.write(`<link rel="icon" type="image/svg+xml" href="favicon.svg">`);
+    document.write(`<link rel="apple-touch-icon" href="favicon.svg">`);
     document.write(`<meta name="apple-mobile-web-app-title" content="${appTitle}">`);
   </script>
 
