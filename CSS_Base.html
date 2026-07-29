@@ -1,0 +1,62 @@
+<style>
+  /* 🎨 Threads 設計系統 - 核心基石 (Modular V1.0) */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+
+  * { box-sizing: border-box; }
+
+  :root {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #000000;
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.7);
+    --card-bg: rgba(255, 255, 255, 0.06);
+    --card-border: rgba(255, 255, 255, 0.12);
+    --card-hover: rgba(255, 255, 255, 0.1);
+    --input-bg: rgba(255, 255, 255, 0.08);
+    --primary-color: #ffffff;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    background-color: #000 !important;
+    color: var(--text-primary);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    margin: 0;
+  }
+
+  html { background-color: #000 !important; }
+
+  .app-container {
+    max-width: 600px;
+    margin: 0 auto;
+    height: 100vh;
+    position: relative;
+    background: var(--bg-primary);
+    overflow: hidden;
+  }
+  .app-container.full-width {
+    max-width: none;
+    background: transparent;
+  }
+
+  /* 📄 核心分頁控制 */
+  .page {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: 100%; height: 100%;
+    background: var(--bg-primary);
+    display: none !important; /* 🔥 絕對隱藏 */
+    flex-direction: column;
+    z-index: 100;
+    overflow-y: auto;
+    animation: fadeIn 0.4s ease;
+  }
+  .page.active { display: flex !important; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+</style>

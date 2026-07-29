@@ -1,0 +1,107 @@
+<style>
+  /* ✨ 視覺靈魂：粒子與動畫特效 (Modular V1.0) */
+  
+  .background-grid {
+    position: fixed; inset: 0; opacity: 0.2; pointer-events: none; z-index: 0; background: none;
+  }
+
+  @keyframes gridMove {
+    0% { transform: translate(0, 0); }
+    100% { transform: translate(60px, 60px); }
+  }
+
+  .particles-container {
+    position: absolute; inset: 0; pointer-events: none; z-index: 5;
+  }
+
+  .particle {
+    position: absolute; width: 3px; height: 3px; border-radius: 50%; left: 50%; top: 50%;
+    background: #fff; box-shadow: 0 0 12px #fff; pointer-events: none;
+  }
+
+  .particle.spiral-in { animation: galaxySpiral 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+
+  @keyframes galaxySpiral {
+    0% { transform: translate(var(--orbit-x), var(--orbit-y)) rotate(0deg) scale(1); opacity: 1; }
+    100% { transform: translate(0, 0) rotate(var(--rotation)) scale(0); opacity: 0; }
+  }
+
+  @keyframes floatSpread {
+    0%, 100% { transform: translate(var(--spread-x), var(--spread-y)) translateY(0); opacity: 0.3; }
+    50% { transform: translate(var(--spread-x), var(--spread-y)) translateY(-40px); opacity: 0.8; }
+  }
+
+  .particle.floating { animation: floatSpread 20s ease-in-out infinite; }
+
+  #particleCanvas {
+    position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1;
+  }
+
+  .loading-text {
+    position: absolute; bottom: 32%; left: 0; z-index: 2; font-size: 11px; font-weight: 800;
+    color: #fff; letter-spacing: 8px; text-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+    animation: breathe 2.5s ease-in-out infinite; text-align: center; width: 100%;
+  }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.3; transform: scale(0.95); }
+    50% { opacity: 1; transform: scale(1.05); }
+  }
+
+  .logo-persistent {
+    position: fixed; z-index: 20000; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 32px; opacity: 0; pointer-events: none; display: flex; top: 14px; right: 15px;
+  }
+
+  .logo-persistent.minimized { opacity: 1 !important; pointer-events: auto !important; transform: scale(1); cursor: pointer; }
+  .logo-persistent.minimized img { width: 32px; height: auto; }
+
+  .dashboard-logo-img {
+    width: 90px; height: auto; filter: drop-shadow(0 0 25px rgba(255, 255, 255, 0.4));
+    animation: logoFloat 4s ease-in-out infinite;
+  }
+
+  @keyframes logoFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  @keyframes logoBreath {
+    0%, 100% { filter: drop-shadow(0 0 15px rgba(255,255,255,0.4)); transform: scale(1); }
+    50% { filter: drop-shadow(0 0 30px rgba(255,255,255,0.8)); transform: scale(1.05); }
+  }
+
+  .dashboard-particles { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+  .dashboard-brand-logo { width: 65px; height: auto; animation: logoBreath 4s ease-in-out infinite; }
+
+  /* 🚀 啟動頁 (Splash) - 極簡輕量版 */
+  .splash-container {
+    position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 15000; background: #000 !important;
+  }
+  
+  .progress-bar-fill {
+    height: 100%; width: 0%; background: #fff;
+    box-shadow: 0 0 10px rgba(255,255,255,0.5); transition: width 0.2s ease-out;
+  }
+
+  @keyframes loadingBreath {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  /* 🌌 載入遮罩本體 (移除昂貴的 Blur 以提升速度) */
+  .loading-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.9) !important;
+    display: none; align-items: center; justify-content: center; z-index: 100000; flex-direction: column;
+  }
+  .loading-overlay.active { display: flex !important; }
+  
+  .loading-text {
+    margin-top: 20px; font-size: 11px; font-weight: 800;
+    color: #fff; letter-spacing: 5px; opacity: 0.6;
+    animation: loadingBreath 2s ease-in-out infinite;
+  }
+
+  .brand-logo { width: 60px; height: auto; filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.2)); }
+</style>

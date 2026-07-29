@@ -1,0 +1,574 @@
+<style>
+  /* 📐 上架追蹤樣式 */
+  .shelf-tab {
+    flex: 1; background: transparent; border: none; color: rgba(255,255,255,0.45);
+    padding: 12px 4px; font-size: 14px; font-weight: 700; letter-spacing: 1px;
+    cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .shelf-tab.active { color: #facc15; border-bottom-color: #facc15; }
+
+  .shelf-section { margin-bottom: 14px; border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; overflow: hidden; background: rgba(255,255,255,0.04); }
+  .shelf-section summary {
+    list-style: none; display: flex; justify-content: space-between; align-items: center;
+    padding: 13px 16px; cursor: pointer; font-size: 15px; font-weight: 800; letter-spacing: 1px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .shelf-section summary::-webkit-details-marker { display: none; }
+  .shelf-section summary .cnt { font-size: 12px; opacity: 0.5; font-weight: 600; }
+  .shelf-section[open] summary { border-bottom: 1px solid rgba(255,255,255,0.08); }
+
+  .shelf-srow {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer;
+  }
+  .shelf-srow:last-child { border-bottom: none; }
+  .shelf-srow:active { background: rgba(255,255,255,0.08); }
+  .shelf-srow .sname { font-size: 14.5px; font-weight: 700; color: #fff; }
+  .shelf-srow .sage { font-size: 11px; opacity: 0.4; margin-top: 1px; }
+  .shelf-srow .scount { font-size: 15px; font-weight: 800; color: #facc15; white-space: nowrap; }
+  .shelf-srow .sbiz { font-size: 11px; opacity: 0.55; margin-top: 1px; text-align: right; }
+
+  .shelf-select {
+    width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px; color: #fff; padding: 11px 12px; font-size: 15px; font-weight: 700;
+    outline: none; margin-bottom: 14px; -webkit-appearance: none;
+  }
+  .shelf-select option { background: #1a1a1a; }
+
+  .shelf-group-title { font-size: 12px; letter-spacing: 2px; opacity: 0.45; font-weight: 800; margin: 16px 0 8px; }
+  .shelf-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .shelf-chip {
+    border-radius: 8px; padding: 5px 11px; font-size: 13px; font-weight: 700;
+    background: rgba(52,199,89,0.15); color: #6ee7a0; border: 1px solid rgba(52,199,89,0.3);
+  }
+  .shelf-chip small { font-weight: 600; opacity: 0.7; font-size: 10.5px; margin-left: 4px; }
+  .shelf-chip.off { background: transparent; color: rgba(255,255,255,0.4); border: 1px dashed rgba(255,255,255,0.25); }
+  .shelf-chip.shipped { background: rgba(249,115,22,0.16); color: #fdba74; border: 1px solid rgba(249,115,22,0.4); }
+  .shelf-chip.nosale { background: rgba(248,113,113,0.12); color: #fca5a5; border: 1px solid rgba(248,113,113,0.3); }
+  .shelf-chip.removed { background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); text-decoration: line-through; }
+
+  .shelf-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; opacity: 0.6; margin: 10px 0 4px; }
+  details.shelf-region-block { margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.03); }
+  details.shelf-region-block summary {
+    list-style: none; display: flex; justify-content: space-between; align-items: center;
+    padding: 9px 14px; cursor: pointer; font-size: 13.5px; font-weight: 800; color: rgba(255,255,255,0.75);
+    -webkit-tap-highlight-color: transparent;
+  }
+  details.shelf-region-block summary::-webkit-details-marker { display: none; }
+  details.shelf-region-block summary .rcnt { font-weight: 700; color: #facc15; font-variant-numeric: tabular-nums; }
+  details.shelf-region-block[open] summary { border-bottom: 1px solid rgba(255,255,255,0.06); }
+  details.shelf-region-block .shelf-chips { padding: 10px 14px; }
+
+  /* 業務篩選籤 */
+  .shelf-biz-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .shelf-biz-chip {
+    border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.6);
+    border-radius: 18px; padding: 6px 16px; font-size: 14px; font-weight: 800; cursor: pointer;
+  }
+  .shelf-biz-chip.on { background: rgba(250,204,21,0.15); border-color: #facc15; color: #facc15; }
+
+  /* 客戶×系列 詳情彈窗 */
+  .shelf-modal-ov {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 25000;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .shelf-modal {
+    background: #16161d; border: 1px solid rgba(255,255,255,0.15); border-radius: 20px 20px 0 0;
+    width: 100%; max-width: 560px; max-height: 82vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 18px 18px 30px;
+  }
+  .shelf-modal .m-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 4px; }
+  .shelf-modal .m-title { font-size: 17px; font-weight: 900; color: #fff; }
+  .shelf-modal .m-sub { font-size: 12px; opacity: 0.5; margin-top: 2px; }
+  .shelf-modal .m-close { background: transparent; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 0 4px; }
+  .shelf-modal .m-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  .shelf-modal .m-stat { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 7px 12px; font-size: 13px; }
+  .shelf-modal .m-stat b { color: #facc15; }
+  .shelf-imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin: 10px 0; }
+  .shelf-imgs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer; }
+  .shelf-rows { margin-top: 8px; }
+  .shelf-rows .rrow { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; padding: 6px 2px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+  .shelf-rows .rrow span:last-child { font-variant-numeric: tabular-nums; color: #6ee7a0; white-space: nowrap; }
+
+  /* 圖片放大檢視 */
+  .shelf-img-view { position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 26000; display: flex; align-items: center; justify-content: center; }
+  .shelf-img-view img { max-width: 96vw; max-height: 92vh; border-radius: 8px; }
+</style>
+
+<script>
+(function() {
+  let shelfData = null;
+
+  window.openShelfTrackModule = function() {
+    showPage('page-shelftrack');
+    if (!shelfData) loadShelfTracking(false);
+  };
+
+  window.loadShelfTracking = function(force) {
+    document.getElementById('shelf-tab-overview').innerHTML =
+      '<div style="text-align:center; opacity:0.4; padding:40px 0;">載入中…</div>';
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res || !res.success) {
+          document.getElementById('shelf-tab-overview').innerHTML =
+            '<div style="text-align:center; color:#fca5a5; padding:40px 0;">載入失敗：' + (res ? res.msg : '無回應') + '</div>';
+          return;
+        }
+        shelfData = res;
+        renderShelfOverview();
+        renderShelfCustomerTab();
+        renderShelfSeriesTab();
+      })
+      .withFailureHandler(err => {
+        document.getElementById('shelf-tab-overview').innerHTML =
+          '<div style="text-align:center; color:#fca5a5; padding:40px 0;">錯誤：' + err + '</div>';
+      })
+      .getShelfTrackingData(!!force);
+  };
+
+  window.switchShelfTab = function(name) {
+    document.querySelectorAll('.shelf-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    ['overview', 'customer', 'series'].forEach(t => {
+      document.getElementById('shelf-tab-' + t).style.display = (t === name) ? '' : 'none';
+    });
+  };
+
+  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  // 🔗 跳轉到版面記錄的該客戶相簿
+  window.shelfOpenAlbum = function(cust) {
+    shelfCloseModal();
+    if (typeof selectCustomer === 'function') {
+      selectCustomer(cust);
+    }
+  };
+
+  // 🖼️ 圖片放大檢視
+  window.shelfViewImg = function(url) {
+    const big = url.replace(/=w\d+$/, '=w1600');
+    const ov = document.createElement('div');
+    ov.className = 'shelf-img-view';
+    ov.onclick = () => ov.remove();
+    ov.innerHTML = '<img src="' + esc(big) + '">';
+    document.body.appendChild(ov);
+  };
+
+  window.shelfCloseModal = function() {
+    const m = document.getElementById('shelf-detail-modal');
+    if (m) m.remove();
+  };
+
+  // 📋 客戶 × 系列 詳情彈窗（不切換模組）
+  window.shelfOpenDetail = function(cust, series) {
+    shelfCloseModal();
+    const s = shelfData.series.find(x => x.name === series);
+    const a = s ? s.active.find(x => x.cust === cust) : null;
+    const rm = s ? s.removed.find(x => x.cust === cust) : null;
+    const sl = salesOf(cust, series);
+
+    let statusHtml = '';
+    if (a) {
+      statusHtml = '<span class="m-stat">🟢 已上架 <b>' + esc(modeShort(a.mode)) + '</b>' + (a.onDate ? '（' + esc(a.onDate) + '）' : '') + '</span>';
+      if (a.onDate) {
+        const months = Math.ceil((Date.now() - new Date(a.onDate).getTime()) / (30 * 24 * 60 * 60 * 1000));
+        if (months > 0) statusHtml += '<span class="m-stat">已上架 <b>' + months + '</b> 個月</span>';
+      }
+    } else if (rm) {
+      statusHtml = '<span class="m-stat">🔴 已下架 <b>' + esc(rm.offDate) + '</b></span>';
+    } else {
+      statusHtml = '<span class="m-stat">⬜ 未上架</span>';
+    }
+    const salesHtml = sl
+      ? '<span class="m-stat">出貨 <b>' + sl.c + '</b> 次</span>' +
+        '<span class="m-stat">金額 <b>$' + Math.round(sl.amt).toLocaleString() + '</b></span>' +
+        '<span class="m-stat">最後出貨 <b>' + esc(sl.last) + '</b></span>'
+      : '<span class="m-stat">從未售出</span>';
+
+    const imgsHtml = (a && a.imgs && a.imgs.length)
+      ? '<div class="shelf-imgs">' + a.imgs.map(u =>
+          '<img src="' + esc(u) + '" loading="lazy" onclick="shelfViewImg(\'' + esc(u).replace(/'/g, "\\'") + '\')">').join('') + '</div>'
+      : (a ? '<div style="font-size:12px; opacity:0.35; margin:8px 0;">此系列尚無版面照片</div>' : '');
+
+    const ov = document.createElement('div');
+    ov.className = 'shelf-modal-ov';
+    ov.id = 'shelf-detail-modal';
+    ov.onclick = e => { if (e.target === ov) shelfCloseModal(); };
+    ov.innerHTML =
+      '<div class="shelf-modal">' +
+        '<div class="m-head">' +
+          '<div><div class="m-title">' + esc(cust) + '</div><div class="m-sub">' + esc(series) + '</div></div>' +
+          '<button class="m-close" onclick="shelfCloseModal()">×</button>' +
+        '</div>' +
+        '<div class="m-stats">' + statusHtml + salesHtml + '</div>' +
+        imgsHtml +
+        '<div class="shelf-group-title">出貨明細</div>' +
+        '<div class="shelf-rows" id="shelf-modal-rows"><div style="opacity:0.4; font-size:12.5px; padding:8px 0;">讀取中…</div></div>' +
+        '<button onclick="shelfOpenAlbum(\'' + esc(cust).replace(/'/g, "\\'") + '\')" ' +
+          'style="width:100%; margin-top:16px; background:transparent; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.55); ' +
+          'border-radius:10px; padding:9px; font-size:13px; font-weight:700; cursor:pointer;">📸 前往版面記錄（載入較久）</button>' +
+      '</div>';
+    document.body.appendChild(ov);
+
+    // 出貨明細 lazy load
+    google.script.run
+      .withSuccessHandler(res => {
+        const box = document.getElementById('shelf-modal-rows');
+        if (!box) return;
+        if (!res || !res.success) { box.innerHTML = '<div style="opacity:0.4; font-size:12.5px;">查詢失敗</div>'; return; }
+        if (!res.rows.length) { box.innerHTML = '<div style="opacity:0.4; font-size:12.5px;">查無出貨明細</div>'; return; }
+        box.innerHTML = res.rows.map(r =>
+          '<div class="rrow"><span>' + esc(r.date) + '　' + esc(r.code) + (r.note ? '　<i style="opacity:0.5;">' + esc(r.note) + '</i>' : '') + '</span>' +
+          '<span>$' + Math.round(r.amt).toLocaleString() + '</span></div>').join('');
+      })
+      .withFailureHandler(() => {
+        const box = document.getElementById('shelf-modal-rows');
+        if (box) box.innerHTML = '<div style="opacity:0.4; font-size:12.5px;">查詢失敗</div>';
+      })
+      .getShelfSalesRows(cust, series);
+  };
+  const custClick = c => ' style="cursor:pointer;" onclick="shelfOpenAlbum(\'' + esc(c).replace(/'/g, "\\'") + '\')"';
+  const modeShort = m => m || '—';
+  const bizShort = { '謝博皓': '謝', '潘右森': '潘', '陳勁多': '多', '高弘治': '高' };
+
+  function salesOf(cust, series) {
+    return (shelfData.sales || {})[cust + '||' + series] || null;
+  }
+
+  // ── Tab 1: 新品總覽 ──
+  // ── 缺貨等級配色（對齊保留系統「缺貨公佈欄」，不再全部壓成紅色）──
+  // 完全/嚴重缺貨→紅、快要斷貨→橘、即將缺貨→黃、部份/其他→中性黃
+  function shelfSevRank(c) {
+    c = String(c || '');
+    return /完全/.test(c) ? 0 : /嚴重/.test(c) ? 1 : /快要/.test(c) ? 2 : /即將/.test(c) ? 3 : 4;
+  }
+  function shelfShortageStyle(label) {
+    var s = String(label || '');
+    if (s.indexOf('完全') >= 0 || s.indexOf('嚴重') >= 0)
+      return { color: '#ff3b30', bg: 'rgba(255,59,48,0.16)', bd: 'rgba(255,59,48,0.4)', icon: '🔴' };
+    if (s.indexOf('快要') >= 0)
+      return { color: '#ff9500', bg: 'rgba(255,149,0,0.15)', bd: 'rgba(255,149,0,0.38)', icon: '🟠' };
+    if (s.indexOf('即將') >= 0)
+      return { color: '#ffcc00', bg: 'rgba(255,204,0,0.14)', bd: 'rgba(255,204,0,0.34)', icon: '🟡' };
+    return { color: '#facc15', bg: 'rgba(250,204,21,0.12)', bd: 'rgba(250,204,21,0.3)', icon: '⚠️' };
+  }
+  // 系列的最嚴重分類（部份缺貨時，用榜上各編號中最嚴重的一級來上色）
+  function shelfWorstCat(s) {
+    if (s.shortageCodes && s.shortageCodes.length) {
+      return s.shortageCodes.slice().sort(function (a, b) { return shelfSevRank(a.cat) - shelfSevRank(b.cat); })[0].cat;
+    }
+    return s.shortage || '';
+  }
+
+  function renderShelfOverview() {
+    const groups = { fresh: [], new: [], normal: [], sleeper: [], stop: [] };
+    shelfData.series.forEach(s => { (groups[s.ageClass] || groups.normal).push(s); });
+
+    const seriesRow = s => {
+      const bizTxt = Object.keys(s.perBiz).map(b => (bizShort[b] || b) + ' ' + s.perBiz[b]).join(' · ');
+      const age = s.ageDays === -1 ? '無首次進貨日' : (s.firstDate + ' 首進 · ' + s.ageDays + ' 天');
+      const shortBadge = s.shortage ? (function () { const st = shelfShortageStyle(shelfWorstCat(s)); return ' <span style="color:' + st.color + '; font-size:11px; font-weight:800;">' + st.icon + esc(s.shortage) + '</span>'; })() : '';
+      return '<div class="shelf-srow" onclick="openShelfSeries(\'' + esc(s.name).replace(/'/g, "\\'") + '\')">' +
+        '<div><div class="sname">' + esc(s.name) + shortBadge + '</div><div class="sage">' + age + '</div></div>' +
+        '<div style="text-align:right;"><div class="scount">' + s.active.length + ' 家</div>' +
+        (bizTxt ? '<div class="sbiz">' + esc(bizTxt) + '</div>' : '') + '</div></div>';
+    };
+
+    const section = (title, list, open) =>
+      '<details class="shelf-section"' + (open ? ' open' : '') + '>' +
+        '<summary><span>' + title + '</span><span class="cnt">' + list.length + ' 個系列</span></summary>' +
+        (list.length ? list.map(seriesRow).join('') :
+          '<div style="padding:14px 16px; opacity:0.35; font-size:13px;">目前沒有系列</div>') +
+      '</details>';
+
+    document.getElementById('shelf-tab-overview').innerHTML =
+      '<div style="font-size:11px; opacity:0.4; margin-bottom:10px;">資料時間：' + esc(shelfData.generatedAt) + ' · 點系列可看店家明細</div>' +
+      section('🌟 全新上架（3個月內）', groups.fresh, true) +
+      section('🌱 新品（3個月～1年）', groups.new, false) +
+      section('📦 正常品', groups.normal, true) +
+      section('😴 睡美人', groups.sleeper, false) +
+      section('🛑 不續辦', groups.stop, false);
+  }
+
+  // ── 共用：區域歸大區 / 上架時間格式 ──
+  const zoneOrder = ['台北', '新北', '桃竹', '中彰', '雲嘉', '南高屏', '宜花東'];
+  function zoneOf(reg) {
+    reg = String(reg || '').trim();
+    if (!reg) return '未分區';
+    if (/台北|臺北/.test(reg)) return '台北';
+    if (/新北/.test(reg)) return '新北';
+    if (/桃園|新竹|竹北|苗栗/.test(reg)) return '桃竹';
+    if (/台中|臺中|彰化|南投/.test(reg)) return '中彰';
+    if (/雲林|嘉義/.test(reg)) return '雲嘉';
+    if (/台南|臺南|高雄|屏東/.test(reg)) return '南高屏';
+    if (/宜蘭|花蓮|台東|臺東/.test(reg)) return '宜花東';
+    return reg;
+  }
+  function shelfMonths(ds) {
+    if (!ds) return 0;
+    const days = Math.floor((Date.now() - new Date(ds).getTime()) / 86400000);
+    if (days < 0) return 0;
+    return Math.max(1, Math.ceil(days / 30.44));
+  }
+  function fmtShelfAge(ds) {
+    const m = shelfMonths(ds);
+    if (!m) return '';
+    const y = Math.floor(m / 12), mm = m % 12;
+    if (y > 0) return y + '年' + (mm > 0 ? mm + '個月' : '');
+    return m + '個月';
+  }
+
+  // ── Tab 2: 客戶明細（先選業務 → 等級分組挑客戶） ──
+  let shelfBizFilter = '';
+  const shelfCustListCache = {};
+  function renderShelfCustomerTab() {
+    const allowedBiz = ['謝博皓', '潘右森', '陳勁多'];
+    const bizSet = {};
+    shelfData.customers.forEach(c => { if (c.biz && allowedBiz.indexOf(c.biz) !== -1) bizSet[c.biz] = true; });
+    const bizList = allowedBiz.filter(b => bizSet[b]);
+    const chips = bizList.map(b =>
+      '<button class="shelf-biz-chip' + (shelfBizFilter === b ? ' on' : '') + '" onclick="shelfSetBiz(\'' + esc(b).replace(/'/g, "\\'") + '\')">' +
+      esc(bizShort[b] || b) + '</button>').join('');
+
+    let body;
+    if (!shelfBizFilter) {
+      body = '<select class="shelf-select" id="shelf-cust-select" onchange="renderShelfCustomerDetail(this.value)">' +
+        '<option value="">— 選擇客戶 —</option></select>';
+    } else {
+      body = '<div id="shelf-cust-picker" style="margin-bottom:12px;"><div style="opacity:0.4; font-size:13px; padding:12px 0;">載入客戶中…</div></div>';
+    }
+
+    document.getElementById('shelf-tab-customer').innerHTML =
+      '<div class="shelf-biz-chips">' +
+        '<button class="shelf-biz-chip' + (shelfBizFilter === '' ? ' on' : '') + '" onclick="shelfSetBiz(\'\')">全部</button>' +
+        chips +
+      '</div>' +
+      body +
+      '<div id="shelf-cust-detail" style="opacity:0.4; text-align:center; padding:30px 0;">請先選擇客戶</div>';
+
+    if (!shelfBizFilter) shelfFillCustOptions();
+    else shelfLoadBizCustomers(shelfBizFilter);
+  }
+
+  function shelfFillCustOptions() {
+    const sel = document.getElementById('shelf-cust-select');
+    if (!sel) return;
+    const list = shelfData.customers;
+    sel.innerHTML = '<option value="">— 選擇客戶（' + list.length + '）—</option>' +
+      list.map(c => '<option value="' + esc(c.name) + '">' + esc(c.name) + (c.region ? '（' + esc(c.region) + '）' : '') + '</option>').join('');
+  }
+
+  // 用版面記錄同一套邏輯：等級分組（特/A/B/C）挑客戶
+  function shelfLoadBizCustomers(biz) {
+    const render = list => {
+      const picker = document.getElementById('shelf-cust-picker');
+      if (!picker) return;
+      const levelOrder = ['特', 'A', 'B', 'C'];
+      const label = { '特': '特級', 'A': 'A級', 'B': 'B級', 'C': 'C級', '': '未分級' };
+      const groups = {};
+      list.filter(c => !c.hidden).forEach(c => {
+        const lvRaw = String(c.level || '').trim();
+        const lv = levelOrder.indexOf(lvRaw) !== -1 ? lvRaw : '';
+        (groups[lv] = groups[lv] || []).push(c);
+      });
+      let h = '';
+      levelOrder.concat(['']).forEach(lv => {
+        const g = groups[lv];
+        if (!g || !g.length) return;
+        h += '<div class="shelf-group-title">' + label[lv] + '（' + g.length + '）</div><div class="shelf-chips">' +
+          g.map(c => '<span class="shelf-chip off" style="cursor:pointer;" onclick="renderShelfCustomerDetail(\'' + esc(c.name).replace(/'/g, "\\'") + '\')">' + esc(c.name) + '</span>').join('') +
+          '</div>';
+      });
+      picker.innerHTML = h || '<div style="opacity:0.35; font-size:13px;">此業務無客戶</div>';
+    };
+    if (shelfCustListCache[biz]) { render(shelfCustListCache[biz]); return; }
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res && res.success) { shelfCustListCache[biz] = res.data; render(res.data); }
+        else { const pk = document.getElementById('shelf-cust-picker'); if (pk) pk.innerHTML = '<div style="opacity:0.4;">載入失敗</div>'; }
+      })
+      .withFailureHandler(() => {
+        const pk = document.getElementById('shelf-cust-picker'); if (pk) pk.innerHTML = '<div style="opacity:0.4;">載入失敗</div>';
+      })
+      .getCustomerList(biz);
+  }
+
+  window.shelfSetBiz = function(biz) {
+    shelfBizFilter = biz;
+    renderShelfCustomerTab();
+  };
+
+  window.renderShelfCustomerDetail = function(cust) {
+    const box = document.getElementById('shelf-cust-detail');
+    if (!cust) { box.innerHTML = '<div style="opacity:0.4; text-align:center; padding:30px 0;">請先選擇客戶</div>'; return; }
+    box.style.opacity = 1;
+    box.style.textAlign = 'left';
+    box.style.padding = '0';
+
+    const shelved = [], notShelved = [];
+    shelfData.series.forEach(s => {
+      const a = s.active.find(x => x.cust === cust);
+      const sl = salesOf(cust, s.name);
+      if (a) {
+        shelved.push({ name: s.name, mode: a.mode, onDate: a.onDate, sl: sl });
+      } else {
+        notShelved.push({ name: s.name, shipped: !!sl, slc: sl ? sl.c : 0, ageClass: s.ageClass });
+      }
+    });
+    // 顏色排序：綠(有售)在前、紅(未售)在後
+    shelved.sort((a, b) => (a.sl ? 0 : 1) - (b.sl ? 0 : 1));
+
+    const seriesClick = sName =>
+      ' style="cursor:pointer;" onclick="shelfOpenDetail(\'' + esc(cust).replace(/'/g, "\\'") + '\',\'' + esc(sName).replace(/'/g, "\\'") + '\')"';
+
+    const shelvedChip = x => {
+      const modeTxt = (x.mode && x.mode !== '版面') ? ' ' + esc(x.mode) : '';
+      const cntTxt = x.sl ? ' ' + x.sl.c + '次' : '';
+      const mTxt = shelfMonths(x.onDate) ? ' ' + shelfMonths(x.onDate) + '月' : '';
+      const small = (modeTxt || cntTxt || mTxt) ? '<small>' + (modeTxt + cntTxt + mTxt).trim() + '</small>' : '';
+      return '<span class="shelf-chip' + (x.sl ? '' : ' nosale') + '"' + seriesClick(x.name) + '>' + esc(x.name) + small + '</span>';
+    };
+    const shelvedHtml = shelved.length ? shelved.map(shelvedChip).join('') :
+      '<div style="opacity:0.35; font-size:13px;">無上架紀錄</div>';
+
+    const gapNew = notShelved.filter(x => x.ageClass === 'fresh' || x.ageClass === 'new');
+    const gapNormal = notShelved.filter(x => x.ageClass === 'normal');
+    // 顏色排序：橘(有出貨)在前、灰在後
+    gapNew.sort((a, b) => (a.shipped ? 0 : 1) - (b.shipped ? 0 : 1));
+    gapNormal.sort((a, b) => (a.shipped ? 0 : 1) - (b.shipped ? 0 : 1));
+    const gapChip = x => '<span class="shelf-chip ' + (x.shipped ? 'shipped' : 'off') + '"' + seriesClick(x.name) + '>' + esc(x.name) +
+      (x.shipped ? '<small>' + x.slc + '次</small>' : '') + '</span>';
+
+    box.innerHTML =
+      '<button onclick="shelfOpenAlbum(\'' + esc(cust).replace(/'/g, "\\'") + '\')" ' +
+        'style="width:100%; background:rgba(250,204,21,0.12); border:1px solid rgba(250,204,21,0.4); color:#facc15; ' +
+        'border-radius:10px; padding:10px; font-size:14px; font-weight:800; letter-spacing:1px; cursor:pointer; margin-bottom:12px;">' +
+        '📸 開啟「' + esc(cust) + '」版面記錄</button>' +
+      '<div class="shelf-group-title">已上架（' + shelved.length + '）</div>' +
+      '<div class="shelf-chips">' + shelvedHtml + '</div>' +
+      '<div class="shelf-group-title">未上架 — 新品/全新（' + gapNew.length + '）</div>' +
+      '<div class="shelf-chips">' + (gapNew.length ? gapNew.map(gapChip).join('') : '<div style="opacity:0.35; font-size:13px;">無缺口 🎉</div>') + '</div>' +
+      '<div class="shelf-group-title">未上架 — 正常品（' + gapNormal.length + '）</div>' +
+      '<div class="shelf-chips">' + (gapNormal.length ? gapNormal.map(gapChip).join('') : '<div style="opacity:0.35; font-size:13px;">無缺口 🎉</div>') + '</div>';
+  };
+
+  // ── Tab 3: 系列明細 ──
+  function renderShelfSeriesTab() {
+    const opts = shelfData.series.map(s =>
+      '<option value="' + esc(s.name) + '">' + (s.shortage ? (shelfShortageStyle(shelfWorstCat(s)).icon + ' ') : '') + esc(s.name) + '（上架 ' + s.active.length + ' 家）</option>').join('');
+    document.getElementById('shelf-tab-series').innerHTML =
+      '<select class="shelf-select" id="shelf-series-select" onchange="renderShelfSeriesDetail(this.value)">' +
+      '<option value="">— 選擇系列 —</option>' + opts + '</select>' +
+      '<div id="shelf-series-detail" style="opacity:0.4; text-align:center; padding:30px 0;">請先選擇系列</div>';
+  }
+
+  window.openShelfSeries = function(name) {
+    switchShelfTab('series');
+    const sel = document.getElementById('shelf-series-select');
+    if (sel) { sel.value = name; renderShelfSeriesDetail(name); }
+  };
+
+  let shelfSeriesFilter = 'all';
+  let shelfSeriesLast = '';
+  window.shelfSeriesFilterSet = function(f) {
+    shelfSeriesFilter = (shelfSeriesFilter === f) ? 'all' : f;
+    renderShelfSeriesDetail(shelfSeriesLast);
+  };
+  window.shelfToggleShortageCodes = function() {
+    const el = document.getElementById('shelf-shortage-codes');
+    if (el) el.style.display = (el.style.display === 'none') ? '' : 'none';
+  };
+
+  window.renderShelfSeriesDetail = function(name) {
+    const box = document.getElementById('shelf-series-detail');
+    if (!name) { box.innerHTML = '<div style="opacity:0.4; text-align:center; padding:30px 0;">請先選擇系列</div>'; return; }
+    if (name !== shelfSeriesLast) { shelfSeriesFilter = 'all'; shelfSeriesLast = name; }
+    box.style.opacity = 1;
+    box.style.textAlign = 'left';
+    box.style.padding = '0';
+    const s = shelfData.series.find(x => x.name === name);
+    if (!s) { box.innerHTML = '找不到系列'; return; }
+
+    const regionOf = {};
+    shelfData.customers.forEach(c => { regionOf[c.name] = zoneOf(c.region); });
+
+    // 依大區分組；每個晶片帶顏色排序權重：綠0 紅1 橘2 灰3 下架4
+    const byZone = {};
+    const zoneActive = {};
+    const push = (zone, rank, html) => { (byZone[zone] = byZone[zone] || []).push({ rank: rank, html: html }); };
+
+    const detailClick = c =>
+      ' style="cursor:pointer;" onclick="shelfOpenDetail(\'' + esc(c).replace(/'/g, "\\'") + '\',\'' + esc(name).replace(/'/g, "\\'") + '\')"';
+
+    const activeCusts = {};
+    let minOnDate = '';
+    s.active.forEach(a => {
+      activeCusts[a.cust] = true;
+      if (a.onDate && (!minOnDate || a.onDate < minOnDate)) minOnDate = a.onDate;
+      const zone = regionOf[a.cust] || '未分區';
+      zoneActive[zone] = (zoneActive[zone] || 0) + 1;
+      const sl = salesOf(a.cust, name);
+      const modeTxt = (a.mode && a.mode !== '版面') ? ' ' + esc(a.mode) : '';
+      const cntTxt = sl ? ' ' + sl.c + '次' : '';
+      const small = (modeTxt || cntTxt) ? '<small>' + (modeTxt + cntTxt).trim() + '</small>' : '';
+      push(zone, sl ? 0 : 1,
+        '<span class="shelf-chip' + (sl ? '' : ' nosale') + '"' + detailClick(a.cust) + '>' + esc(a.cust) + small + '</span>');
+    });
+    s.removed.forEach(r => {
+      activeCusts[r.cust] = true;
+      if (r.onDate && (!minOnDate || r.onDate < minOnDate)) minOnDate = r.onDate;
+      push(regionOf[r.cust] || '未分區', 4,
+        '<span class="shelf-chip removed"' + detailClick(r.cust) + '>' + esc(r.cust) + '<small>' + esc(r.offDate) + ' 下架</small></span>');
+    });
+    shelfData.customers.forEach(c => {
+      if (activeCusts[c.name]) return;
+      const sl = salesOf(c.name, name);
+      push(regionOf[c.name] || '未分區', sl ? 2 : 3,
+        '<span class="shelf-chip ' + (sl ? 'shipped' : 'off') + '"' + detailClick(c.name) + '>' + esc(c.name) +
+        (sl ? '<small>' + sl.c + '次</small>' : '') + '</span>');
+    });
+
+    const others = Object.keys(byZone).filter(z => zoneOrder.indexOf(z) === -1 && z !== '未分區').sort((a, b) => a.localeCompare(b, 'zh-TW'));
+    const zones = zoneOrder.filter(z => byZone[z]).concat(others).concat(byZone['未分區'] ? ['未分區'] : []);
+    const filterRanks = { all: null, active: [0, 1], shipped: [2], nosale: [1], notshelf: [2, 3] };
+    const allowRanks = filterRanks[shelfSeriesFilter] || null;
+    const zoneHtml = zones.map(z => {
+      const cnt = zoneActive[z] || 0;
+      const items = byZone[z].sort((a, b) => a.rank - b.rank)
+        .filter(x => !allowRanks || allowRanks.indexOf(x.rank) !== -1);
+      if (!items.length && allowRanks) return '';
+      const chipsHtml = items.map(x => x.html).join('');
+      return '<details class="shelf-region-block"' + ((cnt > 0 || allowRanks) ? ' open' : '') + '>' +
+        '<summary><span>' + esc(z) + '</span><span class="rcnt">' + cnt + '家</span></summary>' +
+        '<div class="shelf-chips">' + chipsHtml + '</div></details>';
+    }).join('');
+
+    const neverSoldCount = s.active.filter(a => !salesOf(a.cust, name)).length;
+    const shippedNotShelved = shelfData.customers.filter(c => !activeCusts[c.name] && salesOf(c.name, name)).length;
+    const notShelvedCount = shelfData.customers.filter(c => !activeCusts[c.name]).length;
+    const ageTxt = fmtShelfAge(minOnDate);
+
+    const selStyle = f => shelfSeriesFilter === f ? ' outline:2px solid #facc15; outline-offset:1px;' : '';
+    const shortageCodesHtml = (s.shortageCodes && s.shortageCodes.length)
+      ? '<div id="shelf-shortage-codes" style="display:none; margin-bottom:10px; padding:10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:10px; background:rgba(255,255,255,0.03);">' +
+          s.shortageCodes.slice().sort((a, b) => shelfSevRank(a.cat) - shelfSevRank(b.cat)).map(x => {
+            const st = shelfShortageStyle(x.cat);
+            return '<div style="display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:3px 0;">' +
+            '<span style="font-weight:700; color:#fff;">' + esc(x.code) + '</span>' +
+            '<span style="color:' + st.color + '; font-weight:700;">' + st.icon + ' ' + esc(x.cat) + '</span></div>'; }).join('') +
+        '</div>'
+      : '';
+
+    box.innerHTML =
+      '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:center;">' +
+        (s.shortage ? (function () { const st = shelfShortageStyle(shelfWorstCat(s)); return '<span class="shelf-chip" onclick="shelfToggleShortageCodes()" style="cursor:pointer; background:' + st.bg + '; color:' + st.color + '; border-color:' + st.bd + ';">' + st.icon + ' ' + esc(s.shortage) + '（' + (s.shortageCodes ? s.shortageCodes.length : 0) + '）▾</span>'; })() : '') +
+        (ageTxt ? '<span style="font-size:14px; font-weight:900; color:#facc15;">上架 ' + ageTxt + '</span>' : '') +
+        '<span class="shelf-chip" onclick="shelfSeriesFilterSet(\'active\')" style="cursor:pointer;' + selStyle('active') + '">上架 ' + s.active.length + ' 家</span>' +
+        '<span class="shelf-chip shipped" onclick="shelfSeriesFilterSet(\'shipped\')" style="cursor:pointer;' + selStyle('shipped') + '">有出貨未上架 ' + shippedNotShelved + ' 家</span>' +
+        '<span class="shelf-chip nosale" onclick="shelfSeriesFilterSet(\'nosale\')" style="cursor:pointer;' + selStyle('nosale') + '">已上架未售 ' + neverSoldCount + ' 家</span>' +
+        '<span class="shelf-chip off" onclick="shelfSeriesFilterSet(\'notshelf\')" style="cursor:pointer;' + selStyle('notshelf') + '">未上架 ' + notShelvedCount + ' 家</span>' +
+      '</div>' +
+      shortageCodesHtml +
+      zoneHtml;
+  };
+})();
+</script>

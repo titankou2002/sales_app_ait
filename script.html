@@ -1,0 +1,3302 @@
+<script>
+  /**
+   * 📊 系統狀態
+   */
+  var state = {
+    allCustomers: [],
+    currentSales: '',
+    currentCustomer: '',
+    currentLayouts: [],
+    sortedGroups: [],
+    currentGIdx: 0,
+    isEditMode: false,
+    editItems: null,
+    newPhotoData: null,
+    isClientView: false,
+    isInventoryLoaded: false,
+    inventoryData: [],
+    salesOverviewData: null,    // ✅ 新增業績快取
+    salesOverviewLoaded: false  // ✅ 新增載入狀態
+  };
+
+  function normalizeSkuKey(value) {
+    return String(value || '')
+      .toUpperCase()
+      .replace(/[\s\-－—–_＿\/\\()\uFEFF\u00A0]/g, '')
+      .trim();
+  }
+
+  /**
+   * 📸 讀取照片 GPS 資訊 (使用 EXIF.js)
+   */
+  function processImageGps(file, callback) {
+    if (!window.EXIF) {
+      console.warn("EXIF library not loaded");
+      callback(null);
+      return;
+    }
+    try {
+      EXIF.getData(file, function() {
+        try {
+          var lat = EXIF.getTag(this, "GPSLatitude");
+          var latRef = EXIF.getTag(this, "GPSLatitudeRef");
+          var lng = EXIF.getTag(this, "GPSLongitude");
+          var lngRef = EXIF.getTag(this, "GPSLongitudeRef");
+
+          if (lat && latRef && lng && lngRef) {
+            var convertDMSToDD = function(dms, ref) {
+              if (!dms || dms.length < 3) return null;
+              var d = typeof dms[0] === 'object' ? (dms[0].numerator / dms[0].denominator) : dms[0];
+              var m = typeof dms[1] === 'object' ? (dms[1].numerator / dms[1].denominator) : dms[1];
+              var s = typeof dms[2] === 'object' ? (dms[2].numerator / dms[2].denominator) : dms[2];
+              var dd = d + m / 60.0 + s / 3600.0;
+              if (ref === "S" || ref === "W") {
+                dd = -dd;
+              }
+              return dd;
+            };
+
+            var latDD = convertDMSToDD(lat, latRef);
+            var lngDD = convertDMSToDD(lng, lngRef);
+
+            if (latDD !== null && lngDD !== null && !isNaN(latDD) && !isNaN(lngDD)) {
+              callback({ lat: latDD, lng: lngDD });
+              return;
+            }
+          }
+        } catch (e) {
+          console.error("Error parsing EXIF GPS data:", e);
+        }
+        callback(null);
+      });
+    } catch (err) {
+      console.error("EXIF.getData failed:", err);
+      callback(null);
+    }
+  }
+
+  /**
+   * 📍 更新新增版面時的 GPS 狀態與 UI 提示
+   */
+  function updateGpsStatus(type, message) {
+    console.log("GPS Status:", type, message);
+    var badge = document.getElementById('photo-gps-badge');
+    if (!badge) return;
+    badge.innerText = message;
+    if (type === 'none') {
+      badge.style.display = 'none';
+    } else {
+      badge.style.display = 'block';
+      if (type === 'loading') {
+        badge.style.background = 'rgba(234,179,8,0.9)'; // yellow
+      } else if (type === 'photo') {
+        badge.style.background = 'rgba(6,199,85,0.9)'; // green
+      } else if (type === 'phone') {
+        badge.style.background = 'rgba(0,122,255,0.9)'; // blue
+      }
+    }
+  }
+
+  /**
+   * 🚀 載入動畫 (Canvas 粒子引擎 V2.0)
+   */
+  var particleEngine = {
+    canvas: null,
+    ctx: null,
+    particles: [],
+    logoPoints: [],
+    isGathering: false,
+    animationId: null,
+
+    init: function () {
+      this.canvas = document.getElementById('particleCanvas');
+      if (!this.canvas) return;
+      this.ctx = this.canvas.getContext('2d');
+      this.resize();
+      window.addEventListener('resize', () => this.resize());
+      this.generateLogoPoints();
+      this.generateParticles();
+      this.animate();
+    },
+
+    resize: function () {
+      this.canvas.width = window.innerWidth;
+      this.canvas.height = window.innerHeight;
+      this.generateLogoPoints();
+    },
+
+    generateLogoPoints: function () {
+      const points = [];
+      const cx = this.canvas.width / 2;
+      const cy = this.canvas.height / 2 - 30;
+      const s = 1.0; // 縮小整體比例以適應手機
+      const tColor = '#e21b7a'; // 品牌桃紅色
+
+      const drawLine = (x, y1, y2, color) => {
+        for (let y = y1; y <= y2; y += 3) points.push({ x: cx + x, y: cy + y, c: color });
+      };
+
+      const drawHLine = (x1, x2, y, color) => {
+        for (let x = x1; x <= x2; x += 3) points.push({ x: cx + x, y: cy + y, c: color });
+      };
+
+      const drawCircle = (x, y, r, startAngle, endAngle, color) => {
+        for (let a = startAngle; a < endAngle; a += 0.23) {
+          points.push({ x: cx + x + Math.cos(a) * r, y: cy + y + Math.sin(a) * r, c: color });
+        }
+      };
+
+      // T 的大橫槓
+      drawHLine(-145 * s, 145 * s, -25 * s, tColor);
+      // T 的中心豎線
+      drawLine(0, -25 * s, 40 * s, tColor);
+
+      // 左側字母 e (正常方向)
+      drawCircle(-118 * s, 18 * s, 16 * s, 0.2 * Math.PI, 1.8 * Math.PI, 'white');
+      drawHLine(-118 * s, -102 * s, 18 * s, 'white');
+
+      drawLine(-75 * s, -10 * s, 40 * s, 'white'); // l
+
+      drawLine(-42 * s, 0, 40 * s, 'white'); // i
+      points.push({ x: cx - 42 * s, y: cy - 12 * s, c: 'white' }); // i dot
+
+      // 右側字母 i l e
+      drawLine(42 * s, 0, 40 * s, 'white'); // i
+      points.push({ x: cx + 42 * s, y: cy - 12 * s, c: 'white' }); // i dot
+
+      drawLine(75 * s, -10 * s, 40 * s, 'white'); // l
+
+      // 最後一個 e (鏡像方向)
+      drawCircle(118 * s, 18 * s, 16 * s, -0.8 * Math.PI, 0.8 * Math.PI, 'white');
+      drawHLine(102 * s, 118 * s, 18 * s, 'white');
+
+      this.logoPoints = points;
+    },
+
+    generateParticles: function () {
+      const count = 300;
+      this.particles = [];
+      for (let i = 0; i < count; i++) {
+        const p = {
+          x: Math.random() * this.canvas.width,
+          y: Math.random() * this.canvas.height,
+          vx: (Math.random() - 0.5) * 0.4,
+          vy: (Math.random() - 0.5) * 0.4,
+          size: 1.5 + Math.random(),
+          opacity: 0.3 + Math.random() * 0.4,
+          targetX: 0,
+          targetY: 0,
+          color: 'white',
+          progress: 0,
+          isGathering: i < this.logoPoints.length
+        };
+
+        if (p.isGathering) {
+          const lp = this.logoPoints[i];
+          p.targetX = lp.x;
+          p.targetY = lp.y;
+          p.color = lp.c;
+          p.startX = p.x;
+          p.startY = p.y;
+        }
+        this.particles.push(p);
+      }
+    },
+
+    setGathering: function (val) {
+      if (val === this.isGathering) return;
+      this.isGathering = val;
+      if (val) {
+        // 開始匯聚：紀錄當前點作為起點
+        this.particles.forEach(p => {
+          p.startX = p.x;
+          p.startY = p.y;
+          p.progress = 0;
+        });
+      }
+    },
+
+    animate: function () {
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+      this.particles.forEach(p => {
+        if (this.isGathering && p.isGathering) {
+          if (p.progress < 1) p.progress += 0.006; // 慢速匯聚
+          const t = 1 - Math.pow(1 - p.progress, 3); // Ease out
+          p.x = p.startX + (p.targetX - p.startX) * t;
+          p.y = p.startY + (p.targetY - p.startY) * t;
+          p.opacity = Math.min(1, 0.4 + t * 0.6);
+        } else {
+          p.x += p.vx;
+          p.y += p.vy;
+          if (p.x < 0 || p.x > this.canvas.width) p.vx *= -1;
+          if (p.y < 0 || p.y > this.canvas.height) p.vy *= -1;
+        }
+
+        this.ctx.beginPath();
+        this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        this.ctx.fillStyle = p.color === 'white'
+          ? `rgba(255, 255, 255, ${p.opacity * 0.7})`
+          : p.color.replace(')', `, ${p.opacity * 0.9})`).replace('rgb', 'rgba');
+        // 🚀 根據需求移除白影 (Shadow)
+        this.ctx.shadowBlur = 0;
+        this.ctx.fill();
+      });
+
+      this.animationId = requestAnimationFrame(() => this.animate());
+    }
+  };
+
+  /**
+   * 📢 系統提示 (Toast)
+   */
+  function showToast(msg, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = 'toast-message';
+    if (type === 'error') {
+      toast.style.background = '#f2f2f7';
+      toast.style.color = '#000';
+      toast.style.boxShadow = '0 10px 40px rgba(0,0,0,0.4)';
+      toast.style.borderRadius = '16px';
+      toast.style.padding = '18px 25px';
+      toast.style.width = '280px';
+      toast.style.textAlign = 'left';
+      toast.style.lineHeight = '1.4';
+      toast.innerHTML = '<span style="font-size:24px; margin-right:12px; float:left;">❌</span>';
+      var msgDiv = document.createElement('div');
+      msgDiv.style.cssText = 'font-weight:900;font-size:15px;';
+      msgDiv.textContent = msg;
+      toast.appendChild(msgDiv);
+    } else {
+      toast.textContent = '✅ ' + msg;
+    }
+    document.body.appendChild(toast);
+    setTimeout(() => toast.classList.add('active'), 50);
+    setTimeout(() => {
+      toast.classList.remove('active');
+      setTimeout(() => { if(toast.parentNode) toast.parentNode.removeChild(toast); }, 300);
+    }, 3000);
+  }
+
+  /**
+   * 📋 顯示保留細項彈窗 (多行顯示)
+   */
+  window.showReserveInfo = function(encodedList) {
+    var items = [];
+    try { items = JSON.parse(decodeURIComponent(encodedList)); } catch(e) { items = [encodedList]; }
+    var overlay = document.getElementById('reserve-info-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'reserve-info-overlay';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;backdrop-filter:blur(6px);';
+      overlay.innerHTML = '<div style="background:#1e293b;border-radius:20px;padding:20px;max-width:320px;width:100%;border:1px solid rgba(255,255,255,0.1);box-shadow:0 25px 50px rgba(0,0,0,0.5);">' +
+        '<div style="font-size:14px;font-weight:800;color:#facc15;margin-bottom:14px;">📋 保留細項</div>' +
+        '<div id="reserve-info-body" style="font-size:13px;line-height:1.8;color:rgba(255,255,255,0.85);"></div>' +
+        '<button onclick="document.getElementById(\'reserve-info-overlay\').style.display=\'none\';" style="margin-top:16px;width:100%;height:42px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;">關閉</button>' +
+        '</div>';
+      overlay.onclick = function(e) { if(e.target === overlay) overlay.style.display = 'none'; };
+      document.body.appendChild(overlay);
+    }
+    var body = document.getElementById('reserve-info-body');
+    if (body) body.innerHTML = items.map(function(s){ return '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">• ' + s + '</div>'; }).join('');
+    overlay.style.display = 'flex';
+  };
+
+  /**
+   * 🚨 統一伺服器錯誤處理
+   */
+  window.handleGASFailure = function(err) {
+    if (typeof showLoading === 'function') showLoading(false);
+    const msg = (err && err.message) ? err.message : String(err);
+    console.error("GAS Error:", err);
+    alert("⚠️ 系統通訊異常\n\n錯誤資訊：" + msg + "\n\n若持續發生，請檢查網路或聯繫管理員。");
+  };
+
+  /**
+   * 🐞 全域 JS 錯誤捕捉
+   */
+  window.onerror = function(msg, url, lineNo, columnNo, error) {
+    console.error("Runtime Error:", msg, lineNo);
+    alert("⚡ 程式執行出錯\n\n" + msg + "\n(行: " + lineNo + ")");
+    return false;
+  };
+
+  var _loadingTimer = null;
+
+  function showLoading(show, gatherLogo, statusMsg) {
+    var overlay = document.getElementById('loading-overlay');
+    if (!overlay) return;
+    var bar = document.getElementById('loading-progress-bar');
+    var statusEl = document.getElementById('loading-status-text');
+    var titleEl = overlay.querySelector('.loading-text');
+
+    if (show) {
+      overlay.style.display = 'flex';
+      overlay.style.backgroundColor = gatherLogo ? '#000' : 'rgba(0,0,0,0.5)';
+      if (titleEl) titleEl.textContent = 'LOADING';
+      if (statusEl) statusEl.textContent = statusMsg || '';
+      particleEngine.setGathering(!!gatherLogo);
+      _startProgressAnim(bar);
+    } else {
+      if (bar) { bar.style.transition = 'width 0.2s'; bar.style.width = '100%'; }
+      setTimeout(function() {
+        overlay.style.display = 'none';
+        if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
+        if (titleEl) titleEl.textContent = 'LOADING';
+        if (statusEl) statusEl.textContent = '';
+        _stopProgressAnim();
+        if (particleEngine.animationId) cancelAnimationFrame(particleEngine.animationId);
+      }, 300);
+    }
+  }
+
+  function showLoadingWithStatus(statusMsg) {
+    showLoading(true, false, statusMsg);
+  }
+
+  function _startProgressAnim(bar) {
+    _stopProgressAnim();
+    if (!bar) return;
+    var progress = 0;
+    bar.style.transition = 'width 0.4s ease';
+    bar.style.width = '0%';
+    _loadingTimer = setInterval(function() {
+      var remaining = 90 - progress;
+      progress += remaining * 0.08;
+      bar.style.width = Math.min(progress, 90) + '%';
+    }, 300);
+  }
+
+  function _stopProgressAnim() {
+    if (_loadingTimer) { clearInterval(_loadingTimer); _loadingTimer = null; }
+  }
+
+  // ─── 統一星空粒子引擎 ──────────────────────────────────
+  function initParticleCanvas(canvasId) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas || canvas.dataset.running === 'true') return;
+    canvas.dataset.running = 'true';
+    var ctx = canvas.getContext('2d');
+
+    function resize() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    var particles = [];
+    for (var i = 0; i < 150; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: (Math.random() - 0.5) * 0.4,
+        size: (1.5 + Math.random() * 1.5) * 0.8,
+        baseOpacity: 0.2 + Math.random() * 0.4,
+        flash: 0,
+        flashSpeed: 0.01 + Math.random() * 0.02
+      });
+    }
+
+    function animate() {
+      const page = canvas.closest('.page');
+      if (!page || !page.classList.contains('active')) {
+        requestAnimationFrame(animate);
+        return;
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach(function(p) {
+        p.x += p.vx; p.y += p.vy;
+        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+        if (p.flash > 0) p.flash -= 0.04; 
+        else if (Math.random() > 0.9995) p.flash = 1;
+        var opacity = p.baseOpacity + Math.sin(Date.now() * p.flashSpeed) * 0.15 + p.flash * 0.6;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (1 + p.flash * 2), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,' + opacity + ')';
+        ctx.fill();
+      });
+      requestAnimationFrame(animate);
+    }
+    animate();
+  }
+
+  // 門戶導向函式
+  window.openAlbumModule = function() { 
+    state.currentFlow = 'album';
+    if (state.currentSales) {
+      selectSales(state.currentSales);
+    } else {
+      showPage('sales-page'); 
+    }
+  };
+  window.openLogisticsModule = function() { showToast('系統建置中...'); };
+
+  function init() {
+    edgeSwipe.init(); 
+    
+    const params = APP_CONFIG.params || {};
+    const isClientFlow = (params.view === 'client' || params.customer || params.clientName);
+    
+    if (isClientFlow) {
+      // 🚀 對齊客戶端身分，確保分享連結進入 (deep link) 也可正常反查真實名稱與扣減次數
+      const targetClientName = params.clientName || params.customer;
+      if (targetClientName) {
+        window.clientState = window.clientState || { userId: '', userName: '', userCompany: '', isAuthorized: false };
+        const info = (window.APP_CONFIG && APP_CONFIG.clientInfo) ? APP_CONFIG.clientInfo : { name: targetClientName, company: "訪客客戶", level: "LEVEL 2" };
+        window.clientState.userId = 'DIRECT_' + (info.name || targetClientName);
+        window.clientState.userName = info.name || targetClientName;
+        window.clientState.userCompany = info.company || '訪客客戶';
+        window.clientState.level = info.level || 'LEVEL 2';
+        window.clientState.isAuthorized = true;
+        
+        try {
+          localStorage.setItem('AIT_CLIENT_USER_ID', window.clientState.userId);
+          localStorage.setItem('AIT_CLIENT_USER_NAME', window.clientState.userName);
+          localStorage.setItem('AIT_CLIENT_USER_COMPANY', window.clientState.userCompany);
+          localStorage.setItem('AIT_CLIENT_LEVEL', window.clientState.level);
+        } catch(e){}
+        
+        // 異步向後端獲取詳細白名單身分 (為 LOG 工作表作準備的備用 fallback)
+        google.script.run
+          .withSuccessHandler(function (res) {
+            if (res && res.success && res.isAuthorized) {
+              window.clientState.userName = res.name;
+              window.clientState.userCompany = res.company;
+              window.clientState.level = res.level;
+              window.clientState.isAuthorized = true;
+              try {
+                localStorage.setItem('AIT_CLIENT_USER_ID', window.clientState.userId);
+                localStorage.setItem('AIT_CLIENT_USER_NAME', window.clientState.userName);
+                localStorage.setItem('AIT_CLIENT_USER_COMPANY', window.clientState.userCompany);
+                localStorage.setItem('AIT_CLIENT_LEVEL', window.clientState.level);
+              } catch(e){}
+            }
+          })
+          .verifyClientDirectAccess(targetClientName, params.key || '');
+      }
+      
+      // 🚀 外部客戶/訪客查詢：放行進入，但功能受限（必須輸入坪數且無具體庫存）
+      _startAppFlow();
+      loadInventoryData();
+      return;
+    }
+    
+    // 🚀 全局業務金鑰強校驗：內部員工沒金鑰的 100% 擋在大門外！
+    let sales = params.sales || '';
+    let key = params.key || '';
+    
+    // 如果 URL 沒帶，從 LocalStorage 讀取
+    if (!sales || !key) {
+      try {
+        sales = localStorage.getItem('ag_current_sales') || '';
+        key = localStorage.getItem('ag_current_key') || '';
+      } catch(e){}
+    }
+
+    // 🚀 沒有金鑰 ➡️ 瞬間解鎖攔截，休想進入系統任何分頁！
+    if (!sales || !key) {
+      lockSystem("偵測到未授權存取。請使用您的專屬直達連結登入。");
+      return;
+    }
+
+    // 顯示連接中動畫
+    const pb = document.getElementById('progressBar');
+    const pt = document.getElementById('progressText');
+    if (pb) pb.style.width = '45%';
+    if (pt) pt.innerText = 'VERIFYING SECURITY KEY...';
+
+    // 呼叫後端異步比對金鑰狀態
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res && res.success) {
+          // 🚀 驗證成功：業務身分核對通過！
+          state.currentSales = sales;
+          try {
+            localStorage.setItem('ag_current_sales', sales);
+            localStorage.setItem('ag_current_key', key);
+          } catch(e){}
+          
+          const disp = document.getElementById('sales-name-display');
+          if (disp) disp.innerText = sales;
+          if (typeof checkDeliveryBadge === 'function') checkDeliveryBadge(sales);
+
+          // 🌟 完美分流：
+          // 如果 URL 帶有 view=inventory，我們就帶他去「庫存頁面」鎖定使用！
+          // 如果 URL 沒有帶 view=inventory，我們就帶他去「業務 APP 主選單首頁（Dashboard）」！
+          if (params.view === 'inventory') {
+            _startAppFlow();
+          } else {
+            runSplashScreen();
+          }
+          loadInventoryData();
+          loadStockoutSubtitleAlert();
+        } else {
+          // 🚀 驗證失敗 ➡️ 直接封鎖並清除快取
+          try {
+            localStorage.removeItem('ag_current_sales');
+            localStorage.removeItem('ag_current_key');
+          } catch(e){}
+          lockSystem("您的安全金鑰已失效，或已被系統管理員註銷停用。");
+        }
+      })
+      .withFailureHandler(function(err) {
+        lockSystem("系統連線異常，無法驗證您的身分。請檢查網路後重試。");
+      })
+      .verifySalesKey(sales, key);
+  }
+
+  function lockSystem(reasonText) {
+    // 隱藏 Splash 載入頁
+    const splash = document.getElementById('splash-page');
+    if (splash) splash.style.display = 'none';
+    
+    // 隱藏 Loading
+    showLoading(false);
+    
+    // 顯示全局「存取遭拒」磨砂警告層
+    const mask = document.getElementById('global-access-denied-mask');
+    if (mask) {
+      mask.style.display = 'flex';
+      // 更新詳細原因
+      const pEl = mask.querySelector('p');
+      if (pEl && reasonText) {
+        pEl.innerText = reasonText;
+      }
+    }
+    console.error("🔒 系統已安全鎖定：", reasonText);
+  }
+
+  function _startAppFlow() {
+    const params = APP_CONFIG.params || {};
+    
+    // 🚀 獨立單獨查庫存入口 (無須 LINE 驗證)
+    if (params.view === 'inventory') {
+      const splash = document.getElementById('splash-page');
+      if (splash) splash.style.display = 'none';
+      
+      // 💻 展開至滿版寬度 (解除 600px 手機寬度限制)
+      const container = document.querySelector('.app-container');
+      if (container) container.classList.add('full-width');
+      
+      // 自動將當前業務身分寫入 state.currentSales 並更新 UI
+      if (params.sales) {
+        state.currentSales = params.sales;
+        try {
+          localStorage.setItem('ag_current_sales', params.sales);
+        } catch(e){}
+        const nameEl = document.getElementById('sales-name-display');
+        if (nameEl) nameEl.innerText = params.sales;
+        console.log("🔑 已藉由安全直達金鑰自動登入業務:", params.sales);
+        
+        // 🚀 隱藏右上角「業務選單」按鈕，保持介面簡潔乾淨
+        const goAppBtn = document.getElementById('inventory-go-app-btn');
+        const placeholderDiv = document.getElementById('inventory-placeholder-div');
+        if (goAppBtn) goAppBtn.style.display = 'none';
+        if (placeholderDiv) placeholderDiv.style.display = 'block';
+      }
+      
+      showPage('page-inventory');
+      loadInventoryData();
+      
+      // 隱藏返回按鈕，呈現完美的單獨查庫存頁面
+      const backBtn = document.querySelector('#page-inventory .nav-back');
+      if (backBtn) backBtn.style.display = 'none';
+      return;
+    }
+
+    // 🚀 客戶端專屬入口偵測 (精美開場動畫版)
+    if (params.view === 'client') {
+      const container = document.querySelector('.app-container');
+      if (container) container.classList.add('full-width');
+      
+      runSplashScreen(); // 執行粒子進度條
+      if (typeof window.initClientPortal === 'function') {
+        // 等待動畫結束後再初始化
+        setTimeout(() => {
+          window.initClientPortal();
+        }, 800); 
+      }
+      return;
+    }
+
+    const targetCustomer = params.clientName || params.customer;
+    if (targetCustomer) {
+      // 🚀 深度連結模式 (Deep Linking)
+      state.isClientView = (params.view === 'client');
+      if (state.isClientView) {
+        document.body.classList.add('client-view');
+      }
+
+      const splash = document.getElementById('splash-page');
+      if (splash) splash.style.display = 'none';
+
+      const logo = document.getElementById('persistentLogo');
+      if (logo) logo.style.display = 'none';
+
+      selectCustomer(targetCustomer, function () {
+        if (params.layoutIdx !== undefined) {
+          setTimeout(function () {
+            showGroupDetail(parseInt(params.layoutIdx));
+          }, 500);
+        }
+      });
+    } else {
+      runSplashScreen();
+    }
+  }
+
+  function loadSalesList() {
+    const grid = document.getElementById('salesSelection');
+    if (!grid) return;
+    grid.innerHTML = '<div style="color:white; font-size: 20px; font-weight: 700; text-align:center; padding:40px; width:100%; letter-spacing: 4px;">正在讀取雲端名單...</div>';
+    
+    google.script.run.withSuccessHandler(function(res) {
+      if (res && res.success && res.data) {
+        grid.innerHTML = '';
+        res.data.forEach(function(name) {
+          var btn = document.createElement('button');
+          btn.className = 'btn-sales-premium';
+          btn.textContent = name;
+          btn.onclick = function() { selectSales(name); };
+          grid.appendChild(btn);
+        });
+      } else {
+        grid.textContent = '載入失敗: ' + ((res && res.msg) || '未知錯誤');
+        grid.style.cssText = 'color:white; opacity:0.5; text-align:center; padding:20px; width:100%;';
+      }
+    }).getSalesList(true);
+  }
+
+  function runSplashScreen() {
+    const pb = document.getElementById('progressBar');
+    const pt = document.getElementById('progressText');
+    const steps = [
+      { p: 30, t: 'CONNECTING...' },
+      { p: 60, t: 'LOADING ASSETS...' },
+      { p: 100, t: 'READY' }
+    ];
+    let step = 0;
+    const interval = setInterval(() => {
+      if (step < steps.length) {
+        if (pb) pb.style.width = steps[step].p + '%';
+        if (pt) pt.innerText = steps[step].t;
+        step++;
+      } else {
+        clearInterval(interval);
+        // 🚀 關鍵延遲：讓 READY 停留一下再消失
+        setTimeout(showSalesSelection, 500);
+      }
+    }, 200);
+  }
+
+  function showSalesSelection() {
+    const splash = document.getElementById('splash-page');
+    if (splash) {
+      splash.style.transition = 'opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+      splash.style.opacity = '0';
+      
+      setTimeout(() => {
+        splash.style.display = 'none';
+        
+        // 🚀 修正：分流進入主畫面或客戶頁面
+        if (APP_CONFIG.params.view === 'client') {
+          showPage('page-client-view');
+        } else {
+          showPage('page-dashboard');
+        }
+        
+        // 🚀 關鍵：讓四個功能框延遲浮現
+        const grid = document.getElementById('dashboardGrid');
+        if (grid) {
+          grid.style.display = 'grid'; // 確保顯示網格
+          setTimeout(() => {
+            grid.style.opacity = '1';
+            grid.style.transform = 'translateY(0)';
+          }, 100);
+        }
+
+        // 🚀 背景偷偷預載
+        setTimeout(loadInventoryData, 100);
+        setTimeout(loadSalesOverview, 300);
+      }, 300); 
+    }
+  }
+
+  function loadInventoryData() {
+    // 🚀 快取優先 (Cache-First) 策略
+    if (!state.isInventoryLoaded) {
+      try {
+        const localCached = localStorage.getItem('ag_inventory_cache');
+        if (localCached) {
+          const parsed = JSON.parse(localCached);
+          if (parsed && parsed.length > 0) {
+            state.inventoryData = parsed;
+            // 標記已經有基礎資料可用（避免 UI 顯示為空），但背後仍去抓最新的
+            console.log('⚡ 已從 LocalStorage 瞬間載入庫存快取 (' + parsed.length + ' 筆)');
+            
+            // 若此時正看著陳列牆，先用舊快取渲染，達成 0 秒瞬間載入
+            if (document.getElementById('page-album') && document.getElementById('page-album').classList.contains('active')) {
+              renderAlbum();
+              renderHistory();
+            }
+          }
+        }
+      } catch(e) {
+        console.warn('讀取本地庫存快取失敗:', e);
+      }
+    }
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res && res.success) {
+          state.inventoryData = res.data;
+          state.isInventoryLoaded = true;
+          
+          // 🚀 將最新資料同步回寫至 LocalStorage
+          try {
+            localStorage.setItem('ag_inventory_cache', JSON.stringify(res.data));
+          } catch(e) {}
+          
+          // 🚀 關鍵修正：若已開啟客戶陳列牆，在背景載入完成時自動重新渲染，以套用正確的缺貨框顏色
+          if (document.getElementById('page-album') && document.getElementById('page-album').classList.contains('active')) {
+            renderAlbum();
+            renderHistory();
+          }
+          
+          // 若在客制庫存查詢頁，自動執行查詢
+          if (document.getElementById('page-inventory') && document.getElementById('page-inventory').classList.contains('active')) {
+            handleInventorySearch(); 
+          }
+        } else {
+          showToast('資料載入失敗: ' + (res.msg || '未知原因'));
+        }
+      })
+      .getAggregatedInventory();
+  }
+
+  /**
+   * 👈 手勢管理：修復 Apps Script 無法滑動返回的遺憾
+   */
+  var edgeSwipe = {
+    startX: 0,
+    startTime: 0,
+    active: false,
+    init: function() {
+      document.addEventListener('touchstart', (e) => {
+        this.startX = e.touches[0].clientX;
+        this.startTime = Date.now();
+        // 只有從螢幕左邊緣 (40px 內) 開始的滑動才有效
+        this.active = (this.startX < 40);
+      }, {passive: true});
+
+      document.addEventListener('touchend', (e) => {
+        if (!this.active) return;
+        
+        // 🚀 修正：如果是客戶端模式，禁止右滑返回主後台
+        if (APP_CONFIG.params.view === 'client') return;
+
+        const endX = e.changedTouches[0].clientX;
+        const duration = Date.now() - this.startTime;
+        const dist = endX - this.startX;
+
+        // 判斷邏輯：向右滑動至少 70px，且時間在 300ms 內 (快滑)
+        if (dist > 70 && duration < 300) {
+          this.triggerBack();
+        }
+        this.active = false;
+      }, {passive: true});
+    },
+    triggerBack: function() {
+      // 尋找當前活動頁面中的返回按鈕並觸發點擊
+      const activePage = document.querySelector('.page.active');
+      if (activePage) {
+        const backBtn = activePage.querySelector('.nav-back');
+        if (backBtn) {
+          backBtn.click();
+          console.log('🚀 手勢觸發：返回上一頁');
+        } else {
+          // 如果沒有返回按鈕，嘗試回主畫面
+          showPage('page-dashboard');
+        }
+      }
+    }
+  };
+
+  /**
+   * 🗺️ 全域導航監聽 (修復返回鍵失效)
+   */
+  document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.nav-back');
+    if (!btn) return;
+    const target = btn.getAttribute('data-target');
+    if (target) {
+      showPage(target);
+    }
+  });
+
+  function showPage(pageId) {
+    console.log('正在跳轉至：' + pageId);
+    
+    // 1. 強制隱藏所有頁面
+    document.querySelectorAll('.page').forEach(function(p) {
+      p.classList.remove('active');
+      p.style.display = 'none';
+    });
+
+    // 2. 顯示目標頁面
+    const target = document.getElementById(pageId);
+    if (target) {
+      target.classList.add('active');
+      target.style.display = 'flex';
+      window.scrollTo(0, 0);
+    }
+
+    // 3. 🏗️ Logo 智能切換 (右上角回首頁)
+    const logo = document.getElementById('persistentLogo');
+    if (logo) {
+      if (pageId === 'page-dashboard' || pageId === 'splash-page' || pageId === 'page-client-view') {
+        logo.classList.remove('minimized');
+        logo.style.display = 'none';
+      } else {
+        logo.style.display = 'flex';
+        // 🚀 強制觸發重繪
+        void logo.offsetWidth; 
+        logo.classList.add('minimized');
+      }
+    }
+
+    if (pageId === 'sales-page') loadSalesList();
+  }
+
+  function selectSales(name) {
+    state.currentSales = name;
+    try { localStorage.setItem('ag_current_sales', name); } catch(e){}
+    document.getElementById('sales-name-display').innerText = name;
+    // 背景觸發配送單檢查
+    if (typeof checkDeliveryBadge === 'function') checkDeliveryBadge(name);
+
+    // 🎭 持續呼吸與淡化效果
+    var buttons = document.querySelectorAll('.btn-sales-premium');
+    buttons.forEach(function (btn) {
+      const btnName = btn.innerText.trim();
+      if (btnName === name) {
+        btn.classList.add('selected');
+        btn.classList.remove('fade-out');
+      } else {
+        btn.classList.remove('selected');
+        btn.classList.add('fade-out');
+      }
+    });
+
+    const logo = document.getElementById('persistentLogo');
+    if (logo) {
+        logo.style.display = 'flex';
+        logo.classList.add('minimized');
+    }
+
+    if (state.currentFlow === 'sales') {
+      setTimeout(function() {
+        if (typeof window.openSalesModule === 'function') {
+           window.openSalesModule();
+        }
+      }, 500);
+      return;
+    }
+
+    if (state.currentFlow === 'fieldwork') {
+      setTimeout(function() {
+        if (typeof window.openFieldWorkModule === 'function') {
+           window.openFieldWorkModule();
+        }
+      }, 500);
+      return;
+    }
+
+    if (state.currentFlow === 'delivery') {
+      setTimeout(function() {
+        if (typeof window.openDeliveryModule === 'function') {
+           window.openDeliveryModule();
+        }
+      }, 500);
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success) {
+          state.allCustomers = res.data;
+          renderCustomerList(res.data);
+          switchToPage('page-select-customer');
+        } else {
+          if (logo) {
+            logo.style.display = 'flex';
+            logo.classList.add('minimized');
+          }
+        }
+      })
+      .getCustomerList(name);
+  }
+
+  /**
+   * 🟡 階段 2：客戶邏輯 (4 欄網格)
+   */
+  function renderCustomerList(data) {
+    var grid = document.getElementById('customer-grid');
+    grid.innerHTML = '';
+
+    var visible = data.filter(function(c) { return !c.hidden; });
+    var hiddenList = data.filter(function(c) { return c.hidden; });
+
+    // 依等級分組：特 → A → B → C → 未分級
+    var levelOrder = ['特', 'A', 'B', 'C'];
+    var levelLabel = { '特': '特級', 'A': 'A級', 'B': 'B級', 'C': 'C級', '': '未分級' };
+    var groups = {};
+    visible.forEach(function(c) {
+      var lv = String(c.level || '').trim();
+      var key = levelOrder.indexOf(lv) !== -1 ? lv : '';
+      (groups[key] = groups[key] || []).push(c);
+    });
+
+    function makeItem(c, isHidden) {
+      var item = document.createElement('div');
+      item.className = 'customer-item';
+      item.style.position = 'relative';
+      if (isHidden) item.style.opacity = '0.5';
+      item.innerHTML = '<div class="customer-name">' + c.name + '</div>';
+
+      // 👁 顯示/隱藏切換鈕
+      var eye = document.createElement('div');
+      eye.innerText = isHidden ? '＋' : '－';
+      eye.title = isHidden ? '恢復顯示' : '隱藏此客戶';
+      eye.style.cssText = 'position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%;' +
+        'background:rgba(0,0,0,0.7); border:1px solid rgba(255,255,255,0.3); color:rgba(255,255,255,0.7);' +
+        'font-size:14px; font-weight:900; display:flex; align-items:center; justify-content:center; z-index:5;';
+      eye.onclick = function(e) {
+        e.stopPropagation();
+        toggleCustomerVisibility(c.name, isHidden);
+      };
+      item.appendChild(eye);
+
+      item.onclick = function () { selectCustomer(c.name); };
+      return item;
+    }
+
+    function addHeader(text) {
+      var h = document.createElement('div');
+      h.style.cssText = 'grid-column:1 / -1; font-size:12px; font-weight:900; letter-spacing:3px; color:rgba(250,204,21,0.75); margin:6px 0 -4px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:4px;';
+      h.innerText = text;
+      grid.appendChild(h);
+    }
+
+    levelOrder.concat(['']).forEach(function(lv) {
+      var list = groups[lv];
+      if (!list || !list.length) return;
+      addHeader(levelLabel[lv] + '（' + list.length + '）');
+      list.forEach(function(c) { grid.appendChild(makeItem(c, false)); });
+    });
+
+    // 🙈 未顯示版面區（預設收合）
+    if (hiddenList.length) {
+      var det = document.createElement('details');
+      det.style.cssText = 'grid-column:1 / -1; margin-top:16px; border:1px solid rgba(255,255,255,0.12); border-radius:12px; background:rgba(255,255,255,0.03);';
+      var sum = document.createElement('summary');
+      sum.style.cssText = 'padding:10px 14px; cursor:pointer; font-size:13px; font-weight:800; color:rgba(255,255,255,0.5); letter-spacing:2px; list-style:none;';
+      sum.innerText = '🙈 未顯示版面（' + hiddenList.length + '）';
+      det.appendChild(sum);
+      var inner = document.createElement('div');
+      inner.style.cssText = 'display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; padding:12px;';
+      hiddenList.forEach(function(c) { inner.appendChild(makeItem(c, true)); });
+      det.appendChild(inner);
+      grid.appendChild(det);
+    }
+  }
+
+  // 👁 切換客戶版面顯示
+  window.toggleCustomerVisibility = function(custName, makeVisible) {
+    // 樂觀更新：先改本地資料重繪，再送後端
+    (state.allCustomers || []).forEach(function(c) {
+      if (c.name === custName) c.hidden = !makeVisible;
+    });
+    renderCustomerList(state.allCustomers || []);
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showToast(res.msg || (res.success ? '已更新' : '更新失敗'));
+        if (!res.success) {
+          // 失敗回滾
+          (state.allCustomers || []).forEach(function(c) {
+            if (c.name === custName) c.hidden = makeVisible;
+          });
+          renderCustomerList(state.allCustomers || []);
+        }
+      })
+      .withFailureHandler(function(err) {
+        showToast('更新失敗：' + err);
+        (state.allCustomers || []).forEach(function(c) {
+          if (c.name === custName) c.hidden = makeVisible;
+        });
+        renderCustomerList(state.allCustomers || []);
+      })
+      .setCustomerVisibility(custName, makeVisible, state.currentSales);
+  };
+
+  // ➕ 新增客戶（寫入內部管理「業務分區」）
+  window.addNewCustomer = function() {
+    var name = prompt('請輸入新客戶名稱：');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    var sales = state.currentSales;
+    if (!sales) { showToast('請先選擇業務'); return; }
+
+    showLoading(true, true, '正在新增客戶...');
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        showToast(res.msg || (res.success ? '新增成功' : '新增失敗'));
+        if (res.success) {
+          // 重新載入客戶列表
+          selectSales(sales);
+        }
+      })
+      .withFailureHandler(function(err) {
+        showLoading(false);
+        showToast('新增失敗：' + err);
+      })
+      .addCustomerToZoning(name, sales);
+  };
+
+  function selectCustomer(customerName, callback) {
+    state.selectedCustomer = customerName;
+    document.getElementById('album-customer-title').innerText = customerName;
+
+    showLoading(true, true, '正在讀取版面資料...');
+
+    google.script.run
+      .withSuccessHandler(function (response) {
+        showLoading(false);
+        if (response.success) {
+          state.currentCustomer = customerName; // 🚀 更新當前客戶
+          state.currentDisplays = response.active;
+          state.historyDisplays = response.history;
+          state.currentIndex = 0;
+          
+          if (typeof resetCustomerTabs === 'function') resetCustomerTabs(); // 🚀 重置 Tab
+          
+          renderAlbum();
+          renderHistory();
+          window.switchToPage('page-album');
+          if (typeof callback === 'function') callback();
+        } else {
+          showToast('伺服器回傳錯誤: ' + (response.msg || '未知'), 'error');
+        }
+      })
+      .withFailureHandler(function (err) {
+        showLoading(false);
+        showToast('讀取失敗: ' + (err.message || err), 'error');
+      })
+      .getCustomerDisplays(customerName);
+  }
+
+  /**
+   * 🔴 階段 3：相簿邏輯
+   */
+  /**
+   * 🔴 階段 3：相簿邏輯 (分組與銷售排序版)
+   */
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  function renderAlbum(isHistory = false) {
+    var targetGridId = isHistory ? 'history-grid' : 'album-grid';
+    var grid = document.getElementById(targetGridId);
+    if (!grid) return;
+
+    var displayData = isHistory ? state.historyDisplays : state.currentDisplays;
+
+    if (!displayData || displayData.length === 0) {
+      grid.innerHTML = isHistory ? '' : '<div style="grid-column:span 2; padding:60px 20px; text-align:center; color:var(--gray-600);">' +
+        '<div style="font-size:48px; margin-bottom:15px;">🌑</div>' +
+        '<div style="font-weight:700;">此客戶暫無陳列資料</div></div>';
+      return;
+    }
+
+    // 1. 按圖片分組
+    var groups = {};
+    displayData.forEach(function (d) {
+      var key = d.photoUrl || 'no-photo';
+      if (!groups[key]) {
+        groups[key] = {
+          photoUrl: d.photoUrl,
+          items: [],
+          totalSalesAmt: 0,
+          totalSalesQty: 0,
+          totalFrequency: 0,
+          series: d.series,
+          skuList: []
+        };
+      }
+      groups[key].items.push(d);
+      // 🔥 使用該客戶專屬的銷售數據進行聚合
+      groups[key].totalSalesAmt += (d.customerSalesAmt || 0);
+      groups[key].totalSalesQty += (d.customerSalesQty || 0);
+      groups[key].totalFrequency += (d.frequency || 0);
+      groups[key].totalReservedQty = (groups[key].totalReservedQty || 0) + (d.customerReservedQty || 0);
+
+      if (d.customerReservedSummary) {
+        if (!groups[key].reservedSummaryList) groups[key].reservedSummaryList = [];
+        groups[key].reservedSummaryList.push(d.customerReservedSummary);
+      }
+
+      groups[key].skuList.push(d.sku);
+    });
+
+    // 2. 轉換為陣列並進行智慧排序
+    var sortedGroups = Object.values(groups);
+    var albumSortSelect = document.getElementById('album-sort-select');
+    var albumSortMethod = albumSortSelect ? albumSortSelect.value : 'amount';
+
+    sortedGroups.sort(function (a, b) {
+      if (albumSortMethod === 'pyeong') return b.totalSalesQty - a.totalSalesQty;
+      if (albumSortMethod === 'amount') return b.totalSalesAmt - a.totalSalesAmt;
+      if (albumSortMethod === 'days') return (b.items[0].daysOnDisplay || 0) - (a.items[0].daysOnDisplay || 0);
+      if (albumSortMethod === 'status') {
+        var getWorst = function (g) { return Math.min.apply(null, g.items.map(function (i) { return i.stockLevel || 3; })); };
+        var res = getWorst(a) - getWorst(b);
+        if (res !== 0) return res;
+        return b.totalSalesAmt - a.totalSalesAmt;
+      }
+      if (albumSortMethod === 'frequency') return b.totalFrequency - a.totalFrequency;
+      if (albumSortMethod === 'update') {
+        const dateA = a.items[0].lastUpdate ? new Date(a.items[0].lastUpdate).getTime() : 0;
+        const dateB = b.items[0].lastUpdate ? new Date(b.items[0].lastUpdate).getTime() : 0;
+        return dateB - dateA;
+      }
+      return b.totalSalesAmt - a.totalSalesAmt; // 預設金額
+    });
+
+    // 3. 預載入圖片優化效能
+    if (sortedGroups.length > 0) preloadImages(sortedGroups);
+
+    var html = '';
+    sortedGroups.forEach(function (group, gIdx) {
+      // 找出該組的銷冠
+      var champion = group.items.reduce(function (prev, current) {
+        return (prev.salesAmt > current.salesAmt) ? prev : current;
+      });
+      group.championSku = champion.sku;
+      group.champPct = Math.round((champion.salesAmt / group.totalSalesAmt) * 100);
+
+      // 🚦 庫存燈號標準邏輯 (2025 第二版: 1紅, 2橘, 3黃, 4綠)
+      var itemsWithInv = group.items.map(function(li) {
+        var skuKey = li.sku.replace(/[\s\-]/g,'').toUpperCase();
+        var inv = state.inventoryData.find(function(d){ 
+          return d.sku.replace(/[\s\-]/g,'').toUpperCase() === skuKey; 
+        });
+        if (!inv) {
+          console.warn("⚠️ 庫存匹配未找到 (用後端預設):", li.sku, "skuKey:", skuKey, "後備等級:", li.stockLevel);
+          // 🚀 將後端 3 燈等級對齊 2025 新標準 (後端 1 -> 新 1紅, 後端 2 -> 新 2橘/黃, 後端 3 -> 新 4綠)
+          var translatedLevel = 4;
+          if (li.stockLevel === 1) translatedLevel = 1;
+          else if (li.stockLevel === 2) translatedLevel = 2;
+          else if (li.stockLevel === 3) translatedLevel = 4;
+          return { level: translatedLevel, hasArrival: false, pyeong: 999 };
+        }
+        return inv;
+      });
+      
+      var worstLevel = 4;
+      if (itemsWithInv.length > 0) {
+        worstLevel = Math.min.apply(null, itemsWithInv.map(function(i) { return i.level; }));
+      }
+      var anyArrival = itemsWithInv.some(function(i) { return i.hasArrival; });
+      
+      // 🚀 對齊客戶三色燈框要求：
+      // - 完全沒貨 (Level 1) -> 紅色框 (border-red)
+      // - 快缺貨 (Level 2 & 3) -> 黃色框 (border-yellow)
+      // - 沒缺貨 (Level 4) -> 綠色框 (border-green)
+      var borderClass = worstLevel === 1 ? 'border-red' 
+                      : (worstLevel === 2 || worstLevel === 3) ? 'border-yellow' 
+                      : 'border-green';
+      
+      // 如果有到貨則疊加藍色閃爍
+      if (anyArrival) borderClass += ' arrival-blue-pulse';
+
+      var imgUrl = (group.photoUrl && group.photoUrl !== "")
+        ? group.photoUrl
+        : 'https://placehold.co/800x800/1a1a1a/ffffff?text=Loading...';
+
+      // 🚀 格式化日期：2024/04/28 15:18 -> 24/4/28
+      var rawDate = group.items[0].lastUpdate || '—';
+      var shortDate = rawDate;
+      if (rawDate !== '—') {
+        var datePart = rawDate.split(' ')[0]; // 取日期部分
+        var parts = datePart.split('/');
+        if (parts.length === 3) {
+          shortDate = parts[0].substring(2) + '/' + parseInt(parts[1]) + '/' + parseInt(parts[2]);
+        }
+      }
+
+      var durationStr = formatDaysToDuration(group.items[0].daysOnDisplay);
+
+      html += '<div class="album-item ' + borderClass + '" onclick="showGroupDetail(' + gIdx + ', ' + isHistory + ')">' +
+        '<img src="' + imgUrl + '" class="album-thumb" ' +
+        'onerror="this.onerror=null; this.src=\'https://placehold.co/800x800/1a1a1a/666?text=載入失敗\'" ' +
+        'loading="lazy">' +
+
+        // 🔝 頂部標籤組 (左上: 金額/坪數, 右上: 系列名稱)
+        '<div class="card-top-badges">' +
+          (state.isClientView ? '' :
+            '<div class="mini-stat">' +
+            Math.round(group.totalSalesAmt / 10000) + '萬 / ' + Math.round(group.totalSalesQty) + '坪' +
+            '</div>') +
+          (group.totalReservedQty > 0 ? 
+            '<div class="mini-stat" style="background:rgba(234,179,8,0.35); color:#facc15; border-color:rgba(234,179,8,0.5); margin-top:4px; cursor:pointer;" ' +
+            'onclick="event.stopPropagation(); showReserveInfo(\'' + encodeURIComponent(JSON.stringify(group.reservedSummaryList || [])) + '\')">' +
+            '保留 ' + group.totalReservedQty + ' 片</div>' : '') +
+        '</div>' +
+        
+        '<div style="position:absolute; top:12px; right:12px; z-index:5; text-align:right;">' +
+          '<div style="font-size:15px; font-weight:900; color:#fff; text-shadow:0 0 10px rgba(0,0,0,0.8);">' + escapeHtml(group.series || '未命名') + '</div>' +
+        '</div>' +
+
+        // 🧊 玻璃化底部遮罩 (強制採用 Row 佈局，讓日期與天數分居左右底部)
+        '<div class="card-glass-overlay" style="display:flex; flex-direction:row; justify-content:space-between; align-items:flex-end; padding:8px 12px; background:linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 40%, transparent 100%);">' +
+          '<div>' +
+            '<div class="date-badge" style="color:#facc15; font-weight:800; font-size:12px; margin-bottom:2px;">' + shortDate + '</div>' +
+          '</div>' +
+          '<div style="font-size:13px; font-weight:900; color:rgba(255,255,255,0.9); letter-spacing:1px; text-shadow:0 0 10px rgba(0,0,0,0.8); margin-bottom:2px;">' + 
+            durationStr + '</div>' +
+        '</div>' +
+        '</div>';
+    });
+
+    // 存儲排序後的組到 state 供詳情使用
+    if (isHistory) state.sortedHistoryGroups = sortedGroups;
+    else state.sortedGroups = sortedGroups; 
+    
+    grid.innerHTML = html;
+  }
+
+  function renderHistory() {
+    renderAlbum(true);
+  }
+
+  window.toggleHistory = function() {
+    var grid = document.getElementById('history-grid');
+    var icon = document.getElementById('history-toggle-icon');
+    if (grid.style.display === 'none') {
+      grid.style.display = 'grid';
+      icon.innerText = '▲';
+      grid.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      grid.style.display = 'none';
+      icon.innerText = '▼';
+    }
+  };
+
+  /**
+   * 🛠️ 管理功能：下架 (保留紀錄)
+   */
+  window.offShelfLayout = function() {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!confirm('📌 下架確認：\n確定此版面已撤除？(將保留於歷史紀錄中)')) return;
+
+    showLoading(true, false, '正在下架處理...');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          showToast("📦 已成功下架！資料已移至下方的『歷史下架紀錄』", "success");
+          closeDetail();
+          selectCustomer(state.selectedCustomer); // 重新整理
+        } else {
+          showToast("❌ 操作失敗: " + res.msg, "error");
+        }
+      })
+      .offShelfDisplayBatch(state.selectedCustomer, group.items.map(function (i) { return i.sku; }), state.currentSales, group.photoUrl);
+  };
+
+  /**
+   * 🛠️ 管理功能：誤傳刪除 (不留紀錄)
+   */
+  window.deleteLayoutPermanent = function() {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!confirm('⚠️ 永久刪除確認：\n這是誤傳的嗎？刪除後「不留紀錄」且會「刪除照片」。\n確定繼續？')) return;
+
+    showLoading(true, false, '正在刪除資料...');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          showToast("🚮 已永久刪除！請點擊右上角 🔄 重新整理以更新顯示", "success");
+          closeDetail();
+          selectCustomer(state.selectedCustomer); // 重新整理
+        } else {
+          showToast("❌ 刪除失敗: " + res.msg, "error");
+        }
+      })
+      .deleteDisplayBatchPermanent(state.selectedCustomer, group.items.map(function (i) { return i.sku; }), group.photoUrl);
+  };
+
+  /**
+   * 🖼️ 輔助：圖片預載入引擎
+   */
+  function preloadImages(groups) {
+    groups.forEach(function (g) {
+      if (g.photoUrl) {
+        const img = new Image();
+        img.src = g.photoUrl;
+      }
+    });
+  }
+
+  /**
+   * 🚀 輔助：格式化 SKU 清單 (智慧過濾)
+   * 如果品項過多 (>3)，則只顯示缺貨的型號
+   */
+  function formatSkuListSmart(items, championSku) {
+    // 過濾出僅缺貨的品項
+    var oosItems = items.filter(function (i) { return i.stockLevel === 1; });
+
+    if (oosItems.length > 0) {
+      return '<span style="color:rgba(255,255,255,0.5)">缺貨:</span> ' + oosItems.map(function (i) {
+        // 顯示完整編號
+        return '<span class="oos" style="color:#ff3b30; font-weight:800;">' + i.sku + '</span>';
+      }).join('、');
+    }
+
+    // 如果沒有缺貨，顯示前兩個完整編號
+    return items.slice(0, 2).map(function (i) {
+      return i.sku;
+    }).join('、') + (items.length > 2 ? '...' : '');
+  }
+
+  /**
+   * 🚀 輔助：格式化 SKU 清單，將重複部分簡碼化 (保留後 3 碼)
+   * (Legacy - Keep for single SKU cases)
+   */
+  function formatSkuList(skuStr, championSku) {
+    // ... logic already updated in formatSkuListSmart
+    return skuStr;
+  }
+
+  window.showGroupDetail = function (gIdx, isHistory = false) {
+    state.currentGIdx = gIdx;
+    var group = isHistory ? state.sortedHistoryGroups[gIdx] : state.sortedGroups[gIdx];
+    if (!group) return;
+
+    var d = group.items[0];
+    var imgUrl = (group.photoUrl && group.photoUrl !== "")
+      ? group.photoUrl
+      : 'https://placehold.co/800x800/0a0a0a/666?text=無圖片';
+
+    document.getElementById('detail-img').src = imgUrl;
+    document.getElementById('detail-series').innerText = group.series || '';
+    document.getElementById('detail-last-update').innerText = d.lastUpdate || '';
+
+    renderSkuDetailList(isHistory);
+
+    // 📊 更新數據統計區
+    document.getElementById('detail-date-v2').innerHTML = isHistory ? `
+      <div style="font-size:11px; color:#ff3b30;">上架: ${d.installDate}</div>
+      <div style="font-size:11px; color:#ff3b30; font-weight:800;">下架: ${d.offDate}</div>
+    ` : `
+      <div style="font-size:11px; opacity:0.6;">上架: ${d.installDate}</div>
+      <div style="font-size:11px; color:#facc15; margin-top:2px;">更新: ${d.lastUpdate || d.installDate}</div>
+    `;
+    document.getElementById('detail-days-v2').innerText = isHistory ? '已結案' : formatDaysToDuration(d.daysOnDisplay);
+    document.getElementById('detail-mode-select').value = d.mode || '版面';
+
+    var totalQty = Math.round(group.totalSalesQty || 0);
+    var totalAmt = Math.round(group.totalSalesAmt / 10000 || 0);
+    if (totalQty > 0 || totalAmt > 0) {
+      document.getElementById('detail-sales-v2').innerText = Math.round(totalQty) + ' 坪 / ' + totalAmt + ' 萬';
+    } else {
+      document.getElementById('detail-sales-v2').innerText = '—';
+    }
+
+    // 🚀 客戶模式隱藏管理功能與銷售數據
+    if (state.isClientView || isHistory) {
+      document.getElementById('normal-actions').style.display = 'none';
+      document.getElementById('edit-photo-overlay').style.display = 'none';
+      const stats = document.querySelectorAll('.detail-stats-grid .stat-item');
+      if (stats.length >= 4) stats[3].style.display = 'none';
+    } else {
+      document.getElementById('normal-actions').style.display = 'grid';
+      document.getElementById('edit-photo-overlay').style.display = 'block';
+      const stats = document.querySelectorAll('.detail-stats-grid .stat-item');
+      if (stats.length >= 4) stats[3].style.display = 'block';
+    }
+
+    document.getElementById('detail-modal').style.display = 'flex';
+    document.getElementById('detail-modal').scrollTop = 0;
+  };
+
+  /**
+   * 🔗 分享功能
+   */
+  window.shareCustomerLink = function () {
+    const url = "https://bigt.cc/ait/inventory.html?customer=" + encodeURIComponent(state.selectedCustomer) + "&view=client";
+    copyToClipboard(url, "客戶查庫存連結已複製");
+  };
+
+  window.shareLayoutLink = function () {
+    const url = "https://bigt.cc/ait/inventory.html?customer=" + encodeURIComponent(state.selectedCustomer) +
+      "&view=client&layoutIdx=" + state.currentGIdx;
+    copyToClipboard(url, "此版面專屬連結已複製");
+  };
+
+  function copyToClipboard(text, successMsg) {
+    if (navigator.share && /mobile/i.test(navigator.userAgent)) {
+      navigator.share({
+        title: '高雅瓷 - 版面查庫存',
+        url: text
+      }).catch(err => console.log('Share failed', err));
+    } else {
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      showToast(successMsg || "連結已複製到剪貼簿");
+    }
+  }
+
+  /**
+   * 📦 動態渲染品項列表
+   */
+  function renderSkuDetailList(isHistory = false) {
+    var list = document.getElementById('sku-detail-list');
+    var group = isHistory ? state.sortedHistoryGroups[state.currentGIdx] : state.sortedGroups[state.currentGIdx];
+    if (!list || !group) return;
+
+    var listContainer = document.getElementById('sku-detail-list');
+    var listHtml = "";
+
+    var sortEl = document.getElementById('sku-sort-select');
+    var sortMethod = sortEl ? sortEl.value : 'stock';
+    var items = group.items.slice();
+
+    // 排序
+    if (sortMethod === 'sales') {
+      items.sort(function(a, b) { return (b.salesAmt || 0) - (a.salesAmt || 0); });
+    } else if (sortMethod === 'stock') {
+      items.sort(function(a, b) { return (a.stockLevel || 3) - (b.stockLevel || 3); });
+    } else if (sortMethod === 'id') {
+      items.sort(function(a, b) { return a.sku.localeCompare(b.sku); });
+    }
+
+    items.forEach(function(item) {
+      // ✅ 從 inventoryData 撈即時庫存（不依賴後端回傳的 currentPyeong）
+      var invItem = null;
+      if (state.inventoryData && state.inventoryData.length > 0) {
+        var skuKey = normalizeSkuKey(item.sku);
+        invItem = state.inventoryData.find(function(d) {
+          return normalizeSkuKey(d.sku) === skuKey;
+        });
+      }
+
+      // 庫存數字：優先用即時資料，沒有才用後端回傳值
+      var stockP  = invItem ? parseFloat(invItem.pyeong) : parseFloat(item.currentPyeong || 0);
+      var stockQ  = invItem ? parseFloat(invItem.qty)    : parseFloat(item.currentStock  || 0);
+      var level   = invItem ? invItem.level  : (item.stockLevel || (stockP < 1 ? 1 : 4));
+      
+      // 🚀 最終保險：如果算出來是 0 坪或負數，強制給予等級 1 (紅)
+      if (stockP < 1) level = 1;
+
+      // 銷售數字
+      var salesP  = Math.round(item.salesQty || 0);
+
+      // 批號與片數（版面上架清單的記錄）
+      var batchDisplay = item.batch ? item.batch : '—';
+      var qtyDisplay   = item.originalQty || 1;
+
+      // 單磚圖：優先用 inventoryData 的圖（品質較好）
+      var singleImg    = (invItem && invItem.img) ? invItem.img : (item.singleImg || '');
+      var hasSingleImg = singleImg && singleImg.trim() !== '';
+
+      // 燈號樣式 (2025 第二版)
+      var oosClass = '';
+      if (level === 1) oosClass = 'oos-red';
+      else if (level === 2) oosClass = 'oos-orange';
+      else if (level === 3) oosClass = 'oos-yellow';
+      
+      if (invItem && invItem.hasArrival) oosClass += ' arrival-blue-pulse';
+
+      // 縮圖
+      var imgHtml = hasSingleImg
+        ? '<img src="' + singleImg + '" class="sku-row-thumb" onerror="this.src=\'https://placehold.co/200x200/1a1a1a/666?text=ERR\'">'
+        : '<div class="sku-row-thumb" style="background:rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.1); font-size:10px;">無圖</div>';
+
+      var onClickHtml = state.isClientView ? '' : ' onclick="enterEditMode()"';
+
+      listHtml +=
+        '<div class="sku-row ' + oosClass + '"' + onClickHtml + '>' +
+          imgHtml +
+          '<div class="sku-row-content">' +
+
+            // 編號 + 片數批號
+            '<div class="sku-row-top" style="display:flex; justify-content:space-between; align-items:center;">' +
+              '<div class="sku-row-id">' + item.sku +
+                '<span style="font-size:11px; color:rgba(255,255,255,0.4); margin-left:8px;">' +
+                  qtyDisplay + '片 ' + batchDisplay + (item.spec ? ' (' + item.spec + ')' : '') +
+                '</span>' +
+              '</div>' +
+              (state.isClientView ? '' :
+                '<button onclick="event.stopPropagation(); closeDetail(); switchAlbumTab(\'reserved\'); setTimeout(function(){ openAddReservationModal(\'' + item.sku.replace(/'/g, "\\'") + '\') }, 150);" ' +
+                'style="background:var(--ait-gold-soft); color:var(--ait-gold); border:1px solid rgba(194,157,102,0.4); border-radius:6px; font-size:11px; font-weight:800; padding:2px 8px; cursor:pointer; z-index:10;">' +
+                '📝 保留</button>'
+              ) +
+            '</div>' +
+
+            // 庫存 + 銷售
+            '<div style="display:flex; justify-content:space-between; margin-top:6px;">' +
+              (state.isClientView ? '' :
+                '<div style="font-size:13px; font-weight:700; color:#facc15;">現貨 ' + Math.round(stockP) + ' 坪</div>'
+              ) +
+              '<div style="font-size:13px; font-weight:700; color:#34c759;">售出 ' + salesP + ' 坪</div>' +
+            '</div>' +
+
+            // 🚀 總庫存 & 保留展示
+            (state.isClientView || !invItem ? '' :
+              '<div style="font-size:11px; color:rgba(255,255,255,0.3); margin-top:4px; font-weight:600;">' +
+                '總庫存 ' + (invItem.physical || 0) + ' 片 ┃ 總保留 ' + (invItem.reserved || 0) + ' 片' +
+              '</div>' +
+              (item.customerReservedQty > 0 ? 
+                '<div style="font-size:11px; color:#facc15; margin-top:4px; font-weight:900; background:rgba(234,179,8,0.1); padding:4px 8px; border-radius:6px; border:1px solid rgba(234,179,8,0.2);">' +
+                  '此客戶已保留 ' + item.customerReservedQty + ' 片 (' + item.customerReservedCases + ')' +
+                '</div>' : ''
+              )
+            ) +
+
+            // 缺貨警示
+            (level === 1 ?
+              '<div style="margin-top:6px; background:rgba(0,0,0,0.3); border:1px solid #fff;' +
+              'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#fff;">⚫ 絕後 / 缺貨中</div>'
+            : level === 2 ?
+              '<div style="margin-top:6px; background:rgba(255,59,48,0.1); border:1px solid rgba(255,59,48,0.3);' +
+              'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#ff3b30;">🔴 補貨安排中</div>'
+            : '') +
+
+            // 到貨提示
+            (invItem && invItem.hasArrival ?
+              '<div style="margin-top:6px; background:rgba(0,122,255,0.15); border:1px solid #007aff;' +
+              'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#007aff;">🔵 預計 ' + (invItem.eta || '近期') + ' 到貨' + (invItem.etaQty > 0 ? ' ' + Math.floor(invItem.etaQty) + ' 片' : '') + '</div>'
+            : '') +
+
+          '</div>' +
+        '</div>';
+    });
+
+    listContainer.innerHTML = listHtml;
+  };
+
+  window.sortSkuList = function (method) {
+    renderSkuDetailList();
+  };
+
+  /**
+   * ⏳ 輔助：將天數轉換為幾年幾個月
+   */
+  function formatDaysToDuration(days) {
+    if (!days || days < 0) return "0M";
+    var years = Math.floor(days / 365);
+    var remainingDays = days % 365;
+    var months = Math.floor(remainingDays / 30);
+
+    var result = "";
+    if (years > 0) result += years + "Y";
+    if (months > 0 || (years === 0 && months === 0)) result += (months || 0) + "M";
+    else if (months > 0) result += months + "M";
+
+    // 確保 1Y3M 格式
+    if (years > 0 && months > 0) return years + "Y" + months + "M";
+    if (years > 0) return years + "Y";
+    return (months || 0) + "M";
+  }
+
+  // 🚀 遠端更新展示方式
+  window.updateLayoutMode = function (newMode) {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!group) return;
+
+    showLoading(true, false, '正在更新展示方式...');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          console.log('展示方式已更新');
+          // 更新本地狀態以免重新抓取
+          group.items.forEach(function (i) { i.mode = newMode; });
+        }
+      })
+      .updateLayoutFieldBatch(state.selectedCustomer, group.items.map(function (i) { return i.sku; }), 'mode', newMode);
+  };
+
+
+
+  function closeDetail() {
+    document.getElementById('detail-modal').style.display = 'none';
+  }
+
+  // 🟢 導航引擎 (終極修復方案 2)
+  window.switchToPage = function (targetId) {
+    console.log('正在跳轉至：', targetId);
+
+    // 🧹 返回業務頁面時，清除按鈕動畫狀態
+    if (targetId === 'sales-page') {
+      var buttons = document.querySelectorAll('.btn-sales-premium');
+      buttons.forEach(function (btn) {
+        btn.classList.remove('selected', 'fade-out');
+      });
+    }
+
+
+    // 🚀 控制 Logo 顯示：僅在登入頁/業務選單顯示
+    const logo = document.getElementById('persistentLogo');
+    if (logo) {
+      if (targetId === 'sales-page' || targetId === 'splash-page') {
+        logo.style.display = 'flex';
+      } else {
+        logo.style.display = 'none';
+      }
+    }
+
+    var allPages = document.querySelectorAll('.page');
+    allPages.forEach(function (p) {
+      p.classList.remove('active');
+    });
+    var targetPage = document.getElementById(targetId);
+    if (targetPage) {
+      targetPage.classList.add('active');
+    } else {
+      console.error('找不到頁面：', targetId);
+    }
+  };
+
+  // 事件委派：綁定所有返回按鈕
+  function bindBackButtons() {
+    document.addEventListener('click', function (e) {
+      var target = e.target;
+      var backBtn = target.closest('.nav-back');
+      if (backBtn) {
+        e.preventDefault();
+        var targetId = backBtn.getAttribute('data-target');
+        console.log('偵測到返回點擊，目標：', targetId);
+        if (targetId) {
+          window.switchToPage(targetId);
+        }
+      }
+    });
+  }
+
+  window.selectSales = selectSales;
+  window.selectCustomer = selectCustomer;
+  window.showGroupDetail = showGroupDetail;
+  window.closeDetail = closeDetail;
+  window.showLoading = showLoading;
+
+  /**
+   * 🛠️ 管理功能：移除版面
+   */
+
+  /**
+   * 🛠️ 管理功能：進入編輯模式
+   */
+  window.enterEditMode = function () {
+    state.isEditMode = true;
+    var group = state.sortedGroups[state.currentGIdx];
+    var firstItem = group.items[0];
+
+    // 初始化暫存清單 (包含批號、尺寸、規格)
+    state.editItems = group.items.map(function (i) {
+      return { 
+        sku: i.sku, 
+        qty: i.originalQty || 1, 
+        batch: i.batch || '',
+        size: i.size || '',
+        spec: i.spec || ''
+      };
+    });
+    state.newPhotoData = null; // 重設新照片暫存
+
+    // 帶入系列與尺寸
+    document.getElementById('edit-series-input').value = group.series || '';
+    document.getElementById('edit-size-input').value = firstItem.size || '';
+
+    document.getElementById('normal-actions').style.display = 'none';
+    document.getElementById('edit-actions').style.display = 'grid';
+    document.getElementById('edit-global-fields').style.display = 'grid';
+    document.getElementById('detail-stats-grid').style.display = 'none';
+    document.getElementById('edit-photo-overlay').style.display = 'block'; // 顯示照片替換按鈕
+    document.getElementById('btn-add-sku').style.display = 'block';
+    document.getElementById('btn-close-modal').style.display = 'none';
+    renderEditRows();
+  };
+
+  window.exitEditMode = function () {
+    state.isEditMode = false;
+    state.editItems = null;
+    state.newPhotoData = null;
+    document.getElementById('normal-actions').style.display = 'grid';
+    document.getElementById('edit-actions').style.display = 'none';
+    document.getElementById('edit-global-fields').style.display = 'none';
+    document.getElementById('detail-stats-grid').style.display = 'grid';
+    document.getElementById('edit-photo-overlay').style.display = 'none';
+    document.getElementById('btn-add-sku').style.display = 'none';
+    document.getElementById('btn-close-modal').style.display = 'block';
+    showGroupDetail(state.currentGIdx);
+  };
+
+  window.triggerPhotoUpload = function () {
+    document.getElementById('edit-photo-input').click();
+  };
+
+  window.handleEditPhotoChange = function (input) {
+    if (input.files && input.files[0]) {
+      // 🚀 如果還沒在編輯模式，點擊更換照片即自動進入，確保使用者能看到「儲存」按鈕
+      if (!state.isEditMode) {
+        enterEditMode();
+      }
+      var file = input.files[0];
+
+      // 🚀 修改時也嘗試從照片讀取位置
+      processImageGps(file, function(gps) {
+        if (gps) {
+          state.newGpsData = gps; // 暫存新座標
+          document.getElementById('detail-gps-badge').style.display = 'block';
+          showToast('✨ 已讀取照片定位，存檔時將自動更新', 'success');
+        } else {
+          document.getElementById('detail-gps-badge').style.display = 'none';
+        }
+      });
+
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        state.newPhotoData = {
+          base64: e.target.result.split(',')[1],
+          mimeType: file.type,
+          name: file.name
+        };
+        // 預覽新照片
+        document.getElementById('detail-img').src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  function renderEditRows() {
+    var listContainer = document.getElementById('sku-detail-list');
+    var listHtml = "";
+
+    state.editItems.forEach(function (item, idx) {
+      listHtml += '<div class="sku-edit-row" style="background:rgba(255,255,255,0.03); border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.05);">' +
+        '<div class="edit-row-header" style="display:flex; justify-content:space-between; margin-bottom:10px;">' +
+        '<span class="edit-row-number" style="font-weight:900; color:#facc15;">#' + (idx + 1) + '</span>' +
+        '<button class="btn-remove-row" style="background:none; border:none; color:#ff3b30; font-size:20px;" onclick="removeEditRow(' + idx + ')">×</button>' +
+        '</div>' +
+
+        '<div class="edit-field-group" style="margin-bottom:12px;">' +
+        '<label class="edit-label" style="display:block; font-size:11px; opacity:0.5; margin-bottom:4px;">產品編號</label>' +
+        '<input type="text" class="edit-input" style="width:100%; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; color:#fff;" placeholder="例：SI21207" value="' + item.sku + '" onchange="updateEditData(' + idx + ', \'sku\', this.value)">' +
+        '</div>' +
+
+        '<div class="edit-field-row" style="display:flex; gap:10px;">' +
+        '<div class="edit-field-group" style="flex:1;">' +
+        '<label class="edit-label" style="display:block; font-size:11px; opacity:0.5; margin-bottom:4px;">批號（選填）</label>' +
+        '<input type="text" class="edit-input" style="width:100%; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; color:#fff;" placeholder="例：52P" value="' + (item.batch || '') + '" onchange="updateEditData(' + idx + ', \'batch\', this.value)">' +
+        '</div>' +
+        '<div class="edit-field-group" style="flex:1;">' +
+        '<label class="edit-label" style="display:block; font-size:11px; opacity:0.5; margin-bottom:4px;">片數</label>' +
+        '<input type="number" class="edit-input" style="width:100%; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; color:#fff;" placeholder="例：3" value="' + (item.qty || '') + '" onchange="updateEditData(' + idx + ', \'qty\', this.value)">' +
+        '</div>' +
+        '</div>' +
+
+        '</div>';
+    });
+    listContainer.innerHTML = listHtml;
+  }
+
+  window.addNewEditRow = function () {
+    state.editItems.push({ sku: '', qty: 1 });
+    renderEditRows();
+  };
+
+  window.removeEditRow = function (idx) {
+    if (state.editItems.length <= 1) {
+      showToast('⚠️ 至少要有一個編號');
+      return;
+    }
+    state.editItems.splice(idx, 1);
+    renderEditRows();
+  };
+
+  window.updateEditData = function (idx, field, val) {
+    state.editItems[idx][field] = val;
+  };
+
+  window.saveLayoutEdit = function () {
+    var group = state.sortedGroups[state.currentGIdx];
+    var series = document.getElementById('edit-series-input').value.trim();
+    var size = document.getElementById('edit-size-input').value.trim();
+
+    if (!series) { showToast('⚠️ 請填寫系列名稱'); return; }
+    if (!size) { showToast('⚠️ 請填寫產品尺寸'); return; }
+
+    var validItems = state.editItems.filter(function (i) { return i.sku.trim() !== ""; });
+    if (validItems.length === 0) {
+      showToast('⚠️ 請填寫有效的編號');
+      return;
+    }
+
+    // 將全局欄位套用到所有品項
+    validItems.forEach(function(i) {
+      i.series = series;
+      i.size = size;
+    });
+
+    // 將執行存檔的邏輯獨立，方便 GPS 讀取後調用
+    var doSave = function (gpsData) {
+      showLoadingWithStatus('正在儲存資料...');
+      google.script.run
+        .withSuccessHandler(function (res) {
+          showLoading(false);
+          if (res.success) {
+            group.items = validItems.map(function (vi, idx) {
+              var oldItem = group.items[idx] || group.items[0];
+              return Object.assign({}, oldItem, {
+                sku: vi.sku,
+                batch: vi.batch,
+                originalQty: vi.qty,
+                series: series,
+                size: size,
+                spec: vi.spec
+              });
+            });
+            group.series = series;
+            if (res.finalPhotoUrl) group.photoUrl = res.finalPhotoUrl;
+
+            showToast("✨ 資料已更新！", "success");
+            state.newGpsData = null;
+            state.newPhotoData = null;
+            exitEditMode();
+            renderAlbum();
+          } else {
+            showToast("❌ 存檔失敗: " + res.msg);
+          }
+        })
+        .withFailureHandler(function (err) {
+          showLoading(false);
+          showToast("❌ 連線失敗: " + err.message);
+        })
+        .updateDisplayBatch(state.selectedCustomer, group.photoUrl, validItems, state.newPhotoData, gpsData, state.currentSales);
+    };
+
+    // 📍 優先順序：1. 照片提取的 GPS (newGpsData) > 2. 手機當前 GPS (如果勾選或有新照片)
+    if (state.newGpsData) {
+      doSave(state.newGpsData);
+    } else if (state.newPhotoData && navigator.geolocation) {
+      showLoading(true, true, '正在取得定位...');
+      navigator.geolocation.getCurrentPosition(
+        function (pos) {
+          doSave({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        },
+        function (err) {
+          console.warn("GPS ERROR, ignoring location update...", err);
+          doSave(null);
+        },
+        { timeout: 5000 }
+      );
+    } else {
+      doSave(null);
+    }
+  };
+  function getStockInfo(level) {
+    if (level === 1) return { text: '缺貨', "cls": 'stock-red' };
+    if (level === 2) return { text: '警告', "cls": 'stock-yellow' };
+    return { text: '充足', "cls": 'stock-green' };
+  }
+
+  window.showToast = function (msg) {
+    var container = document.getElementById('toast-container');
+    var toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.innerText = msg;
+    container.appendChild(toast);
+
+    setTimeout(function () {
+      toast.classList.add('fade-out');
+      setTimeout(function () { toast.remove(); }, 300);
+    }, 2500);
+  };
+
+  window.onload = function () {
+    init();
+    bindBackButtons();
+  };
+
+  function extractId(url) {
+    if (!url || typeof url !== 'string') return '';
+
+    // 優先匹配純 ID (28-50 字元)
+    const idMatch = url.match(/[-\w]{28,50}/);
+    if (idMatch) return idMatch[0];
+
+    const patterns = [
+      /\/d\/([a-zA-Z0-9_-]{25,})/,
+      /id=([a-zA-Z0-9_-]{25,})/,
+      /\/file\/d\/([a-zA-Z0-9_-]{25,})/
+    ];
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match) return match[1];
+    }
+    return '';
+  }
+
+  /**
+   * 📱 左側右滑返回功能
+   */
+  (function () {
+    let touchStartX = 0;
+    let touchStartY = 0;
+
+    window.addEventListener('touchstart', e => {
+      touchStartX = e.changedTouches[0].screenX;
+      touchStartY = e.changedTouches[0].screenY;
+    }, false);
+
+    window.addEventListener('touchend', e => {
+      let touchEndX = e.changedTouches[0].screenX;
+      let touchEndY = e.changedTouches[0].screenY;
+
+      // 判斷是否為左向右滑動, 且垂直位移不大
+      if (touchEndX - touchStartX > 100 && Math.abs(touchEndY - touchStartY) < 50) {
+        // 只有從螢幕邊緣附近開始才算
+        if (touchStartX < 50) {
+          handleSwipeBack();
+        }
+      }
+    }, false);
+
+    function handleSwipeBack() {
+      if (document.getElementById('detail-modal').style.display === 'flex') {
+        closeDetail();
+      } else if (document.getElementById('page-album').classList.contains('active')) {
+        window.switchToPage('page-select-customer');
+      } else if (document.getElementById('page-select-customer').classList.contains('active')) {
+        window.switchToPage('sales-page');
+      }
+    }
+  })();
+  // -----------------------------------------------------------------------------
+  // 📸 新增版面與 GPS 定位功能
+  // -----------------------------------------------------------------------------
+
+  var addState = {
+    imageData: null,
+    gpsPos: null
+  };
+
+  window.openAddLayoutModal = function () {
+    addState = { imageData: null, gpsPos: null };
+    document.getElementById('add-photo-preview').innerHTML = '<div class="photo-placeholder">' +
+      '<div style="font-size:40px; margin-bottom:10px;">📸</div>' +
+      '<div style="font-weight:800; font-size:16px;">拍攝現場或從相簿選擇</div>' +
+      '<div style="font-size:12px; opacity:0.6; margin-top:5px;">支援相機拍照與手機相簿上傳</div>' +
+      '</div>';
+    document.getElementById('add-series').value = '';
+    document.getElementById('add-sku-list').innerHTML = '';
+    addNewAddRow();
+    document.getElementById('add-modal').style.display = 'flex';
+
+    // 預先取得定位 (作為備援)
+    if (document.getElementById('add-gps-sync').checked) {
+      updateGpsStatus('loading', '正在取得手機定位...');
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        if (!addState.gpsPos) { 
+          addState.gpsPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          updateGpsStatus('phone', '📍 使用手機即時定位');
+        }
+      }, function (err) { 
+        console.warn("GPS 備援失敗", err); 
+        updateGpsStatus('none', '❌ 無法取得定位');
+      });
+    }
+  };
+
+  window.closeAddModal = function () {
+    document.getElementById('add-modal').style.display = 'none';
+  };
+
+  window.addNewAddRow = function () {
+    var container = document.getElementById('add-sku-list');
+    var div = document.createElement('div');
+    div.className = 'edit-row-premium';
+    div.innerHTML = '<input type="text" class="edit-sku-input" placeholder="編號" inputmode="text">' +
+      '<input type="number" class="edit-qty-input" placeholder="片數" inputmode="numeric" value="1">' +
+      '<button class="btn-remove-premium" onclick="this.parentElement.remove()">×</button>';
+    container.appendChild(div);
+  };
+
+  window.triggerAddPhoto = function () {
+    document.getElementById('add-photo-input').click();
+  };
+
+  window.handleAddPhoto = function (input) {
+    if (input.files && input.files[0]) {
+      var file = input.files[0];
+      
+      // 🚀 嘗試從 EXIF 提取 GPS
+      updateGpsStatus('loading', '正在讀取照片定位...');
+      processImageGps(file, function(gps) {
+        if (gps) {
+          addState.gpsPos = gps;
+          updateGpsStatus('photo', '📍 已成功讀取照片定位');
+          showToast('✨ 已從照片成功讀取定位資訊', 'success');
+        } else {
+          // 如果照片沒定位，且目前也沒手機定位，則嘗試手機定位
+          if (!addState.gpsPos) {
+            updateGpsStatus('none', '💡 照片無定位，嘗試使用手機定位...');
+            navigator.geolocation.getCurrentPosition(function(pos) {
+              addState.gpsPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+              updateGpsStatus('phone', '📍 已改用手機即時定位');
+            });
+          } else {
+             // 保留原有的手機定位提示
+             updateGpsStatus('phone', '📍 照片無定位，沿用手機定位');
+          }
+        }
+      });
+
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var base64 = e.target.result.split(',')[1];
+        addState.imageData = {
+          base64: base64,
+          mimeType: file.type,
+          name: file.name
+        };
+        document.getElementById('add-photo-preview').innerHTML = '<img src="' + e.target.result + '">';
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  window.saveNewLayoutEntry = function () {
+    var customerName = state.selectedCustomer || state.currentCustomer || '';
+    var series = (document.getElementById('add-series').value || '').trim();
+    var size = (document.getElementById('add-size-global').value || '').trim();
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#add-sku-list .edit-row-premium'));
+
+    if (!customerName) {
+      showToast('⚠️ 請先選擇客戶');
+      return;
+    }
+    if (!series) {
+      showToast('⚠️ 請填寫系列名稱');
+      return;
+    }
+    if (!size) {
+      showToast('⚠️ 請填寫產品尺寸');
+      return;
+    }
+
+    var items = rows.map(function (row) {
+      var skuInput = row.querySelector('.edit-sku-input');
+      var qtyInput = row.querySelector('.edit-qty-input');
+      return {
+        sku: (skuInput && skuInput.value ? skuInput.value : '').trim().toUpperCase(),
+        qty: Number(qtyInput && qtyInput.value ? qtyInput.value : 1) || 1,
+        size: size
+      };
+    }).filter(function (item) {
+      return item.sku !== '';
+    });
+
+    if (items.length === 0) {
+      showToast('⚠️ 請至少填寫一個產品編號');
+      return;
+    }
+    if (!addState.imageData) {
+      showToast('⚠️ 請先拍攝或選擇版面照片');
+      return;
+    }
+
+    var submitBtn = document.querySelector('#add-modal .btn-save-full');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.dataset.originalText = submitBtn.dataset.originalText || submitBtn.innerText;
+      submitBtn.innerText = '存檔中...';
+    }
+
+    var payload = {
+      customerName: customerName,
+      salesperson: state.currentSales || '',
+      series: series,
+      size: size,
+      items: items,
+      image: addState.imageData,
+      gps: document.getElementById('add-gps-sync').checked ? addState.gpsPos : null
+    };
+
+    showLoading(true, false, '正在上傳新版面...');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerText = submitBtn.dataset.originalText || '🚀 提交紀錄並存檔';
+        }
+
+        if (res && res.success) {
+          closeAddModal();
+          showToast('✨ 新版面已存檔，請點擊 🔄 重新整理', 'success');
+          if (typeof selectCustomer === 'function') {
+            selectCustomer(customerName);
+          }
+        } else {
+          showToast('❌ 存檔失敗: ' + ((res && res.msg) || '未知錯誤'));
+        }
+      })
+      .withFailureHandler(function (err) {
+        showLoading(false);
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerText = submitBtn.dataset.originalText || '🚀 提交紀錄並存檔';
+        }
+        showToast('❌ 程式執行出錯: ' + (err && err.message ? err.message : err));
+      })
+      .saveNewLayout(payload);
+  };
+
+  // ─── 庫存查詢與影像模組 (AIT 旗艦版) ─────────────────────────
+
+  var searchDebounceTimer = null;
+  window.debounceSearch = function() {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(function() {
+      handleInventorySearch();
+    }, 300);
+  };
+
+  window.openInventoryPage = function() {
+    showPage('page-inventory');
+    
+    // 初始化業務名片入口資訊
+    const nameEl = document.getElementById('staff-name');
+    const compEl = document.getElementById('staff-company');
+    if (nameEl) nameEl.innerText = state.currentSales || "業務人員";
+    if (compEl) compEl.innerText = state.currentSales ? state.currentSales : "專屬";
+
+    loadInventoryData(); // 進頁面確保載入/重新整理
+  };
+
+  window.clearInput = function(id) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.value = '';
+      el.dispatchEvent(new Event('input'));
+    }
+  };
+
+  window.handleInventorySearch = function() {
+    const qInput = document.getElementById('staff-search-input');
+    const szInput = document.getElementById('staff-filter-size');
+    const minPValue = document.getElementById('staff-filter-pyeong').value;
+    const minQValue = document.getElementById('staff-filter-qty').value;
+    const q = (qInput ? qInput.value : '').trim().toUpperCase();
+    const sz = (szInput ? szInput.value : '').trim().toUpperCase().replace(/[xX*]/g, '');
+    const minP = parseFloat(minPValue || 0);
+    const minQ = parseFloat(minQValue || 0);
+    const sort = document.getElementById('staff-sort').value;
+    const list = document.getElementById('staff-result-list');
+
+    // 處理清除按鈕顯示
+    const clearQ = document.getElementById('clear-q');
+    const clearSz = document.getElementById('clear-sz');
+    if (clearQ) clearQ.style.display = q ? 'block' : 'none';
+    if (clearSz) clearSz.style.display = sz ? 'block' : 'none';
+
+    if (!q && !sz && minP <= 0 && minQ <= 0) {
+      list.innerHTML = `
+        <div style="grid-column:1/-1; text-align:center; padding:80px 20px;">
+          <div style="font-size:40px; margin-bottom:15px; opacity:0.3;">🔍</div>
+          <div style="color:var(--staff-gold); font-size:15px; font-weight:600;">系統已就緒</div>
+          <div style="color:rgba(255,255,255,0.4); font-size:12px; margin-top:8px;">請輸入編號或系列開始查詢</div>
+        </div>`;
+      return;
+    }
+
+    if (!state.isInventoryLoaded) {
+      list.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:50px; color:#fff;">資料載入中，請稍候...</div>`;
+      return;
+    }
+
+    // ⚡ 本機極速過濾模式
+    let filtered = state.inventoryData.filter(p => {
+      // A. 字串關鍵字比對 (SKU, 漢樺 SKU, 中文系列)
+      let matchQ = !q;
+      if (q) {
+        const skuUp = (p.sku || "").toUpperCase();
+        const hSkuUp = (p.hSku || "").toUpperCase();
+        const seriesUp = (p.sCn || "").toUpperCase();
+        const seriesEnUp = (p.sEn || "").toUpperCase();
+        matchQ = skuUp.includes(q) || seriesUp.includes(q) || seriesEnUp.includes(q) || hSkuUp.includes(q);
+      }
+
+      // B. 尺寸比對
+      let matchSz = !sz;
+      if (sz) {
+        const pSize = (p.size || "").toUpperCase().replace(/[xX*]/g, '');
+        matchSz = pSize.includes(sz);
+      }
+
+      // C. 數量與坪數低標過濾
+      let matchStock = true;
+      if (minP > 0) matchStock = matchStock && (p.pyeong >= minP);
+      if (minQ > 0) matchStock = matchStock && (p.qty >= minQ);
+
+      return matchQ && matchSz && matchStock;
+    });
+
+    // 排序邏輯
+    if (sort === 'stock-desc') {
+      filtered.sort((a, b) => (b.qty || 0) - (a.qty || 0));
+    } else if (sort === 'sku-asc') {
+      filtered.sort((a, b) => (a.sku || "").localeCompare(b.sku || ""));
+    } else if (sort === 'series-asc') {
+      filtered.sort((a, b) => (a.sCn || "").localeCompare(b.sCn || ""));
+    }
+
+    // 限制最多顯示 120 筆以保證渲染效能
+    const finalData = filtered.slice(0, 120);
+
+    if (finalData.length === 0) {
+      list.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:50px; color:rgba(255,255,255,0.4);">查無符合條件的產品</div>`;
+      return;
+    }
+
+    let html = '';
+    finalData.forEach(p => {
+      // 🚀 智慧三色庫存燈號對齊 UI 標準
+      let stockColor = '#00cc66'; // Green
+      let borderClass = 'border-green';
+      let lampClass = 'lamp-green';
+      let lampText = '充足';
+
+      if (p.level === 1) {
+        stockColor = '#ff4d4d'; // Red
+        borderClass = 'border-red';
+        lampClass = 'lamp-red';
+        lampText = '極缺';
+      } else if (p.level === 2 || p.level === 3) {
+        stockColor = '#ffcc00'; // Yellow
+        borderClass = 'border-yellow';
+        lampClass = 'lamp-yellow';
+        lampText = '緊張';
+      }
+
+      if (p.hasArrival) borderClass += ' arrival-blue-pulse';
+
+      // 預留標籤 HTML (直接在圖片容器內渲染)
+      let imgHtml = p.img
+        ? `<div class="product-img-container" style="position:relative; width:110px; height:74px; border-radius: 12px; overflow: hidden; background: #000; border: 1px solid rgba(255,255,255,0.05); flex-shrink: 0;">
+             <img src="${p.img}" style="width: 100%; height: 100%; object-fit: cover; cursor: pointer;" onclick="event.stopPropagation(); showFullImg(-1, '${p.img.replace('=w400', '=w1200')}', '${p.sku}')" onerror="this.style.display='none'">
+             <div id="reserve-badge-${p.sku}" style="position:absolute; bottom:4px; right:4px; background:rgba(0,0,0,0.85); backdrop-filter:blur(5px); padding:2px 6px; border-radius:12px; display:${p.reserved > 0 ? 'flex' : 'none'}; align-items:center; gap:3px; border:1px solid rgba(212, 175, 55, 0.4); z-index:10; cursor:pointer;" onclick="event.stopPropagation(); showSkuReserve('${p.sku}')">
+                <span style="font-size:8px; color:#fff; font-weight:700;">保留</span>
+                <span style="background:var(--staff-gold); color:#000; width:12px; height:12px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; font-weight:900;">${p.reserveCount || 1}</span>
+             </div>
+           </div>`
+        : `<div style="position:relative; width:110px; height:74px; border-radius: 12px; overflow: hidden; background: #000; border: 1px dashed rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.2); font-size:11px; flex-shrink: 0; box-sizing:border-box;">
+             無圖
+             <div id="reserve-badge-${p.sku}" style="position:absolute; bottom:4px; right:4px; background:rgba(0,0,0,0.85); backdrop-filter:blur(5px); padding:2px 6px; border-radius:12px; display:${p.reserved > 0 ? 'flex' : 'none'}; align-items:center; gap:3px; border:1px solid rgba(212, 175, 55, 0.4); z-index:10; cursor:pointer;" onclick="event.stopPropagation(); showSkuReserve('${p.sku}')">
+                <span style="font-size:8px; color:#fff; font-weight:700;">保留</span>
+                <span style="background:var(--staff-gold); color:#000; width:12px; height:12px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; font-weight:900;">${p.reserveCount || 1}</span>
+             </div>
+           </div>`;
+
+      // 實景圖按鈕 HTML
+      let galleryBtnHtml = '';
+      if (p.folderId || (p.scenes && p.scenes.length > 0)) {
+        galleryBtnHtml = `
+          <button onclick="event.stopPropagation(); openGallery('${p.sku}')"
+            style="background:none; color:var(--staff-gold); font-size:10px; padding:4px 10px; border-radius:20px; border:1px solid rgba(194,157,102,0.4); cursor:pointer; font-weight:700; display:flex; align-items:center; gap:3px;">
+            實景圖
+          </button>
+        `;
+      }
+
+      // 批號標籤
+      let batchTagHtml = '';
+      if (p.batches && p.batches.length > 0) {
+        batchTagHtml = `
+          <div onclick="event.stopPropagation(); openBatchModal('${p.sku}')" class="batch-link" style="text-decoration: underline; color:var(--staff-gold); font-weight:700; font-size:11px; cursor:pointer;">
+            批號(${p.batches.length})
+          </div>
+        `;
+      }
+
+      html += `
+        <div class="product-card ${borderClass}" onclick="openBatchModal('${p.sku}')" style="display: flex; gap: 15px; align-items: stretch; padding: 15px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 18px; margin-bottom: 15px; position: relative;">
+          <div style="flex: 0 0 110px; display: flex; flex-direction: column; justify-content: space-between;">
+            ${imgHtml}
+            <div style="font-size:12px; color:#4ade80; font-weight:700; text-align:left; margin-top:10px;">
+              ${p.pack ? p.pack + '片' : ''} ${p.weight ? ' ┃ ' + p.weight + 'kg' : ''}
+            </div>
+          </div>
+
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+              <div style="min-width: 0; flex: 1; text-align: left;">
+                <div style="font-size:13px; color:var(--staff-gold); font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                  尺寸: ${p.size || '未知規格'}
+                </div>
+                <div style="font-size:24px; font-weight:900; color:#fff; margin-top:2px; letter-spacing:1px; line-height:1.1; display:flex; align-items:center; gap:6px;">
+                  <span>${p.sku}</span>
+                  <span class="lamp-tag ${lampClass}">${lampText}</span>
+                </div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0;">
+                ${galleryBtnHtml}
+              </div>
+            </div>
+            
+            <div style="background:rgba(34,197,94,0.1); border:1px solid rgba(34,197,94,0.25); padding:6px 10px; border-radius:12px; color:${stockColor}; font-weight:900; font-size:16px; margin:6px 0; text-align:center; white-space:nowrap; letter-spacing:0.5px;">
+              可用 ${Math.floor(p.qty)} 片 ┃ ${p.pyeong} 坪
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">
+              <div style="font-size:11px; color:rgba(255,255,255,0.4); font-weight:700; display:flex; gap:8px;">
+                <span>實存:<span style="color:#eee; margin-left:2px;">${Math.floor(p.physical)}片</span></span>
+                <span>保留:<span style="color:#eee; margin-left:2px;">${Math.floor(p.reserved)}片</span></span>
+              </div>
+              ${batchTagHtml}
+            </div>
+
+            ${p.hasArrival ? `
+            <div style="margin-top:8px; background:rgba(0,122,255,0.12); border:1px solid rgba(0,122,255,0.35); border-radius:8px; padding:5px 10px; font-size:11px; font-weight:800; color:#007aff; text-align:center;">
+              🔵 預計 ${p.eta || '近期'} 到貨${p.etaQty > 0 ? ' ' + Math.floor(p.etaQty) + ' 片' : ''}
+            </div>` : ''}
+          </div>
+        </div>
+      `;
+    });
+
+    list.innerHTML = html;
+
+    // 📝 智慧過濾查詢背景防震日誌寫入 (2.5秒停止輸入後自動同步)
+    if (state.currentSales && (q || sz || minP > 0 || minQ > 0)) {
+      if (window.logSearchDebounceTimer) clearTimeout(window.logSearchDebounceTimer);
+      window.logSearchDebounceTimer = setTimeout(function() {
+        google.script.run.logSalespersonSearch(state.currentSales, q, sz, minP, minQ);
+      }, 2500);
+    }
+  };
+
+  // ─── 影像庫模組 ──────────────────────────────────────────
+
+  var currentSku = '';
+  var currentGalleryData = null;
+  var currentGalleryList = [];
+  var currentIndex = -1;
+
+  window.openGallery = function(sku) {
+    const item = state.inventoryData.find(p => p.sku === sku);
+    if (!item) { showToast("找不到該商品資料"); return; }
+
+    currentSku = sku;
+    currentIndex = -1;
+    currentGalleryList = [];
+
+    const mainGrid = document.getElementById('staff-gallery-grid-main');
+    const subGrid = document.getElementById('staff-gallery-grid-sub');
+    if (mainGrid) mainGrid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:50px; color:var(--staff-gold); font-size:11px; letter-spacing:2px;">載入雲端影像庫中...</div>';
+    if (subGrid) subGrid.innerHTML = '';
+
+    document.getElementById('staff-gallery-modal').style.display = 'flex';
+
+    // 1. 整理基礎的圖片陣列 (單片圖、scenes)
+    const baseGallery = {
+      scenes: [],
+      videos: [],
+      singles: [],
+      molds: [],
+      intros: [],
+      catalogs: []
+    };
+
+    if (item.img) {
+      baseGallery.singles.push({ name: sku + "_單片", url: item.img.replace('=w400', '=w1200'), isVideo: false });
+    }
+    if (item.scenes && item.scenes.length > 0) {
+      item.scenes.forEach((sUrl, idx) => {
+        baseGallery.scenes.push({ name: sku + "_實景" + (idx+1), url: sUrl, isVideo: false });
+      });
+    }
+
+    currentGalleryData = baseGallery;
+
+    if (item.folderId) {
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (res) {
+            // 合併後端抓取的分類影像
+            ['scenes', 'singles', 'molds', 'intros'].forEach(cat => {
+              if (res[cat]) {
+                res[cat].forEach(file => {
+                  const exists = baseGallery[cat].some(existFile => existFile.url === file.url);
+                  if (!exists) {
+                    baseGallery[cat].push({ name: file.name, url: file.url, isVideo: file.isVideo || false });
+                  }
+                });
+              }
+            });
+            if (res.catalogs) baseGallery.catalogs = res.catalogs;
+          }
+          _updateGalleryTabs();
+        })
+        .withFailureHandler(function() {
+          _updateGalleryTabs();
+        })
+        .getFolderImages(item.folderId);
+    } else {
+      _updateGalleryTabs();
+    }
+  };
+
+  function _updateGalleryTabs() {
+    const tabs = { scene: 'scenes', video: 'videos', single: 'singles', mold: 'molds', intro: 'intros' };
+    let firstTab = '';
+    
+    // 如果有影片，或者專屬場景照有 .mp4 格式的檔案
+    currentGalleryData.videos = currentGalleryData.scenes.filter(f => f.url.toLowerCase().endsWith('.mp4') || f.isVideo);
+    currentGalleryData.scenes = currentGalleryData.scenes.filter(f => !f.url.toLowerCase().endsWith('.mp4') && !f.isVideo);
+
+    for (let t in tabs) {
+      const el = document.getElementById('tab-' + t);
+      const count = currentGalleryData[tabs[t]].length;
+      const catalogCount = (t === 'intro') ? currentGalleryData.catalogs.length : 0;
+      
+      if (count > 0 || catalogCount > 0) {
+        if (el) el.style.display = 'flex';
+        if (!firstTab) firstTab = t;
+      } else {
+        if (el) el.style.display = 'none';
+      }
+    }
+    
+    switchGalleryTab(firstTab || 'scene');
+  }
+
+  window.switchGalleryTab = function(type) {
+    ['scene', 'video', 'single', 'mold', 'intro'].forEach(t => {
+      const el = document.getElementById('tab-' + t);
+      if (el) el.classList.toggle('active', t === type);
+    });
+    renderGalleryTab(type);
+  };
+
+  function renderGalleryTab(activeType) {
+    const mainGrid = document.getElementById('staff-gallery-grid-main');
+    const subGrid = document.getElementById('staff-gallery-grid-sub');
+    const mainHeader = document.getElementById('header-main');
+    const subHeader = document.getElementById('header-sub');
+
+    let source = [];
+    let typeName = "實景照";
+    if (activeType === 'scene') { source = currentGalleryData.scenes; typeName = "實景照"; }
+    else if (activeType === 'video') { source = currentGalleryData.videos; typeName = "影片"; }
+    else if (activeType === 'single') { source = currentGalleryData.singles; typeName = "單片圖"; }
+    else if (activeType === 'mold') { source = currentGalleryData.molds; typeName = "模面圖"; }
+    else if (activeType === 'intro') { source = currentGalleryData.intros; typeName = "介紹/目錄"; }
+
+    const cleanCurrent = currentSku.replace(/[\s\-\_]/g, '').toUpperCase();
+    
+    // 分流「本商品」與「同系列商品」
+    let thisSkuFiles = source.filter(f => {
+      const cleanName = (f.name || '').replace(/[\s\-\_]/g, '').toUpperCase();
+      return cleanName.includes(cleanCurrent);
+    });
+    let otherFiles = source.filter(f => {
+      const cleanName = (f.name || '').replace(/[\s\-\_]/g, '').toUpperCase();
+      return !cleanName.includes(cleanCurrent);
+    });
+
+    if (activeType === 'single' && thisSkuFiles.length > 1) {
+      thisSkuFiles = [thisSkuFiles[0]];
+    }
+
+    currentGalleryList = [...thisSkuFiles, ...otherFiles];
+
+    let mainHtml = '';
+    
+    // 如果是介紹分頁，額外繪製電子目錄
+    if (activeType === 'intro' && currentGalleryData.catalogs.length > 0) {
+      currentGalleryData.catalogs.forEach(cat => {
+        mainHtml += `
+          <div style="grid-column:1/-1; padding:15px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:12px; margin: 10px; box-sizing: border-box; text-align: left;">
+            <div style="color:#fff; font-weight:700; margin-bottom:10px; font-size:13px;">電子目錄: ${cat.name}</div>
+            <div style="display:flex; gap:10px;">
+              <button style="flex:1; background:var(--staff-gold); color:#000; border:none; padding:10px; border-radius:8px; font-weight:700; cursor:pointer;" onclick="window.open('${cat.url}', '_blank')">開啟 PDF</button>
+              <button style="flex:1; background:rgba(255,255,255,0.1); color:#fff; border:none; padding:10px; border-radius:8px; font-weight:700; cursor:pointer;" onclick="window.open('${cat.downloadUrl}', '_blank')">下載檔案</button>
+            </div>
+          </div>`;
+      });
+    }
+
+    thisSkuFiles.forEach((f, idx) => { mainHtml += renderImgItem(f, idx); });
+    mainGrid.innerHTML = mainHtml || (activeType !== 'intro' ? '<div style="grid-column:1/-1; text-align:center; padding:30px; opacity:0.3; font-size:11px; color:#fff;">尚無專屬影像</div>' : '');
+    mainHeader.innerHTML = `<span>專屬${typeName} (${thisSkuFiles.length})</span>`;
+
+    let subHtml = '';
+    otherFiles.forEach((f, idx) => { subHtml += renderImgItem(f, thisSkuFiles.length + idx); });
+    subGrid.innerHTML = subHtml;
+    subHeader.innerHTML = `<span>同系列${typeName} (${otherFiles.length})</span>`;
+    subHeader.style.display = otherFiles.length > 0 ? 'flex' : 'none';
+
+    mainHeader.classList.remove('collapsed'); mainGrid.style.maxHeight = '2000px';
+    subHeader.classList.remove('collapsed'); subGrid.style.maxHeight = '2000px';
+  }
+
+  window.toggleSection = function(headerId, gridId) {
+    const header = document.getElementById(headerId);
+    const grid = document.getElementById(gridId);
+    if (!header || !grid) return;
+    const isCollapsed = header.classList.toggle('collapsed');
+    grid.style.maxHeight = isCollapsed ? '0px' : '2000px';
+  };
+
+  function renderImgItem(f, idx) {
+    return `
+      <div style="aspect-ratio:1/1; overflow:hidden; background:#111; position:relative; border: 0.5px solid rgba(255,255,255,0.05); box-sizing: border-box;">
+        <input type="checkbox" class="gallery-check" data-url="${f.url}" style="position:absolute; top:6px; right:6px; z-index:10; width:18px; height:18px; accent-color:var(--staff-gold); cursor:pointer;">
+        ${f.isVideo ? '<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:30px; pointer-events:none; z-index:5;">▶</div>' : ''}
+        <img src="${f.url}" style="width:100%; height:100%; object-fit:cover; display:block; cursor:pointer;" onclick="showFullImg(${idx})">
+      </div>`;
+  }
+
+  // ─── 單張大圖與浮水印模組 ─────────────────────────────────
+
+  window.showFullImg = function(idx, directUrl = null, sku = null) {
+    const imgEl = document.getElementById('staff-full-img');
+    const videoEl = document.getElementById('staff-full-video');
+    const bottomArea = document.getElementById('image-modal-bottom');
+
+    if (!imgEl || !videoEl) return;
+
+    if (directUrl) {
+      currentIndex = -1;
+      currentSku = sku || '';
+      imgEl.src = directUrl;
+      imgEl.style.display = 'block';
+      videoEl.style.display = 'none';
+      videoEl.src = '';
+    } else {
+      currentIndex = idx;
+      const item = currentGalleryList[idx];
+      if (!item) return;
+      
+      if (item.url.toLowerCase().endsWith('.mp4') || item.isVideo) {
+        imgEl.style.display = 'none';
+        videoEl.style.display = 'block';
+        videoEl.src = item.url;
+      } else {
+        imgEl.style.display = 'block';
+        imgEl.src = item.url;
+        videoEl.style.display = 'none';
+        videoEl.src = '';
+      }
+    }
+
+    updateWatermark();
+    document.getElementById('staff-image-modal').style.display = 'flex';
+  };
+
+  window.closeFullImg = function() {
+    const modal = document.getElementById('staff-image-modal');
+    const videoEl = document.getElementById('staff-full-video');
+    if (modal) modal.style.display = 'none';
+    if (videoEl) videoEl.src = ''; // 停止播放影片
+  };
+
+  window.navGallery = function(dir) {
+    if (currentIndex === -1 || currentGalleryList.length === 0) return;
+    currentIndex = (currentIndex + dir + currentGalleryList.length) % currentGalleryList.length;
+    showFullImg(currentIndex);
+  };
+
+  window.updateWatermark = function() {
+    const layer = document.getElementById('watermark-layer');
+    const sSku = document.getElementById('check-sku').checked;
+    const sQty = document.getElementById('check-stock').checked;
+    const sP = document.getElementById('check-pyeong').checked;
+    
+    if (!layer) return;
+
+    if (!sSku && !sQty && !sP) {
+      layer.style.display = 'none';
+      return;
+    }
+
+    const p = state.inventoryData.find(x => x.sku === currentSku);
+    if (!p) {
+      layer.style.display = 'none';
+      return;
+    }
+
+    const wmSkuEl = document.getElementById('wm-sku');
+    const wmDataEl = document.getElementById('wm-data');
+    if (wmSkuEl) wmSkuEl.innerText = sSku ? p.sku : '';
+    
+    let dataText = '';
+    let details = [];
+    if (sQty) details.push('可用 ' + Math.floor(p.qty) + ' 片');
+    if (sP) details.push(p.pyeong + ' 坪');
+    if (details.length > 0) dataText = details.join(' ┃ ');
+
+    if (wmDataEl) wmDataEl.innerText = dataText;
+    layer.style.display = 'block';
+  };
+
+  // 下載或導出圖檔
+  window.downloadOriginalImg = function() {
+    const url = document.getElementById('staff-full-img').src;
+    if (url) {
+      window.open(url, '_blank');
+    }
+  };
+
+  // 單張分享至 LINE (秒級免驗證)
+  window.shareSingleToLine = function() {
+    const imgEl = document.getElementById('staff-full-img');
+    if (!imgEl || imgEl.style.display === 'none') {
+      showToast("影片不支援圖片分享");
+      return;
+    }
+
+    const p = state.inventoryData.find(x => x.sku === currentSku);
+    const showSku = document.getElementById('check-sku').checked;
+    const showStock = document.getElementById('check-stock').checked;
+    const showPyeong = document.getElementById('check-pyeong').checked;
+
+    let text = (showSku ? "【" + currentSku + "】" : "") + "精選影像分享\n";
+    let details = [];
+    if (p) {
+      if (showStock) details.push("可用庫存：" + Math.floor(p.qty) + "片");
+      if (showPyeong) details.push(p.pyeong + "坪");
+    }
+    if (details.length > 0) text += details.join(" ┃ ") + "\n";
+    const textWithLink = text + "圖片連結：" + imgEl.src;
+
+    window.open('https://line.me/R/msg/text/?' + encodeURIComponent(textWithLink), '_blank');
+  };
+
+  // ─── 影像批次操作模組 ─────────────────────────────────────
+
+  window.batchAction = function(type) {
+    const checkboxes = document.querySelectorAll('.gallery-check:checked');
+    const selectedUrls = Array.from(checkboxes).map(cb => cb.getAttribute('data-url'));
+
+    if (selectedUrls.length === 0) {
+      showToast('請先勾選想要操作的照片');
+      return;
+    }
+
+    if (type === 'preview') {
+      const albumList = document.getElementById('staff-album-list');
+      if (albumList) {
+        albumList.innerHTML = selectedUrls.map(url => `
+          <div style="margin-bottom:15px; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+            <img src="${url.replace('=w400', '=w1200')}" style="width:100%; display:block;">
+          </div>
+        `).join('');
+      }
+      document.getElementById('staff-album-modal').style.display = 'flex';
+    } else if (type === 'share') {
+      let text = "【" + currentSku + "】精選影像分享\n\n";
+      text += selectedUrls.map((url, i) => "圖" + (i + 1) + ": " + url.replace('=w400', '=w1200')).join("\n");
+      
+      _copyToClipboard(selectedUrls.join('\n'));
+      window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank');
+    }
+  };
+
+  // ─── 保留單查詢模組 ───────────────────────────────────────
+
+  var reserveData = [];
+
+  window.showReservations = function() {
+    const nameEl = document.getElementById('reserve-title-text');
+    if (nameEl) nameEl.innerText = (state.currentSales ? state.currentSales + ' ' : '') + '專屬保留單';
+
+    const rList = document.getElementById('reserveList');
+    if (rList) rList.innerHTML = '<div style="padding: 40px; text-align: center; opacity: 0.5; color:#fff;">正在讀取保留單...</div>';
+
+    document.getElementById('reserveModal').style.display = 'flex';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res && res.success) {
+          reserveData = res.groups || [];
+          renderReservations();
+          
+          // 渲染業務篩選清單
+          const bizSet = new Set();
+          reserveData.forEach(g => { if(g.biz) bizSet.add(g.biz); });
+          const filterList = document.getElementById('biz-checkbox-list');
+          if (filterList) {
+            filterList.innerHTML = Array.from(bizSet).map(bizName => `
+              <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:12px; cursor:pointer;">
+                <input type="checkbox" class="biz-filter-cb" value="${bizName}" checked style="accent-color:var(--staff-gold);">
+                ${bizName}
+              </label>
+            `).join('');
+          }
+        } else {
+          if (rList) rList.innerHTML = `<div style="padding: 40px; text-align: center; color:#ff4d4d;">載入失敗: ${res.msg || '未知錯誤'}</div>`;
+        }
+      })
+      .withFailureHandler(function(err) {
+        if (rList) rList.innerHTML = `<div style="padding: 40px; text-align: center; color:#ff4d4d;">請求錯誤: ${err.toString()}</div>`;
+      })
+      .getUserReservations(state.currentSales); // 連動當前業務，或空值拉取全公司
+  };
+
+  window.closeReservations = function(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('reserveModal').style.display = 'none';
+  };
+
+  window.toggleBizFilter = function() {
+    const panel = document.getElementById('biz-filter-panel');
+    if (panel) {
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+  };
+
+  window.applyBizFilter = function() {
+    renderReservations();
+    document.getElementById('biz-filter-panel').style.display = 'none';
+  };
+
+  window.renderReservations = function() {
+    const list = document.getElementById('reserveList');
+    const sortVal = document.getElementById('reserve-sort-type').value;
+    
+    // 獲取已勾選的業務人員篩選
+    const checkedBiz = Array.from(document.querySelectorAll('.biz-filter-cb:checked')).map(cb => cb.value);
+
+    let filteredGroups = JSON.parse(JSON.stringify(reserveData));
+
+    // 業務人員篩選
+    if (checkedBiz.length > 0) {
+      filteredGroups = filteredGroups.filter(g => checkedBiz.includes(g.biz));
+    }
+
+    // 排序
+    if (sortVal === 'days-desc') {
+      filteredGroups.sort((a, b) => b.maxDays - a.maxDays);
+    } else if (sortVal === 'days-asc') {
+      filteredGroups.sort((a, b) => a.maxDays - b.maxDays);
+    } else if (sortVal === 'biz-asc') {
+      filteredGroups.sort((a, b) => (a.biz || '').localeCompare(b.biz || ''));
+    }
+
+    if (filteredGroups.length === 0) {
+      list.innerHTML = '<div style="padding:50px; text-align:center; opacity:0.5; color:#fff; font-size:13px;">目前無保留單紀錄</div>';
+      return;
+    }
+
+    let html = '';
+    filteredGroups.forEach(g => {
+      let groupItemsHtml = '';
+      g.items.forEach(item => {
+        // 呆料警戒紅線顏色判定 (大於 14 天)
+        const dayColor = item.days >= 14 ? '#ff4d4d' : 'var(--staff-gold)';
+        const imgHtml = item.img
+          ? `<img src="${item.img}" style="width:40px; height:40px; border-radius:6px; object-fit:cover; background:#222;" onclick="showFullImg(-1, '${item.img.replace('=w400', '=w1200')}', '${item.code}')">`
+          : `<div style="width:40px; height:40px; border-radius:6px; background:#222; display:flex; align-items:center; justify-content:center; font-size:8px; opacity:0.3; color:#fff;">無圖</div>`;
+
+        groupItemsHtml += `
+          <div style="display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
+            ${imgHtml}
+            <div style="flex:1; min-width:0; text-align: left;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="font-weight:700; color:#fff; font-size:13px;">${item.code}</div>
+                <div style="font-size:13px; font-weight:800; color:var(--staff-gold);">${Math.round(item.qty)}片 ┃ ${item.pyeong}坪</div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">
+                <div>保留日: ${item.date} (${item.dueObj ? '期限: ' + item.dueDate : '未設定到期日'})</div>
+                <div style="color:${dayColor}; font-weight:700; font-size:11px;">已保留 ${item.days} 天</div>
+              </div>
+              ${item.note ? `<div style="font-size:10px; color:#c29d66; margin-top:3px; background:rgba(194, 157, 102, 0.08); padding:2px 6px; border-radius:4px; display:inline-block;">💬 備註: ${item.note}</div>` : ''}
+            </div>
+          </div>
+        `;
+      });
+
+      html += `
+        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); border-radius:14px; padding:12px; margin-bottom:12px; box-sizing: border-box;">
+          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:8px; margin-bottom:8px;">
+            <div style="text-align: left;">
+              <div style="font-weight:800; color:#fff; font-size:14px;">🏡 項目: ${g.name}</div>
+              <div style="font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">客戶: ${g.cust || '未知'}</div>
+            </div>
+            <div style="text-align:right;">
+              <span style="font-size:11px; background:rgba(194, 157, 102, 0.15); color:var(--staff-gold); padding:2px 8px; border-radius:20px; font-weight:700;">業務: ${g.biz}</span>
+            </div>
+          </div>
+          <div>${groupItemsHtml}</div>
+        </div>
+      `;
+    });
+
+    list.innerHTML = html;
+  };
+
+  // ─── 型號保留單明細模組 ───────────────────────────────────
+
+  var skuReserveData = [];
+  var currentSkuReserve = '';
+
+  window.showSkuReserve = function(sku) {
+    currentSkuReserve = sku;
+    document.getElementById('sku-reserve-title').innerText = sku + ' 保留單明細';
+    
+    const list = document.getElementById('skuReserveList');
+    if (list) list.innerHTML = '<div style="padding:30px; text-align:center; opacity:0.5; color:#fff;">正在撈取保留單資料...</div>';
+
+    document.getElementById('skuReserveModal').style.display = 'flex';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res && res.success) {
+          skuReserveData = res.items || [];
+          renderSkuReserve();
+        } else {
+          if (list) list.innerHTML = `<div style="padding:30px; text-align:center; color:#ff4d4d;">載入失敗: ${res.msg || '未知原因'}</div>`;
+        }
+      })
+      .withFailureHandler(function(err) {
+        if (list) list.innerHTML = `<div style="padding:30px; text-align:center; color:#ff4d4d;">請求錯誤: ${err.toString()}</div>`;
+      })
+      .getSkuReservations(sku);
+  };
+
+  window.closeSkuReserve = function(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('skuReserveModal').style.display = 'none';
+  };
+
+  window.renderSkuReserve = function() {
+    const list = document.getElementById('skuReserveList');
+    const sortVal = document.getElementById('sku-reserve-sort').value;
+
+    let items = JSON.parse(JSON.stringify(skuReserveData));
+
+    if (sortVal === 'days-desc') {
+      items.sort((a, b) => b.days - a.days);
+    } else if (sortVal === 'cust-asc') {
+      items.sort((a, b) => (a.customer || '').localeCompare(b.customer || ''));
+    }
+
+    if (items.length === 0) {
+      list.innerHTML = '<div style="padding:40px; text-align:center; opacity:0.5; color:#fff; font-size:12px;">無保留明細</div>';
+      return;
+    }
+
+    let html = '';
+    items.forEach(item => {
+      const isOverAlarm = item.days >= 14;
+      const dayColor = isOverAlarm ? '#ff4d4d' : 'var(--staff-gold)';
+
+      html += `
+        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin-bottom:10px; box-sizing: border-box; text-align: left;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-weight:700; color:#fff; font-size:13px;">🏢 客戶: ${item.customer}</div>
+              <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">案名: ${item.caseName || '未指定'}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:14px; font-weight:900; color:var(--staff-gold);">${Math.round(item.qty)} 片</div>
+              <div style="font-size:10px; color:rgba(255,255,255,0.3); margin-top:2px;">付訂: ${item.deposit}</div>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:rgba(255,255,255,0.4); border-top:1px dashed rgba(255,255,255,0.06); padding-top:8px; margin-top:8px;">
+            <div>業務: ${item.biz} ┃ 日期: ${item.date}</div>
+            <div style="color:${dayColor}; font-weight:700;">保留 ${item.days} 天</div>
+          </div>
+          ${item.note ? `<div style="font-size:10px; color:#c29d66; margin-top:4px; background:rgba(194, 157, 102, 0.08); padding:2px 6px; border-radius:4px; display:inline-block;">備註: ${item.note}</div>` : ''}
+        </div>
+      `;
+    });
+
+    list.innerHTML = html;
+  };
+
+  // ─── 多批號明細模組 ───────────────────────────────────────
+
+  window.openBatchModal = function(sku) {
+    const p = state.inventoryData.find(x => x.sku === sku);
+    if (!p || !p.batches || p.batches.length === 0) {
+      showToast('此商品無更詳細的批號紀錄');
+      return;
+    }
+
+    document.getElementById('staff-batch-title').innerText = sku + " 批號明細";
+    
+    let html = '';
+    const ratio = parseFloat(p.ratio) || 36;
+    
+    p.batches.forEach(b => {
+      const pyeongVal = ratio > 0 ? (b.qty / ratio) : 0;
+      const pyeongStr = pyeongVal % 1 === 0 ? Math.round(pyeongVal) : pyeongVal.toFixed(1);
+      html += `
+        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); padding:12px; border-radius:10px; display:flex; justify-content:space-between; align-items:center; text-align: left; margin-bottom:8px; box-sizing:border-box;">
+          <div>
+            <div style="font-size:13px; font-weight:800; color:#fff;">批號: <span style="color:var(--staff-gold); font-weight:900;">${b.batch || '無批號'}</span></div>
+            <div style="font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">庫存批狀態: 正常</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:15px; font-weight:900; color:#fff;">${Math.round(b.qty)} 片</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.4); font-weight:600; margin-top:1px;">約 ${pyeongStr} 坪</div>
+          </div>
+        </div>
+      `;
+    });
+
+    document.getElementById('staff-batch-list').innerHTML = html;
+    document.getElementById('staff-batch-modal').style.display = 'flex';
+  };
+
+  function _copyToClipboard(text) {
+    var el = document.createElement('textarea');
+    el.value = text;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    showToast('圖片連結已複製，可貼到 LINE 或 Mail');
+  }
+
+  // 📡 載入最近三筆缺貨新進榜，副標題跑馬燈輪播
+  let _stockoutTimer = null;
+  function loadStockoutSubtitleAlert() {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success || !res.msgs || !res.msgs.length) return;
+        const msgs = res.msgs;
+        const splashSubtitle = document.getElementById('ait-subtitle-splash');
+        const dashSubtitle = document.getElementById('ait-subtitle-dashboard');
+        let idx = 0;
+
+        const show = function() {
+          const item = msgs[idx % msgs.length];
+          const text = (typeof item === 'string') ? item : item.text;
+          const severe = (typeof item === 'object') && item.severe;
+          [splashSubtitle, dashSubtitle].forEach(function(el) {
+            if (!el) return;
+            el.style.transition = 'opacity 0.5s ease';
+            el.style.opacity = '0';
+            setTimeout(function() {
+              el.innerText = text;
+              el.classList.add('breathing');
+              el.style.color = severe ? '#ff6b6b' : '';
+              el.style.opacity = '';
+            }, 500);
+          });
+          idx++;
+        };
+
+        show();
+        if (_stockoutTimer) clearInterval(_stockoutTimer);
+        if (msgs.length > 1) _stockoutTimer = setInterval(show, 4000);
+      })
+      .getLatestStockoutEntries();
+  }
+
+  // 🔍 搜尋客戶名稱篩選
+  function handleSearch() {
+    const query = document.getElementById('customerSearch').value.trim().toLowerCase();
+    if (!query) {
+      renderCustomerList(state.allCustomers || []);
+      return;
+    }
+    const filtered = (state.allCustomers || []).filter(function(c) {
+      return c.name && c.name.toLowerCase().indexOf(query) !== -1;
+    });
+    renderCustomerList(filtered);
+  }
+
+  // 🧹 清除搜尋輸入
+  function clearSearch(inputId, callback) {
+    const input = document.getElementById(inputId);
+    if (input) {
+      input.value = '';
+      toggleClearBtn(inputId);
+      if (typeof callback === 'function') {
+        callback();
+      }
+    }
+  }
+
+  // 🔄 控制清除按鈕的顯示/隱藏
+  function toggleClearBtn(inputId) {
+    const input = document.getElementById(inputId);
+    const clearBtn = document.getElementById(inputId + 'Clear');
+    if (input && clearBtn) {
+      clearBtn.style.display = input.value ? 'block' : 'none';
+    }
+  }
+
+  // 🚀 全域監聽輸入框以控制 X 按鈕顯示
+  document.addEventListener('input', function(e) {
+    const targetId = e.target.id;
+    if (targetId && targetId.includes('search')) {
+      // 智慧連動
+      const clearBtn = document.getElementById('clear-' + targetId.split('-').pop());
+      if (clearBtn) clearBtn.style.display = e.target.value ? 'block' : 'none';
+    }
+    if (targetId === 'customerSearch') {
+      toggleClearBtn(targetId);
+      handleSearch();
+    }
+  });
+
+  // 已在上方 line 1657 綁定 window.onload，在此處略過以避免覆蓋
+
+  // 🚀 批量導出功能
+  window.batchExport = {
+    showModal: function() {
+      var groups = state.sortedGroups || [];
+      if (!groups.length) {
+        showToast('沒有版面資料可導出', 'error');
+        return;
+      }
+      var html = [
+        '<div id="batchExportModal" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;" onclick="if(event.target===this)document.getElementById(\'batchExportModal\').remove()">',
+        '<div style="background:#1c1c1e;border-radius:16px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;border:1px solid rgba(255,255,255,0.1);">',
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">',
+        '<h2 style="color:#facc15;font-size:20px;margin:0;">📦 批量導出</h2>',
+        '<button onclick="document.getElementById(\'batchExportModal\').remove()" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;">&times;</button>',
+        '</div>',
+        '<div style="color:rgba(255,255,255,0.6);font-size:14px;margin-bottom:16px;">',
+        '客戶: ' + (state.selectedCustomer || '—') + ' | 共 ' + groups.length + ' 個版面',
+        '</div>',
+        '<div style="margin-bottom:16px;padding:16px;background:rgba(255,255,255,0.05);border-radius:12px;">',
+        '<div style="color:#fff;font-size:14px;font-weight:600;margin-bottom:12px;">選擇匯出欄位</div>',
+        '<label style="display:flex;align-items:center;color:rgba(255,255,255,0.8);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="expSeries" checked style="margin-right:8px;"><span>🏷️ 系列名稱</span></label>',
+        '<label style="display:flex;align-items:center;color:rgba(255,255,255,0.8);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="expSku" checked style="margin-right:8px;"><span>🔢 產品編號</span></label>',
+        '<label style="display:flex;align-items:center;color:rgba(255,255,255,0.8);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="expSales" checked style="margin-right:8px;"><span>💰 銷售額/坪數</span></label>',
+        '<label style="display:flex;align-items:center;color:rgba(255,255,255,0.8);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="expDate" checked style="margin-right:8px;"><span>📅 上架日期</span></label>',
+        '<label style="display:flex;align-items:center;color:rgba(255,255,255,0.8);cursor:pointer;"><input type="checkbox" id="expFreq" checked style="margin-right:8px;"><span>📊 銷售次數</span></label>',
+        '</div>',
+        '<div style="margin-bottom:16px;padding:16px;background:rgba(255,255,255,0.05);border-radius:12px;">',
+        '<div style="color:#fff;font-size:14px;font-weight:600;margin-bottom:12px;">📧 收件人 Email</div>',
+        '<input type="email" id="expEmail" value="" placeholder="請輸入 Email（預設寄到您的 Google 信箱）" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.1);color:#fff;font-size:14px;box-sizing:border-box;">',
+        '</div>',
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">',
+        '<button onclick="batchExport.toEmail()" style="background:linear-gradient(135deg,#4CAF50,#45a049);color:#fff;border:none;padding:14px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;">📧 Email</button>',
+        '<button onclick="batchExport.toLine()" style="background:linear-gradient(135deg,#00B900,#009900);color:#fff;border:none;padding:14px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;">💬 LINE</button>',
+        '<button onclick="batchExport.toDownload()" style="background:linear-gradient(135deg,#2196F3,#1976D2);color:#fff;border:none;padding:14px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;grid-column:span 2;">💾 下載報告</button>',
+        '</div>',
+        '</div></div>'
+      ].join('');
+      var div = document.createElement('div');
+      div.innerHTML = html;
+      document.body.appendChild(div);
+    },
+    _renderJpg: function(g, fields, callback) {
+      if (!g.photoUrl) { callback(null); return; }
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function() {
+        var c = document.createElement('canvas');
+        var ctx = c.getContext('2d');
+        var infoH = 100;
+        c.width = img.width;
+        c.height = img.height + infoH;
+        ctx.drawImage(img, 0, 0);
+        ctx.fillStyle = 'rgba(0,0,0,0.85)';
+        ctx.fillRect(0, img.height, c.width, infoH);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px sans-serif';
+        var y = img.height + 24;
+        if (fields.series) { ctx.fillText('🏷️ ' + (g.series || '未命名'), 15, y); y += 26; }
+        if (fields.sku) {
+          ctx.font = '15px sans-serif';
+          ctx.fillStyle = '#ccc';
+          var s = g.items.map(function(it){ return it.sku; }).join(', ');
+          ctx.fillText('🔢 ' + (s.length > 50 ? s.substring(0,50)+'...' : s), 15, y);
+          y += 24;
+        }
+        if (fields.sales) {
+          ctx.font = '16px sans-serif';
+          ctx.fillStyle = '#facc15';
+          ctx.fillText('💰 ' + Math.round(g.totalSalesAmt/10000) + '萬 / ' + Math.round(g.totalSalesQty) + '坪', 15, y);
+          y += 22;
+        }
+        if (fields.date) {
+          ctx.font = '14px sans-serif'; ctx.fillStyle = '#aaa';
+          ctx.fillText('📅 ' + (g.items[0].installDate || g.items[0].lastUpdate || '—'), 15, y);
+          y += 20;
+        }
+        if (fields.freq) {
+          ctx.font = '14px sans-serif'; ctx.fillStyle = '#aaa';
+          ctx.fillText('📊 ' + (g.totalFrequency || 0) + ' 次', 15, y);
+        }
+        c.toBlob(function(blob) { callback(blob); }, 'image/jpeg', 0.92);
+      };
+      img.onerror = function() { callback(null); };
+      img.src = g.photoUrl;
+    },
+    toDownload: function() {
+      var groups = state.sortedGroups || [];
+      if (!groups.length) { showToast('沒有資料', 'error'); return; }
+      showLoading(true, false, '正在生成 JPG...');
+      var idx = 0;
+      var el = document.getElementById('expSeries');
+      if (!el) { showLoading(false); return; }
+      var fields = {
+        series: el.checked,
+        sku: document.getElementById('expSku').checked,
+        sales: document.getElementById('expSales').checked,
+        date: document.getElementById('expDate').checked,
+        freq: document.getElementById('expFreq').checked
+      };
+      function next() {
+        if (idx >= groups.length) {
+          showLoading(false);
+          showToast('✅ JPG 已下載');
+          var m = document.getElementById('batchExportModal');
+          if (m) m.remove();
+          return;
+        }
+        var g = groups[idx++];
+        batchExport._renderJpg(g, fields, function(blob) {
+          if (!blob) { next(); return; }
+          var a = document.createElement('a');
+          a.download = (g.series || '未命名').replace(/[\/?<>\\:*|" ]/g,'_') + '.jpg';
+          var url = URL.createObjectURL(blob);
+          a.href = url;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function() { URL.revokeObjectURL(url); next(); }, 500);
+        });
+      }
+      next();
+    },
+    toEmail: function() {
+      var groups = state.sortedGroups || [];
+      if (!groups.length) { showToast('沒有資料', 'error'); return; }
+      var el = document.getElementById('expSeries');
+      if (!el) return;
+      var fields = {
+        series: el.checked, sku: document.getElementById('expSku').checked,
+        sales: document.getElementById('expSales').checked,
+        date: document.getElementById('expDate').checked, freq: document.getElementById('expFreq').checked
+      };
+      showLoading(true, false, '正在生成 JPG...');
+      var idx = 0, results = [];
+      function next() {
+        if (idx >= groups.length) {
+          if (results.length === 0) { showLoading(false); showToast('生成失敗', 'error'); return; }
+          showLoadingWithStatus('正在寄送 Email...');
+          google.script.run
+            .withSuccessHandler(function(res) {
+              showLoading(false);
+              var m = document.getElementById('batchExportModal');
+              if (m) m.remove();
+              if (res.success) showToast('📧 ' + res.msg);
+              else showToast('❌ ' + (res.msg || '寄送失敗'));
+            })
+            .withFailureHandler(function(err) {
+              showLoading(false);
+              showToast('❌ 系統錯誤: ' + err.message);
+            })
+            .sendLayoutReport(
+              document.getElementById('expEmail').value || '',
+              state.selectedCustomer || '',
+              state.currentSales || '',
+              JSON.stringify(results)
+            );
+          return;
+        }
+        var g = groups[idx++];
+        batchExport._renderJpg(g, fields, function(blob) {
+          if (blob) {
+            var reader = new FileReader();
+            reader.onload = function() {
+              var base64 = reader.result.split(',')[1];
+              results.push({ data: base64, name: (g.series || '未命名').replace(/[\/?<>\\:*|" ]/g,'_') });
+              next();
+            };
+            reader.readAsDataURL(blob);
+          } else {
+            next();
+          }
+        });
+      }
+      next();
+    },
+    toLine: function() {
+      var groups = state.sortedGroups || [];
+      if (!groups.length) { showToast('沒有資料', 'error'); return; }
+      var el = document.getElementById('expSeries');
+      if (!el) return;
+      var fields = {
+        series: el.checked, sku: document.getElementById('expSku').checked,
+        sales: document.getElementById('expSales').checked,
+        date: document.getElementById('expDate').checked, freq: document.getElementById('expFreq').checked
+      };
+      showLoading(true, false, '正在生成 JPG...');
+      var idx = 0, blobs = [];
+      function next() {
+        if (idx >= groups.length) {
+          showLoading(false);
+          var m = document.getElementById('batchExportModal');
+          if (m) m.remove();
+          if (blobs.length === 0) { showToast('生成失敗', 'error'); return; }
+          // 嘗試 navigator.share
+          if (navigator.share && navigator.canShare) {
+            var files = blobs.map(function(b, i) { return new File([b], '版面_' + (i+1) + '.jpg', {type:'image/jpeg'}); });
+            if (navigator.canShare({files: files})) {
+              navigator.share({files: files, title: '版面資料 - ' + (state.selectedCustomer || '')}).catch(function(){});
+              return;
+            }
+          }
+          // fallback: LINE URL
+          var text = '📦 版面資料 - ' + (state.selectedCustomer || '') + '\n';
+          groups.forEach(function(g, i) {
+            text += '\n【' + (i+1) + '】' + (g.series || '未命名') + '\n';
+            if (g.photoUrl) text += g.photoUrl + '\n';
+          });
+          // 行動用 line://，桌面用 https://
+          if (/iPad|iPhone|iPod|Android/i.test(navigator.userAgent)) {
+            window.open('line://msg/text/' + encodeURIComponent(text));
+          } else {
+            window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text));
+          }
+          showToast('💬 LINE 已開啟');
+          return;
+        }
+        var g = groups[idx++];
+        batchExport._renderJpg(g, fields, function(blob) {
+          if (blob) blobs.push(blob);
+          next();
+        });
+      }
+      next();
+    }
+  };
+</script>

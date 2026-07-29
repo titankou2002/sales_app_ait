@@ -1,0 +1,931 @@
+<!-- 業務配送手機主分頁 -->
+<div id="page-sales-delivery" class="page" style="display:none;">
+  <div class="navbar">
+    <button class="nav-back" onclick="showPage('page-dashboard')">←</button>
+    <div class="nav-title">我的配送單</div>
+    <div style="width:40px; display:flex; align-items:center; justify-content:center;">
+       <span onclick="loadDeliveryData(true)" style="font-size:22px; font-weight:bold; cursor:pointer; opacity:0.6;">⟳</span>
+    </div>
+  </div>
+  
+  <!-- 📅 日期選擇器 -->
+  <div class="dl-date-row" style="padding-bottom:5px;">
+     <button id="dl-date-today" class="dl-date-btn active" onclick="switchDeliveryDate('today')" style="flex:1;">今日任務</button>
+     <button id="dl-date-tomorrow" class="dl-date-btn" onclick="switchDeliveryDate('tomorrow')" style="flex:1;">明日預告</button>
+     <div style="position:relative; width:44px; flex-shrink:0;">
+        <button class="dl-date-btn" style="width:100%; font-size:18px; padding:0;">📅</button>
+        <input type="date" id="dl-custom-date" onchange="switchDeliveryDate(this.value)" style="position:absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;">
+     </div>
+  </div>
+
+  <div style="padding: 0 20px 10px;">
+    <button id="dl-progress-btn" onclick="openTodayDeliveryProgress()" 
+            style="width:100%; height:42px; border:none; border-radius:14px; background:linear-gradient(135deg, #facc15, #c29d66); color:#000; font-weight:900; font-size:14px; letter-spacing:1px; box-shadow:0 8px 20px rgba(194,157,102,0.25); cursor:pointer;">
+      📦 今日派送進度
+    </button>
+    <div style="margin-top:6px; text-align:center; font-size:11px; color:rgba(255,255,255,0.35);">
+      直接開啟智慧物流系統的今日派送進度頁面
+    </div>
+  </div>
+  
+  <style>
+    /* 配送單專屬美化樣式 (承襲物流 app 的進階視覺) */
+    .dl-task-card {
+      width: 100%;
+      background: linear-gradient(145deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 20px;
+      position: relative;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      display: flex;
+      flex-direction: column;
+    }
+    .dl-tag-cyan {
+       font-size: 14px; color: #38bdf8; font-weight: 900; 
+       background: rgba(56,189,248,0.1); padding: 2px 8px; 
+       border-radius: 4px; border: 1px solid rgba(56,189,248,0.2);
+    }
+    .dl-btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 15px;
+      height: 44px;
+    }
+    .dl-btn-base {
+      flex: 1;
+      height: 100%;
+      border-radius: 10px;
+      border: none;
+      font-size: 14px;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+      color: #fff;
+    }
+    .dl-btn-base:active { transform: scale(0.95); }
+    .dl-btn-action { background: #c29d66; color: #000; flex: 2.5; }
+    .dl-btn-nav { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.1); }
+    .dl-btn-util { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); font-size: 13px; }
+    
+    .dl-note-box {
+       font-size: 12px; color: #f59e0b; font-weight: 700; 
+       background: rgba(245,158,11,0.05); padding: 8px 12px; 
+       border-radius: 8px; border: 1px dashed rgba(245,158,11,0.3); 
+       margin-top: 10px; line-height: 1.4;
+    }
+    
+    @keyframes pulseBadge {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(249,115,22, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(249,115,22, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(249,115,22, 0); }
+    }
+    
+    /* ✅ 完成結案專用樣式 */
+    .dl-card-done {
+      opacity: 0.4;
+      filter: grayscale(85%);
+      transform: scale(0.97);
+      pointer-events: none;
+      box-shadow: none !important;
+    }
+    .dl-done-stamp {
+      position: absolute;
+      top: 50%;
+      right: 25px;
+      transform: translateY(-50%) rotate(-12deg);
+      border: 3px solid rgba(34, 197, 94, 0.9);
+      color: rgba(34, 197, 94, 1);
+      background: rgba(0,0,0,0.5);
+      font-weight: 900;
+      font-size: 26px;
+      padding: 4px 14px;
+      border-radius: 8px;
+      letter-spacing: 3px;
+      pointer-events: none;
+      z-index: 20;
+      box-shadow: 0 0 15px rgba(34, 197, 94, 0.3);
+      text-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+    }
+    
+    /* 🚀 結案確認彈窗 */
+    .dl-modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.85); backdrop-filter: blur(10px);
+      z-index: 1000; display: none; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .dl-modal-card {
+      background: #1e293b; width: 100%; max-width: 400px;
+      border-radius: 24px; border: 1px solid rgba(255,255,255,0.1);
+      overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    
+    /* 📅 日期切換按鈕 */
+    .dl-date-row {
+      display: flex; gap: 10px; padding: 10px 20px;
+    }
+    .dl-date-btn {
+      flex: 1; height: 36px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.5);
+      font-size: 14px; font-weight: bold; cursor: pointer; transition: all 0.2s;
+    }
+    .dl-date-btn.active {
+      background: #c29d66; color: #000; border-color: #c29d66;
+      box-shadow: 0 4px 12px rgba(194,157,102,0.3);
+    }
+    
+    /* 📁 折疊區塊 */
+    .dl-collapse-header {
+       padding: 10px 15px; background: rgba(255,255,255,0.05); 
+       border-radius: 12px; margin-top: 10px; display: flex; 
+       align-items: center; justify-content: space-between;
+       cursor: pointer; font-size: 13px; color: #94a3b8;
+    }
+    
+    /* 🟢 快速勾選按鈕 */
+    .dl-btn-check {
+       background: linear-gradient(135deg, #22c55e, #15803d);
+       color: white !important;
+       flex: 3 !important;
+       font-size: 16px !important;
+       letter-spacing: 2px;
+    }
+    
+    /* 📦 樣品極簡一列風格卡片 */
+    .dl-card-sample {
+       background: linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+       border: 1px solid rgba(255,255,255,0.03);
+       padding: 10px 15px; /* 超級扁平 */
+       border-radius: 12px;
+       min-height: auto !important;
+    }
+    
+    /* 🟢 樣品專屬圓圈勾選框 */
+    .dl-sample-checkbox {
+       width: 28px;
+       height: 28px;
+       border-radius: 50%;
+       border: 2px solid #22c55e;
+       display: flex;
+       align-items: center;
+       justify-content: center;
+       cursor: pointer;
+       flex-shrink: 0;
+       transition: all 0.2s;
+       background: rgba(0,0,0,0.2);
+    }
+    .dl-sample-checkbox:active { transform: scale(0.9); background: #22c55e; }
+    
+    .dl-card-done .dl-sample-checkbox {
+       background: #22c55e;
+       border-color: #22c55e;
+    }
+    .dl-card-done .dl-sample-checkbox::after {
+       content: '✓';
+       color: #fff;
+       font-weight: bold;
+       font-size: 14px;
+    }
+
+    /* 🎯 邊框色系定義 */
+    .dl-border-deli { border: 2px solid rgba(34, 197, 94, 0.4) !important; box-shadow: 0 4px 20px rgba(34,197,94,0.1) !important; }
+    .dl-border-sample { border: 2px solid rgba(234, 179, 8, 0.4) !important; box-shadow: 0 4px 20px rgba(234,179,8,0.1) !important; }
+    .dl-border-ret { border: 2px solid rgba(239, 68, 68, 0.4) !important; box-shadow: 0 4px 20px rgba(239,68,68,0.1) !important; }
+  </style>
+
+  <div class="delivery-content" style="padding: 20px 16px 100px; overflow-y:auto; height:calc(100vh - 60px);">
+    <!-- 名稱標籤 -->
+    <div style="margin-bottom:15px; display:flex; align-items:center; justify-content:space-between;">
+      <span id="dl-title-label" style="font-size:13px; opacity:0.6; letter-spacing: 1px;">今日指派任務</span>
+      <span id="dl-user-badge" style="font-size:12px; background:#c29d66; color:#000; padding:3px 10px; border-radius:20px; font-weight:bold; box-shadow:0 4px 10px rgba(194,157,102,0.3);"></span>
+    </div>
+    
+    <div id="delivery-list" style="display:flex; flex-direction:column; gap:16px;">
+      <!-- 載入區域 -->
+    </div>
+  </div>
+  
+  <!-- 隱藏的相機驅動 -->
+  <input type="file" id="delivery-cam-input" accept="image/*" capture="environment" style="display:none" onchange="handleDeliveryPhoto(this)">
+  <!-- 隱藏的相簿選取 -->
+  <input type="file" id="delivery-gallery-input" accept="image/*" style="display:none" onchange="handleDeliveryPhoto(this)">
+
+  
+  <!-- 圖片放大預覽 -->
+  <div id="dl-img-preview-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:10000; align-items:center; justify-content:center;" onclick="this.style.display='none';">
+     <img id="dl-img-preview-content" style="max-width:95%; max-height:90%; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.1);">
+     <div style="position:absolute; top:20px; right:20px; color:#fff; font-size:24px; font-weight:bold;">✕</div>
+  </div>
+</div>
+
+<script>
+/** 
+ * ✂️ 縮短客戶名稱 
+ */
+window.shortenCustName = function(name) {
+  if (!name) return "--";
+  let short = name.replace(/(股份有限公司|有限公司|公司|合夥|工程行|空調|建材行|磁磚行|設計公司|設計|工作室|事務所|行|店)/g, '').trim();
+  if (short.length > 4) return short.substring(0, 3);
+  return short || name.substring(0, 3);
+};
+
+var dlState = {
+  data: [],
+  salesList: [], // 存放所有可轉派的業務名單
+  targetRowIdx: null,
+  pendingPhoto: null,
+  activeTask: null,
+  currentDateMode: 'today', // 'today', 'tomorrow', or 'yyyy/MM/dd'
+  isDoneFolded: true, // 已完成任務是否收納
+  cache: {} // 🚀 [新增] 用於儲存各日期的快取資料
+};
+
+const TODAY_DELIVERY_PROGRESS_URL = "https://bigt.cc/ai_line/tracking.html";
+
+/** 
+ * 全域背景檢查小橘球 Badge 邏輯
+ * 專供 Dashboard 調用
+ */
+window.checkDeliveryBadge = function(salesName) {
+  if (!salesName) return;
+  var badgeEl = document.getElementById('delivery-badge');
+  if (!badgeEl) return;
+  
+  google.script.run
+    .withSuccessHandler(function(count) {
+       if (count && parseInt(count) > 0) {
+         badgeEl.innerText = count > 9 ? "!" : count;
+         badgeEl.style.display = "flex";
+       } else {
+         badgeEl.style.display = "none";
+       }
+    })
+    .getSalesDeliveryTaskCount(salesName);
+}
+
+window.openDeliveryModule = function() {
+  if (!state.currentSales) {
+    state.currentFlow = 'delivery';
+    showPage('sales-page');
+    return;
+  }
+  showPage('page-sales-delivery');
+  loadDeliveryData();
+  injectDeliveryModal(); // 確保初始化彈窗
+  
+  // 既然進來了，隱藏 badge
+  var badgeEl = document.getElementById('delivery-badge');
+  if (badgeEl) badgeEl.style.display = 'none';
+};
+
+window.openTodayDeliveryProgress = function() {
+  window.open(TODAY_DELIVERY_PROGRESS_URL, '_blank', 'noopener,noreferrer');
+};
+
+/** 開啟預覽 */
+function previewDeliveryImage(url) {
+  if (!url) return;
+  var modal = document.getElementById('dl-img-preview-modal');
+  var img = document.getElementById('dl-img-preview-content');
+  img.src = url;
+  modal.style.display = 'flex';
+}
+
+/** 向後端連線抓取您的資料 */
+function loadDeliveryData(forceRefresh) {
+  var listEl = document.getElementById('delivery-list');
+  var badge = document.getElementById('dl-user-badge');
+  
+  if (forceRefresh) {
+     // 🚀 強制重新整理時，清空當前模式的快取
+     var key = _getDeliveryCacheKey();
+     delete dlState.cache[key];
+  }
+
+  listEl.innerHTML = '<div style="text-align:center; padding:60px 0; opacity:0.4; font-size:14px;">正在與物流雲端同步...</div>';
+  
+  var myName = (typeof state !== 'undefined' && state.currentSales) ? state.currentSales : "";
+  if (badge) badge.innerText = myName || "未登入";
+
+  if (!myName) {
+    listEl.innerHTML = '<div style="text-align:center; padding:40px; color:#ff9500;">偵測不到當前業務姓名</div>';
+    return;
+  }
+
+  // 如果尚未抓取業務名單，先抓取，確保「轉派」選單有資料
+  if (!dlState.salesList || dlState.salesList.length === 0) {
+    google.script.run
+      .withSuccessHandler(function(sRes) {
+        if (sRes && sRes.success) dlState.salesList = sRes.data;
+        _fetchDeliveryTasks(myName); // 抓完名單抓任務
+      })
+      .getSalesList();
+  } else {
+    _fetchDeliveryTasks(myName);
+  }
+}
+
+function _getDeliveryCacheKey() {
+  if (dlState.currentDateMode === 'today') {
+    var now = new Date();
+    var y = now.getFullYear();
+    var m = ("0" + (now.getMonth() + 1)).slice(-2);
+    var d = ("0" + now.getDate()).slice(-2);
+    return y + '/' + m + '/' + d;
+  } else if (dlState.currentDateMode === 'tomorrow') {
+    var tom = new Date(); tom.setDate(tom.getDate() + 1);
+    var y = tom.getFullYear(); var m = ("0" + (tom.getMonth() + 1)).slice(-2); var d = ("0" + tom.getDate()).slice(-2);
+    return y + '/' + m + '/' + d;
+  }
+  return dlState.currentDateMode.replace(/-/g, '/');
+}
+
+/** 私有函式：純抓取配送任務 */
+function _fetchDeliveryTasks(myName) {
+  var listEl = document.getElementById('delivery-list');
+  var targetDate = _getDeliveryCacheKey();
+
+  // 🚀 [核心優化] 檢查手機端快取，避免重複請求
+  if (dlState.cache[targetDate]) {
+    console.log("Using cached data for:", targetDate);
+    dlState.data = dlState.cache[targetDate];
+    renderDeliveryList();
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.success) {
+        dlState.data = res.data;
+        dlState.cache[targetDate] = res.data; // 寫入快取
+        renderDeliveryList();
+      } else {
+        showToast("載入失敗: " + (res.msg || "未知錯誤"), "error");
+        listEl.innerHTML = '<div style="text-align:center; padding:40px; opacity:0.5;">載入失敗</div>';
+      }
+    })
+    .getSalesDeliveryTasks(myName, targetDate); 
+}
+
+/** 📅 切換日期邏輯 */
+function switchDeliveryDate(mode) {
+  dlState.currentDateMode = mode;
+  
+  // 更新按鈕狀態
+  document.getElementById('dl-date-today').classList.toggle('active', mode === 'today');
+  document.getElementById('dl-date-tomorrow').classList.toggle('active', mode === 'tomorrow');
+  
+  // 如果是自定義日期，清空其他按鈕的 active
+  if (mode !== 'today' && mode !== 'tomorrow') {
+    document.getElementById('dl-date-today').classList.remove('active');
+    document.getElementById('dl-date-tomorrow').classList.remove('active');
+  }
+  
+  loadDeliveryData();
+}
+
+/** 地址淨化輔助：拿掉市/縣，僅留區，基隆除外 */
+function formatDeliAddr(addr) {
+  if (!addr) return "無地址";
+  var s = String(addr).trim();
+  if (s.indexOf("基隆") === 0) return s; // 基隆跳過
+  // 移除開頭的 XX市 / XX縣
+  return s.replace(/^(台灣|臺灣)/, '')
+          .replace(/^(台北市|新北市|桃園市|台中市|臺中市|高雄市|台南市|新竹市|嘉義市|新竹縣|苗栗縣|彰化縣|南投縣|雲林縣|嘉義縣|屏東縣|宜蘭縣|花蓮縣|台東縣|澎湖縣|金門縣|連江縣)/, '');
+}
+
+/** 渲染精裝重造版配送卡片 */
+function renderDeliveryList() {
+  var container = document.getElementById('delivery-list');
+  
+  if (!dlState.data || dlState.data.length === 0) {
+    var titleLabel = document.getElementById('dl-title-label');
+    if (titleLabel) titleLabel.innerText = "今日指派任務";
+    container.innerHTML = '<div style="text-align:center; padding:80px 0; opacity:0.3; font-size:14px;">今日無配送指派任務</div>';
+    return;
+  }
+  
+  // ✨ 計算動態統計資料與完成數
+  var counts = { "送貨":0, "樣品":0, "退貨":0, "完成":0 };
+  dlState.data.forEach(function(t) {
+    if (t.isFinished) counts["完成"]++;
+    var type = String(t.shippingType || "").trim();
+    if (type.indexOf("送貨") !== -1) counts["送貨"]++;
+    else if (type.indexOf("樣品") !== -1) counts["樣品"]++;
+    else if (type.indexOf("退貨") !== -1) counts["退貨"]++;
+    else counts["送貨"]++; // 預設
+  });
+  
+  var titleLabel = document.getElementById('dl-title-label');
+  if (titleLabel) {
+    var dateLabel = "今日任務";
+    if (dlState.currentDateMode === 'tomorrow') dateLabel = "明日預告";
+    else if (dlState.currentDateMode !== 'today') dateLabel = dlState.currentDateMode;
+    
+    titleLabel.innerHTML = `${dateLabel} (
+      <span style="color:#22c55e;">送貨 ${counts["送貨"]}</span> 
+      <span style="color:#eab308;">樣品 ${counts["樣品"]}</span> 
+      <span style="color:#ef4444;">退貨 ${counts["退貨"]}</span> 
+      <span style="color:#fff;">完成 ${counts["完成"]}</span>
+    )`;
+  }
+
+  // ✨ 分流處理：未完成 vs 已完成
+  var pending = [], done = [];
+  dlState.data.forEach(function(t) {
+    if (t.isFinished) done.push(t); else pending.push(t);
+  });
+
+  var html = "";
+  
+  // 1. 渲染待處理任務
+  if (pending.length > 0) {
+    html += pending.map(function(task) { return renderSingleTaskCard(task); }).join('');
+  } else {
+    html += '<div style="text-align:center; padding:40px 0; opacity:0.3; font-size:14px;">暫無待處理任務</div>';
+  }
+  
+  // 2. 渲染已完成任務 (可收納)
+  if (done.length > 0) {
+    html += `
+      <div class="dl-collapse-header" onclick="toggleDoneFold()">
+         <span>📦 已完成任務 (${done.length} 件)</span>
+         <span>${dlState.isDoneFolded ? '展開 ▾' : '收合 ▴'}</span>
+      </div>
+      <div id="dl-done-container" style="display:${dlState.isDoneFolded ? 'none' : 'flex'}; flex-direction:column; gap:16px; margin-top:10px;">
+         ${done.map(function(task) { return renderSingleTaskCard(task); }).join('')}
+      </div>
+    `;
+  }
+  
+  container.innerHTML = html;
+}
+
+function toggleDoneFold() {
+  dlState.isDoneFolded = !dlState.isDoneFolded;
+  renderDeliveryList();
+}
+
+/** 渲染單張任務卡片 (抽離出來複用) */
+function renderSingleTaskCard(task) {
+    var isDone = task.isFinished;
+    var isSample = (task.shippingType === "樣品");
+    var isDelivery = (task.shippingType === "送貨");
+    var isReturn = (task.shippingType === "退貨");
+    
+    var mapLink = task.address ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(task.address) : "javascript:void(0)";
+    var telLink = task.phone ? "tel:" + task.phone : null;
+    
+    // 使用 shortenCustName 縮短名稱
+    var cleanCust = window.shortenCustName(task.customer);
+    var displayTitle = "";
+    if (isSample) {
+       displayTitle = "(樣品)" + cleanCust;
+    } else {
+       displayTitle = (task.shippingType || "送貨") + "-" + cleanCust;
+    }
+    
+    // 地址清理
+    var displayAddr = formatDeliAddr(task.address);
+    
+    // 全五鈕平均分配與拍照配色區別 CSS 使用
+    var cardClasses = ["dl-task-card"];
+    if (isDone) cardClasses.push("dl-card-done");
+    
+    if (isSample) {
+      cardClasses.push("dl-card-sample", "dl-border-sample");
+    } else if (task.shippingType === "退貨") {
+      cardClasses.push("dl-border-ret");
+    } else {
+      cardClasses.push("dl-border-deli");
+    }
+    
+    var html = `<div class="${cardClasses.join(' ')}" style="padding: 0; overflow:hidden;">`;
+    
+    if (isDone) { html += `<div class="dl-done-stamp">已完成</div>`; }
+
+    if (isSample) {
+      // 🎁 [樣品模式] 極簡 UI
+      var pStr = "";
+      var moreBtn = "";
+      var subItemsHtml = "";
+      
+      if (task.items && task.items.length > 0) {
+         var f = task.items[0];
+         pStr = " -" + f.code + " x" + f.qty;
+         if (task.items.length > 1) {
+            moreBtn = `<span onclick="event.stopPropagation(); toggleTaskDetail('sub-${task.rowIdx}')" style="font-size:10px; color:#38bdf8; margin-left:6px; text-decoration:underline; cursor:pointer;">▼展開</span>`;
+            subItemsHtml = `<div id="sub-${task.rowIdx}" style="display:none; margin-top:5px; padding-left:38px; font-size:12px; color:#94a3b8; background:rgba(0,0,0,0.1); border-radius:4px; padding:5px 10px; margin-left:38px;">` + 
+              task.items.slice(1).map(function(i){ return `<div><span style="color:#eab308;">${i.code} x${i.qty}</span></div>`; }).join('') + 
+            `</div>`;
+         }
+      }
+
+      html += `
+        <div style="padding: 12px 15px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+             <div class="dl-sample-checkbox" onclick="triggerQuickSampleCheck(${task.rowIdx}, '${task.shippingType}')"></div>
+             <div style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:14px; display:flex; align-items:center;">
+                <span style="font-weight:900; color:#fff; margin-right:6px; font-size:15px;">○ ${displayTitle}</span>
+                ${moreBtn}
+             </div>
+             <div style="display:flex; gap:5px; align-items:center;">
+                ${task.thumbnail ? `<span onclick="event.stopPropagation(); previewDeliveryImage('${task.thumbnail}')" style="opacity:0.8; font-size:11px; color:#fff; border:1px solid rgba(255,255,255,0.4); padding:2px 6px; border-radius:4px; cursor:pointer; background:rgba(255,255,255,0.1);">圖</span>` : ""}
+                ${telLink ? `<a href="${telLink}" onclick="event.stopPropagation()" style="opacity:0.6; font-size:11px; color:#fff; border:1px solid rgba(255,255,255,0.3); padding:2px 6px; border-radius:4px; text-decoration:none; background:rgba(255,255,255,0.05);">電</a>` : ""}
+             </div>
+          </div>
+          <div style="padding-left:38px; font-size:13px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px;">${displayAddr}</div>
+          ${subItemsHtml}
+        </div>
+      `;
+    } else {
+      // 🚚 [送貨也改下探式] 預設只秀大分類標籤、名字與地址
+      html += `
+        <!-- 表頭 (點選展開) -->
+        <div onclick="toggleTaskDetail('body-${task.rowIdx}')" style="padding: 14px 15px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+           <div style="flex:1; overflow:hidden;">
+              <div style="font-size:16px; font-weight:900; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                 ${displayTitle}
+                 <span style="opacity:0.7; color:#cbd5e1; font-weight:normal; margin-left:8px; font-size:13px;">${displayAddr}</span>
+              </div>
+           </div>
+            <div style="font-size:12px; color:#38bdf8; flex-shrink:0; opacity:0.8; font-weight:bold; display:flex; align-items:center; gap:8px;">
+               ${task.finishTime ? '<span style="color:#22c55e;">'+task.finishTime+' 到貨</span>' : ''}
+               <span style="font-size:14px;">▼</span>
+            </div>
+        </div>
+        
+        <!-- 下探細節區塊 (隱藏) -->
+        <div id="body-${task.rowIdx}" style="display:none; background:rgba(0,0,0,0.15); border-top:1px solid rgba(255,255,255,0.04); padding: 12px 15px;">
+           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+              <div style="font-size:11px; color:#94a3b8;">重量資訊：${task.weight || 0} kg</div>
+           </div>
+      `;
+      
+      if (task.note && String(task.note).trim().length > 0) {
+         html += `<div class="dl-note-box" style="margin-top:0; padding:6px 10px; font-size:11px; margin-bottom:12px;">備註：${String(task.note).trim()}</div>`;
+      }
+      
+      // 🌟 五顆等寬按鈕！
+      html += `
+        <div class="dl-btn-row" style="display:flex; gap:5px; height:38px; margin-top:0;">
+           <!-- 1. 導航 -->
+           <a href="${mapLink}" target="_blank" class="dl-btn-base dl-btn-nav" style="flex:1; font-size:12px;">導航</a>
+           
+           <!-- 2. 拍照 (核心動作按鈕，亮金色) -->
+           ${isDelivery ? 
+             `<button onclick="triggerGallery(${task.rowIdx})" class="dl-btn-base dl-btn-action" style="flex:1; font-size:12px; font-weight:bold;">相簿</button>` :
+             `<button onclick="triggerQuickSampleCheck(${task.rowIdx}, '${task.shippingType}')" class="dl-btn-base dl-btn-check" style="flex:1; font-size:12px;">打勾</button>`
+           }
+           
+           <!-- 3. 圖檔 -->
+           ${task.thumbnail ? 
+             `<button onclick="previewDeliveryImage('${task.thumbnail}')" class="dl-btn-base dl-btn-util" style="flex:1; font-size:12px;">圖檔</button>` : 
+             `<button disabled style="opacity:0.3; flex:1;" class="dl-btn-base dl-btn-util">圖檔</button>`
+           }
+           
+           <!-- 4. 電話 -->
+           ${telLink ? 
+             `<a href="${telLink}" class="dl-btn-base dl-btn-util" style="flex:1; font-size:12px;">電話</a>` : 
+             `<button disabled style="opacity:0.3; flex:1;" class="dl-btn-base dl-btn-util">電話</button>`
+           }
+           
+           <!-- 5. 換人 (隱形選單覆蓋在按鈕上達成點選效果) -->
+           <div style="position:relative; flex:1; height:100%;">
+              <button class="dl-btn-base dl-btn-util" style="width:100%; height:100%; font-size:12px;">換人</button>
+              <select onchange="handleQuickTransfer(${task.rowIdx}, this, '${cleanCust}')" style="position:absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;">
+                 <option value="">選擇承接人</option>
+                 ${(dlState.salesList || []).map(function(s){ return '<option value="'+s+'">'+s+'</option>'; }).join('')}
+              </select>
+           </div>
+        </div>
+      </div>
+      `;
+    }
+    
+    html += `</div>`;
+    return html;
+}
+
+/**
+ * 🚀 [新增] 結案確認彈窗元件
+ */
+function injectDeliveryModal() {
+  if (document.getElementById('dl-confirm-overlay')) return;
+  var div = document.createElement('div');
+  div.id = 'dl-confirm-overlay';
+  div.className = 'dl-modal-overlay';
+  div.innerHTML = `
+    <div class="dl-modal-card">
+       <div style="padding: 20px; text-align:center; border-bottom:1px solid rgba(255,255,255,0.05);">
+          <div style="font-size:18px; font-weight:900; color:#fff;">確認配送完成</div>
+       </div>
+       <div style="padding: 20px;">
+          <!-- 照片預覽 -->
+          <img id="dl-preview-img" style="width:100%; height:200px; object-fit:cover; border-radius:12px; margin-bottom:15px; border:1px solid rgba(255,255,255,0.1);">
+          
+          <!-- 破損回報 -->
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:15px; background:rgba(255,255,255,0.03); padding:10px 15px; border-radius:12px;">
+             <div style="font-size:14px; color:#cbd5e1;">貨物是否有破損？</div>
+             <select id="dl-is-damaged" onchange="this.style.color = this.value === '是' ? '#ef4444' : '#22c55e'" style="background:none; border:none; color:#22c55e; font-weight:900; font-size:16px; outline:none; cursor:pointer;">
+                <option value="否">否</option>
+                <option value="是">是 (通報破損)</option>
+             </select>
+          </div>
+          
+          <!-- 備註輸入 -->
+          <div style="margin-bottom:20px;">
+             <div style="font-size:12px; color:#64748b; margin-bottom:5px; margin-left:5px;">補充說明 / 備註</div>
+             <textarea id="dl-report-note" placeholder="例如：管理室代收、客戶親簽等..." style="width:100%; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:12px; color:#fff; font-size:14px; min-height:80px; resize:none; outline:none;"></textarea>
+          </div>
+          
+          <!-- 按鈕 -->
+          <div style="display:flex; gap:10px;">
+             <button onclick="closeDeliveryModal()" style="flex:1; height:48px; border-radius:12px; background:rgba(255,255,255,0.05); color:#94a3b8; border:none; font-weight:bold; cursor:pointer;">取消</button>
+             <button onclick="submitDeliveryFinal()" style="flex:2; height:48px; border-radius:12px; background:linear-gradient(135deg, #38bdf8, #1d4ed8); color:#fff; border:none; font-weight:900; font-size:16px; cursor:pointer; box-shadow: 0 10px 20px rgba(29, 78, 216, 0.3);">確認結案</button>
+          </div>
+       </div>
+    </div>
+  `;
+  document.body.appendChild(div);
+}
+
+function closeDeliveryModal() {
+  document.getElementById('dl-confirm-overlay').style.display = 'none';
+}
+
+function submitDeliveryFinal() {
+  var note = document.getElementById('dl-report-note').value;
+  var isDamaged = document.getElementById('dl-is-damaged').value === '是';
+  
+  if (typeof showLoading === 'function') showLoading(true, '正在產生結案報告圖...');
+  closeDeliveryModal();
+  
+  // 🚀 [核心強化] 產生與司機端一致的合成報告圖
+  _generateCompositeDeliveryImage(dlState.pendingPhoto.base64, dlState.activeTask, note, isDamaged, function(compositeBase64) {
+    if (typeof showLoading === 'function') showLoading(true, '同步數據並傳送 LINE 通知...');
+    
+    var finalPayload = { base64: compositeBase64, mimeType: 'image/jpeg' };
+    
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (typeof showLoading === 'function') showLoading(false);
+        if (res && res.success) {
+          if (typeof showToast === 'function') showToast("配送結案成功！已傳送 LINE 通知", "success");
+          loadDeliveryData(); 
+        } else {
+          alert("結案失敗：" + (res ? res.msg : "未知錯誤"));
+        }
+      })
+      .withFailureHandler(function(err) {
+        if (typeof showLoading === 'function') showLoading(false);
+        alert("連線失敗：" + err);
+      })
+      .completeSalesDeliveryTask(dlState.targetRowIdx, finalPayload, note, isDamaged);
+  });
+}
+
+/**
+ * 🎨 繪圖核心：產生與「智慧物流」司機端完全一致的結案合成圖
+ */
+function _generateCompositeDeliveryImage(base64, task, note, isDamaged, callback) {
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
+  var img = new Image();
+  
+  img.onload = function() {
+    try {
+      canvas.width = 800;
+      canvas.height = 1000;
+      
+      // 背景底色 (深藍質感)
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(0, 0, 800, 1000);
+      
+      // 1. 照片處理 (保持比例並居中)
+      var imgMargin = 30;
+      var imgW = 740;
+      var imgH = 600;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(imgMargin - 4, imgMargin - 4, imgW + 8, imgH + 8);
+      
+      var aspect = img.width / img.height;
+      if (aspect < (imgW / imgH)) {
+        // 直拍 - 增加模糊背景
+        ctx.save(); ctx.beginPath(); ctx.rect(imgMargin, imgMargin, imgW, imgH); ctx.clip();
+        ctx.filter = 'blur(10px) brightness(0.7)';
+        ctx.drawImage(img, imgMargin - 100, imgMargin, imgW + 200, imgH);
+        ctx.filter = 'none'; ctx.restore();
+        var drawW = imgH * aspect;
+        ctx.drawImage(img, imgMargin + (imgW - drawW) / 2, imgMargin, drawW, imgH);
+      } else {
+        ctx.drawImage(img, imgMargin, imgMargin, imgW, imgH);
+      }
+      
+      // 2. 文字呈現
+      var custShort = String(task.customer || "客戶").substring(0, 10);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'left';
+      ctx.font = 'bold 44px sans-serif';
+      ctx.fillText(custShort + ' 配送完成', 40, imgH + 100);
+      
+      var d = new Date();
+      var timeStr = d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + 
+                    d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+      
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText('時間：' + timeStr, 40, imgH + 160);
+      ctx.fillText('客戶：' + (task.customer || ""), 40, imgH + 210);
+      
+      var addr = String(task.address || "");
+      if (addr.length > 25) addr = addr.substring(0, 25) + "...";
+      ctx.fillText('地點：' + addr, 40, imgH + 260);
+      
+      ctx.fillText('單號：' + (task.id || ""), 40, imgH + 310);
+      ctx.fillText('業務：' + (state.currentSales || ""), 40, imgH + 360);
+      
+      if (isDamaged) {
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 30px sans-serif';
+        ctx.fillText('⚠️ 狀態：貨物破損通報', 40, imgH + 410);
+      }
+      
+      // 3. 數位印章
+      var stampCx = 650, stampCy = 820, stampR = 90;
+      ctx.save();
+      ctx.translate(stampCx, stampCy); ctx.rotate(-15 * Math.PI / 180); ctx.translate(-stampCx, -stampCy);
+      ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(stampCx, stampCy, stampR, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(stampCx, stampCy, stampR - 8, 0, Math.PI * 2); ctx.stroke();
+      ctx.textAlign = 'center'; ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 28px sans-serif'; ctx.fillText(custShort.substring(0, 4), stampCx, stampCy - 30);
+      ctx.font = 'bold 40px sans-serif'; ctx.fillText('已送達', stampCx, stampCy + 15);
+      ctx.font = 'bold 18px sans-serif'; ctx.fillText(timeStr.split(' ')[0], stampCx, stampCy + 55);
+      ctx.restore();
+      
+      callback(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    } catch(e) {
+      console.error("Canvas Error:", e);
+      callback(base64); // 失敗則回傳原圖
+    }
+  };
+  img.src = 'data:image/jpeg;base64,' + base64;
+}
+
+function toggleTaskDetail(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = (el.style.display === 'none' ? 'block' : 'none');
+}
+
+function handleQuickTransfer(rowIdx, selectEl, customerName) {
+  var newSales = selectEl.value;
+  if (!newSales) return;
+  
+  var conf = confirm("確認將「" + customerName + "」的案件轉派給 " + newSales + " 嗎？");
+  if (!conf) {
+    selectEl.value = ""; // 還原選擇
+    return;
+  }
+  
+  if (typeof showLoading === 'function') showLoading(true, true);
+  
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (typeof showLoading === 'function') showLoading(false);
+      if (res && res.success) {
+        if (typeof showToast === 'function') showToast("轉派成功！", "success");
+        loadDeliveryData(); // 重新載入列表
+      } else {
+        selectEl.value = ""; // 還原選擇
+        if (typeof showToast === 'function') showToast("轉派失敗: " + (res.msg || "未知錯誤"), "error");
+      }
+    })
+    .transferSalesDeliveryTask(rowIdx, newSales);
+}
+
+function triggerQuickSampleCheck(rowIdx, label) {
+  var typeLabel = label || "案件";
+  
+  if (typeof showLoading === 'function') showLoading(true, true);
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (typeof showLoading === 'function') showLoading(false);
+      if (res.success) {
+        if (typeof showToast === 'function') showToast(typeLabel + "已結案並存入日誌", "success");
+        loadDeliveryData();
+        if (window.checkDeliveryBadge && state.currentSales) window.checkDeliveryBadge(state.currentSales);
+      } else {
+        if (typeof showToast === 'function') showToast("發生錯誤: " + res.msg, "error");
+      }
+    })
+    .completeSampleTask(rowIdx);
+}
+
+function triggerPhotoSheet(rowIdx) {
+  dlState.targetRowIdx = rowIdx;
+  dlState.activeTask = dlState.data.find(function(t){ return t.rowIdx === rowIdx; });
+  document.getElementById('dl-photo-action-sheet').style.display = 'block';
+}
+
+function closeDlPhotoSheet() {
+  document.getElementById('dl-photo-action-sheet').style.display = 'none';
+}
+
+function dlPhotoSheetChoose(source) {
+  closeDlPhotoSheet();
+  if (source === 'camera') {
+    document.getElementById('delivery-cam-input').value = '';
+    document.getElementById('delivery-cam-input').click();
+  } else {
+    document.getElementById('delivery-gallery-input').value = '';
+    document.getElementById('delivery-gallery-input').click();
+  }
+}
+
+function triggerGallery(rowIdx) {
+  dlState.targetRowIdx = rowIdx;
+  dlState.activeTask = dlState.data.find(function(t){ return t.rowIdx === rowIdx; });
+  document.getElementById('delivery-gallery-input').value = '';
+  document.getElementById('delivery-gallery-input').click();
+}
+
+function triggerTakeCam(rowIdx) {
+  dlState.targetRowIdx = rowIdx;
+  dlState.activeTask = dlState.data.find(function(t){ return t.rowIdx === rowIdx; });
+  document.getElementById('delivery-cam-input').click();
+}
+
+function handleDeliveryPhoto(el) {
+  if (!el.files || !el.files[0]) return;
+  
+  if (typeof showLoading === 'function') showLoading(true, true);
+  var file = el.files[0];
+  var reader = new FileReader();
+  
+  reader.onload = function(e) {
+    // 💡 [修復核心] 建立 Image 物件進行用戶端壓縮，防止超高畫質照片衝爆 Apps Script API 傳輸上限
+    var img = new Image();
+    img.onload = function() {
+      var canvas = document.createElement('canvas');
+      var ctx = canvas.getContext('2d');
+      
+      // 設定上限 1200px 左右，足夠清晰但體積極小
+      var maxWidth = 1200;
+      var maxHeight = 1200;
+      var width = img.width;
+      var height = img.height;
+      
+      if (width > height) {
+        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
+      } else {
+        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // 採用 JPEG 品質 0.7，檔案大小可降至 300KB 以內，保證 100% 成功上傳
+      var dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      
+      // 🚀 [流程變更] 不再直接結案，而是打開確認視窗
+      dlState.pendingPhoto = { base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' };
+      
+      if (typeof showLoading === 'function') showLoading(false);
+      el.value = ""; 
+      
+      injectDeliveryModal();
+      document.getElementById('dl-preview-img').src = dataUrl;
+      document.getElementById('dl-report-note').value = "";
+      document.getElementById('dl-is-damaged').value = "否";
+      document.getElementById('dl-is-damaged').style.color = "#22c55e";
+      document.getElementById('dl-confirm-overlay').style.display = 'flex';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+</script>
+
+<!-- 拍照/相簿 選擇 Action Sheet（放在 .page 外，避免被 z-index 層疊遮住）-->
+<div id="dl-photo-action-sheet" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:99999;" onclick="closeDlPhotoSheet()">
+  <div style="position:absolute; bottom:0; left:0; width:100%; background:#1c1c1e; border-radius:16px 16px 0 0; padding:12px 16px 32px;" onclick="event.stopPropagation()">
+    <div style="text-align:center; color:rgba(255,255,255,0.4); font-size:12px; margin-bottom:12px;">上傳照片</div>
+    <button onclick="dlPhotoSheetChoose('camera')" style="width:100%; height:52px; border:none; border-radius:12px; background:#2c2c2e; color:#fff; font-size:16px; margin-bottom:8px; cursor:pointer;">
+      📷 拍照
+    </button>
+    <button onclick="dlPhotoSheetChoose('gallery')" style="width:100%; height:52px; border:none; border-radius:12px; background:#2c2c2e; color:#fff; font-size:16px; margin-bottom:16px; cursor:pointer;">
+      🖼️ 從相簿選取
+    </button>
+    <button onclick="closeDlPhotoSheet()" style="width:100%; height:52px; border:none; border-radius:12px; background:#3a3a3c; color:#ff453a; font-size:16px; cursor:pointer; font-weight:bold;">
+      取消
+    </button>
+  </div>
+</div>

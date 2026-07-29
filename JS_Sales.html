@@ -1,0 +1,162 @@
+<script>
+  /**
+   * 📊 業績概況模組邏輯
+   */
+  window.openSalesModule = function() {
+    showPage('page-sales-overview');
+    if (state.salesOverviewLoaded) {
+      renderSalesOverview(state.salesOverviewData);
+    } else {
+      showLoading(true, true);
+      google.script.run
+        .withSuccessHandler(function(res) {
+          showLoading(false);
+          if (res && res.success) {
+            state.salesOverviewData = res.data;
+            state.salesOverviewLoaded = true;
+            renderSalesOverview(res.data);
+          } else {
+            showToast("❌ 載入失敗: " + (res ? res.msg : "未知錯誤"), "error");
+          }
+        })
+        .withFailureHandler(function(err) {
+          showLoading(false);
+          showToast("❌ 系統錯誤: " + (err.message || err), "error");
+        })
+        .getSalesOverview();
+    }
+  };
+
+  /**
+   * 🏆 點擊全員合計進入詳情
+   */
+  window.openCompanyDetail = function() {
+    if (!state.salesOverviewData) return;
+    const s = state.salesOverviewData;
+    
+    // 1. 合併所有人客戶 (去重累加)
+    let allCusts = [];
+    s.people.forEach(p => {
+      (p.customers || []).forEach(c => {
+        let name = c.name.trim();
+        let existing = allCusts.find(ec => ec.name.trim() === name);
+        if (existing) {
+          existing.ytd = Math.round((existing.ytd + c.ytd) * 10) / 10;
+          existing.target = Math.round((existing.target + c.target) * 10) / 10;
+        } else {
+          allCusts.push({
+            name: name,
+            ytd: c.ytd,
+            target: c.target,
+            isShared: false 
+          });
+        }
+      });
+    });
+    allCusts.sort((a,b) => b.ytd - a.ytd);
+
+    // 2. 合併歷史月份趨勢
+    let combinedMonths = new Array(12).fill(0);
+    s.people.forEach(p => {
+      (p.months || []).forEach((mVal, mIdx) => {
+        combinedMonths[mIdx] = Math.round((combinedMonths[mIdx] + mVal) * 10) / 10;
+      });
+    });
+
+    showPage('page-sales-detail');
+    renderKpiPage({
+      salesName: '全員合計',
+      ytd: s.year.total,
+      target: s.target.total,
+      achieveRate: s.achieveRate,
+      months: combinedMonths,
+      customers: allCusts,
+      sleeper: s.sleeper
+    });
+  };
+
+  /**
+   * 🏆 點擊個人卡片進入詳情
+   */
+  window.openPersonDetail = function(name) {
+    state.currentSales = name;
+    showPage('page-sales-detail');
+    
+    if (state.salesOverviewData) {
+      var person = state.salesOverviewData.people.find(p => p.name === name);
+      if (person) {
+        renderKpiPage({
+          salesName: person.name,
+          ytd: person.year,
+          target: person.target,
+          achieveRate: person.contrib,
+          months: person.months,
+          customers: person.customers,
+          sleeper: person.sleeper,
+          bonus: person.bonus // 傳遞獎金估算資料
+        });
+      }
+    }
+  };
+
+  /**
+   * 🏆 開啟睡美人銷售明細
+   */
+  window.openSleeperDetail = function(name) {
+    const month = (window.currentKpiMonth !== undefined && window.currentKpiMonth !== -1) ? window.currentKpiMonth : new Date().getMonth();
+    const salesperson = (name === '全員合計') ? '' : name;
+    
+    showLoading(true, true);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        if (res && res.success) {
+          const modal = document.getElementById('modal-sleeper-detail');
+          const title = document.getElementById('sleeper-modal-title');
+          const body = document.getElementById('sleeper-modal-body');
+          
+          title.innerText = `${res.month}月 睡美人明細 (${name})`;
+          
+          if (!res.data || res.data.length === 0) {
+            body.innerHTML = '<div style="text-align:center; padding:40px; opacity:0.4;">本月無銷售紀錄</div>';
+          } else {
+            let html = '';
+            res.data.forEach(item => {
+              html += `
+                <div style="background:rgba(255,255,255,0.05); border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid rgba(168,85,247,0.2);">
+                  <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <span style="color:#a855f7; font-weight:800;">${item.date}</span>
+                    <span style="font-weight:900; color:#fff;">$${item.amt.toLocaleString()}</span>
+                  </div>
+                  <div style="font-size:14px; font-weight:800; color:#fff; margin-bottom:4px;">${item.cust}</div>
+                  <div style="font-size:12px; opacity:0.6;">[${item.series}] ${item.sku}</div>
+                </div>
+              `;
+            });
+            body.innerHTML = html;
+          }
+          modal.style.display = 'flex';
+        } else {
+          showToast("❌ 載入失敗: " + (res ? res.msg : "未知錯誤"), "error");
+        }
+      })
+      .withFailureHandler(function(err) {
+        showLoading(false);
+        showToast("❌ 系統錯誤: " + (err.message || err), "error");
+      })
+      .getSleeperDetails(salesperson, month);
+  };
+
+  function loadSalesOverview() {
+    if (state.salesOverviewData) return;
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res && res.success) {
+          state.salesOverviewData = res.data;
+          state.salesOverviewLoaded = true;
+          console.log('🚀 業績速覽數據已就緒');
+        }
+      })
+      .getSalesOverview();
+  }
+</script>

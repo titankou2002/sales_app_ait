@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>高雅瓷 - 分公司庫存查詢系統 (Staff)</title>
+  <?!= include('CSS_Base'); ?>
+  <?!= include('CSS_Effects'); ?>
+  <?!= include('CSS_Components'); ?>
+  <style>
+    /* 🚀 覆寫基礎 CSS，確保頁面可捲動 */
+    html, body { 
+      background: #000; 
+      color: #fff; 
+      overflow: auto !important; 
+      height: auto !important; 
+      margin: 0; 
+      padding: 0; 
+    }
+    .staff-container { 
+      max-width: 1000px; 
+      margin: 0 auto; 
+      min-height: 100vh; 
+      position: relative; 
+      z-index: 10; 
+      padding-bottom: 100px; 
+      overflow: visible !important;
+    }
+    /* 專屬 Staff 質感：金棕色調 */
+    :root {
+      --staff-gold: #c29d66;
+      --staff-gold-dark: #8b6d45;
+    }
+    canvas#staffCanvas { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
+
+    /* 💻 AIT 旗艦版 - 電腦版 3 格展開與固定頂部 bar */
+    @media (min-width: 992px) {
+      html, body {
+        height: 100vh !important;
+        overflow: hidden !important;
+      }
+      .staff-container {
+        height: 100vh !important;
+        max-width: 1200px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+        padding-bottom: 0 !important;
+      }
+      #staff-result-list {
+        grid-template-columns: repeat(3, 1fr) !important;
+        overflow-y: auto !important;
+        flex: 1 !important;
+        padding-bottom: 50px !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 🚀 啟動頁系統 (與主畫面 100% 鏡像) -->
+  <div class="splash-container" id="staff-splash" style="z-index: 15000; background: #000 !important; opacity: 1; display: flex;">
+    <div style="position:relative; z-index:100; text-align:center; transform: translateY(-50px);">
+      <!-- 核心視覺 -->
+      <div class="dashboard-header" style="margin-bottom: 30px;">
+        <div class="dashboard-logo-container">
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M244.837 442H167.334V213.34H65V70H244.837V442ZM350.745 320.275H350.934V442H263.648V368.055H264.255L286.222 347.442V412.422H325.35V320.275L350.745 298.601V320.275ZM363.785 253.258L264.049 343.323L264.044 172.055L363.785 253.258ZM448 213.34H347.923L312.734 179.211H426.932V104.129H263.648V70H448V213.34Z' fill='white'/%3E%3C/svg%3E" 
+               class="dashboard-brand-logo" style="filter: drop-shadow(0 0 15px var(--staff-gold));">
+        </div>
+        <div class="dash-title" style="color:#fff; font-size:32px; font-weight:900; letter-spacing:10px;">A.I.T</div>
+        <p class="premium-subtitle" style="color:var(--staff-gold); font-size:9px; letter-spacing:4px; margin-top:5px;">INTERNAL INTELLIGENCE SYSTEM</p>
+        <div style="font-size:8px; letter-spacing:3px; opacity:0.3; margin-top:12px; color:#fff;">高雅瓷內部專用系統</div>
+      </div>
+
+      <!-- 載入條 -->
+      <div style="width:200px; margin: 0 auto; text-align:center;">
+        <div style="height:2px; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+          <div id="staff-progress-bar" style="height:100%; width:0%; background:var(--staff-gold); box-shadow:0 0 15px var(--staff-gold); transition: width 2s ease-in-out;"></div>
+        </div>
+        <div style="margin-top:15px; letter-spacing:4px; font-weight:800; font-size:10px; opacity:0.5; color:#fff;">
+          CONNECTING...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ✨ 星空粒子背景 -->
+  <canvas id="staffCanvas" class="dashboard-particles"></canvas>
+
+  <div class="staff-container">
+    <!-- 🏠 Header -->
+    <div style="padding: 40px 20px 15px; text-align: center;">
+      <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: var(--staff-gold);">A.I.T 內部查詢系統</div>
+      <div style="font-size: 8px; color: rgba(255,255,255,0.5); letter-spacing: 2px; margin-top: 5px; font-weight: 700; text-transform: uppercase;">Automated Intelligence Tilesystem</div>
+    </div>
+
+    <!-- 🔍 搜尋區塊 (跟客戶端一樣但寬度更寬) -->
+    <div style="padding: 10px 20px; position: sticky; top: 0; z-index: 100;">
+      <div style="background: rgba(17,17,17,0.8); backdrop-filter: blur(20px); border: 1px solid rgba(194,157,102,0.2); border-radius: 20px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+        <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+          <div style="flex: 2; min-width: 200px;">
+            <div style="font-size: 11px; color: var(--staff-gold); margin-bottom: 8px; font-weight: 700;">產品編號 / 系列搜尋</div>
+            <input type="text" id="staff-search-input" placeholder="輸入編號或系列..." style="width: 100%; height: 48px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0 15px; color: #fff; outline: none;" oninput="debounceSearch()">
+          </div>
+          <div style="flex: 1; min-width: 120px;">
+            <div style="font-size: 11px; color: var(--staff-gold); margin-bottom: 8px; font-weight: 700;">尺寸</div>
+            <input type="text" id="staff-filter-size" placeholder="如: 60120" style="width: 100%; height: 48px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0 10px; color: #fff; outline: none; text-align: center;" oninput="debounceSearch()">
+          </div>
+          <div style="flex: 1; min-width: 120px;">
+            <div style="font-size: 11px; color: var(--staff-gold); margin-bottom: 8px; font-weight: 700;">排序方式</div>
+            <select id="staff-sort" style="width: 100%; height: 48px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; outline: none; padding: 0 10px; appearance: none;" onchange="searchProducts()">
+              <option value="stock-desc">可用庫存 ↓</option>
+              <option value="physical-desc">總實體庫存 ↓</option>
+              <option value="sku-asc">型號 A-Z</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 📜 結果呈現區 -->
+    <div id="staff-result-list" style="padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 15px;">
+      <!-- 動態生成 -->
+    </div>
+  </div>
+
+  <!-- 🖼️ 圖片放大 Modal (高階版) -->
+  <div id="staff-image-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.98); z-index:20000; align-items:center; justify-content:center; flex-direction:column; backdrop-filter: blur(20px);">
+    <!-- Close Button -->
+    <div style="position:absolute; top:20px; right:20px; color:#fff; font-size:32px; cursor:pointer; width:44px; height:44px; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.1); border-radius:50%; z-index:21000;" onclick="closeFullImg()">×</div>
+    
+    <!-- Image Container with Watermark Overlay -->
+    <div style="position:relative; width:95%; height:70%; display:flex; align-items:center; justify-content:center;">
+       <!-- Navigation Arrows -->
+       <div style="position:absolute; left:0; width:60px; height:100%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:40px; cursor:pointer; opacity:0.5; z-index:100;" onclick="navGallery(-1)">‹</div>
+       <div style="position:absolute; right:0; width:60px; height:100%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:40px; cursor:pointer; opacity:0.5; z-index:100;" onclick="navGallery(1)">›</div>
+
+       <img id="staff-full-img" src="" style="max-width:100%; max-height:100%; object-fit:contain; transition: transform 0.3s ease;">
+       <iframe id="staff-full-video" src="" style="display:none; width:100%; height:100%; border:none; border-radius:12px;" allow="autoplay"></iframe>
+       
+       <!-- 🛡️ 浮水印疊加層 -->
+       <div id="watermark-layer" style="position:absolute; bottom:20px; left:20px; background:rgba(0,0,0,0.5); padding:10px 15px; border-radius:8px; pointer-events:none; display:none; border-left:4px solid var(--staff-gold);">
+          <div id="wm-sku" style="color:#fff; font-size:16px; font-weight:900;"></div>
+          <div id="wm-data" style="color:var(--staff-gold); font-size:12px; font-weight:700; margin-top:4px;"></div>
+       </div>
+    </div>
+
+    <!-- 🛠️ 工具欄 (下載/發送/設定) -->
+    <div style="width:100%; padding:20px; background:rgba(17,17,17,0.8); border-top:1px solid rgba(255,255,255,0.1);">
+      <div style="display:flex; justify-content:space-around; align-items:center; margin-bottom:15px;">
+         <div style="text-align:center; cursor:pointer;" onclick="downloadCurrentImg()">
+            <div style="font-size:12px; color:#fff; font-weight:700;">下載圖片</div>
+         </div>
+         <div style="text-align:center; cursor:pointer;" onclick="shareToLine()">
+            <div style="font-size:12px; color:#fff; font-weight:700;">發送 LINE</div>
+         </div>
+      </div>
+      
+      <!-- 🎚️ 浮水印開關 -->
+      <div style="display:flex; gap:10px; justify-content:center; border-top:1px solid rgba(255,255,255,0.05); padding-top:15px;">
+         <label style="display:flex; align-items:center; color:#fff; font-size:11px; cursor:pointer;">
+            <input type="checkbox" id="check-sku" onchange="updateWatermark()" style="margin-right:5px;"> 顯示編號
+         </label>
+         <label style="display:flex; align-items:center; color:#fff; font-size:11px; cursor:pointer;">
+            <input type="checkbox" id="check-stock" onchange="updateWatermark()" style="margin-right:5px;"> 顯示片數
+         </label>
+         <label style="display:flex; align-items:center; color:#fff; font-size:11px; cursor:pointer;">
+            <input type="checkbox" id="check-pyeong" onchange="updateWatermark()" style="margin-right:5px;"> 顯示坪數
+         </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 📊 批號明細 Modal -->
+  <div id="staff-batch-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:11000; align-items:center; justify-content:center;">
+    <div style="background:#111; border:1px solid var(--staff-gold); border-radius:20px; padding:25px; width:90%; max-width:450px; max-height:80vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+        <div id="staff-batch-title" style="font-size:18px; font-weight:900; color:var(--staff-gold);">批號明細</div>
+        <div style="font-size:24px; cursor:pointer;" onclick="document.getElementById('staff-batch-modal').style.display='none'">×</div>
+      </div>
+      <div id="staff-batch-list"></div>
+    </div>
+  </div>
+
+  <!-- 🎞️ 實景展示 Modal (分頁版) -->
+  <div id="staff-gallery-modal" style="display:none; position:fixed; inset:0; background:#000; z-index:12000; flex-direction:column; backdrop-filter: blur(15px);">
+    <!-- Header -->
+    <div style="height:60px; display:flex; align-items:center; padding:0 20px; border-bottom:1px solid #222; background:#000; position:relative;">
+      <div style="font-size:24px; cursor:pointer; color:#fff;" onclick="document.getElementById('staff-gallery-modal').style.display='none'">←</div>
+      <div id="staff-gallery-title" style="position:absolute; left:50%; transform:translateX(-50%); font-size:18px; font-weight:900; color:#fff; white-space:nowrap;">實景展示</div>
+    </div>
+    
+    <!-- Tab Switcher -->
+    <div style="padding:15px 20px; display:flex; gap:8px; background:#000;">
+      <div id="tab-scene" style="flex:1; height:36px; display:flex; align-items:center; justify-content:center; background:#222; color:#fff; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer;" onclick="switchGalleryTab('scene')">實景照</div>
+      <div id="tab-single" style="flex:1; height:36px; display:flex; align-items:center; justify-content:center; background:#111; color:rgba(255,255,255,0.4); border-radius:8px; font-size:12px; font-weight:700; cursor:pointer;" onclick="switchGalleryTab('single')">單片圖</div>
+      <div id="tab-mold" style="flex:1; height:36px; display:flex; align-items:center; justify-content:center; background:#111; color:rgba(255,255,255,0.4); border-radius:8px; font-size:12px; font-weight:700; cursor:pointer;" onclick="switchGalleryTab('mold')">模面圖</div>
+      <div id="tab-intro" style="flex:1; height:36px; display:flex; align-items:center; justify-content:center; background:#111; color:rgba(255,255,255,0.4); border-radius:8px; font-size:12px; font-weight:700; cursor:pointer;" onclick="switchGalleryTab('intro')">系列介紹</div>
+    </div>
+
+    <!-- ⚡ 批次功能列 -->
+    <div style="padding:5px 20px 15px; display:flex; gap:10px; align-items:center;">
+       <div style="padding:0 10px; color:rgba(255,255,255,0.4); font-size:11px; cursor:pointer; white-space:nowrap;" onclick="toggleSelectAll()">全選/取消</div>
+       <div style="flex:1; height:36px; display:flex; align-items:center; justify-content:center; background:rgba(194,157,102,0.1); color:var(--staff-gold); border:1px solid rgba(194,157,102,0.3); border-radius:8px; font-size:12px; font-weight:700; cursor:pointer;" onclick="batchAction('preview')">生成相簿</div>
+       <div style="flex:1; height:36px; display:flex; align-items:center; justify-content:center; background:rgba(194,157,102,0.1); color:var(--staff-gold); border:1px solid rgba(194,157,102,0.3); border-radius:8px; font-size:12px; font-weight:700; cursor:pointer;" onclick="batchAction('share')">發送 LINE</div>
+    </div>
+
+    <!-- 📱 手機端相簿預覽 Modal -->
+    <div id="staff-album-modal" style="display:none; position:fixed; inset:0; background:#000; z-index:25000; flex-direction:column;">
+      <div style="height:60px; display:flex; align-items:center; padding:0 20px; border-bottom:1px solid #222; background:#000;">
+        <div style="font-size:24px; cursor:pointer; color:#fff;" onclick="document.getElementById('staff-album-modal').style.display='none'">←</div>
+        <div style="flex:1; text-align:center; font-size:16px; font-weight:900; color:#fff;">長按圖片即可儲存</div>
+      </div>
+      <div id="staff-album-list" style="flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:20px;"></div>
+    </div>
+
+    <!-- Grid Container -->
+    <div style="flex:1; overflow-y:auto; padding:5px;">
+       <div id="staff-gallery-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:2px;">
+          <!-- 圖片將在此生成 -->
+       </div>
+    </div>
+  </div>
+
+  <script>
+    var allProducts = [];
+    var currentGalleryData = { scenes: [], singles: [], molds: [], intros: [], catalogs: [] };
+    var currentSku = '';
+    var currentGalleryList = []; // 當前正在瀏覽的圖片清單 (用於左右切換)
+    var currentIndex = 0;
+    
+    window.onload = function() {
+      initParticles();
+      loadData();
+      
+      // 🚀 Splash 動畫邏輯
+      setTimeout(() => {
+        const bar = document.getElementById('staff-progress-bar');
+        if (bar) bar.style.width = '100%';
+      }, 100);
+
+      setTimeout(() => {
+        const splash = document.getElementById('staff-splash');
+        if (splash) {
+          splash.style.opacity = '0';
+          setTimeout(() => splash.style.display = 'none', 1000);
+        }
+      }, 2500);
+    };
+
+    // 🏎️ 粒子引擎 (複製主畫面邏輯)
+    function initParticles() {
+      const canvas = document.getElementById('staffCanvas');
+      const ctx = canvas.getContext('2d');
+      let particles = [];
+      function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+      window.addEventListener('resize', resize);
+      resize();
+
+      for(let i=0; i<100; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          r: Math.random() * 2 + 0.5,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.5,
+          o: Math.random()
+        });
+      }
+
+      function draw() {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle = 'rgba(194, 157, 102, 0.5)'; // 金色粒子
+        particles.forEach(p => {
+          p.x += p.vx; p.y += p.vy;
+          if(p.x<0) p.x=canvas.width; if(p.x>canvas.width) p.x=0;
+          if(p.y<0) p.y=canvas.height; if(p.y>canvas.height) p.y=0;
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+        });
+        requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    function loadData() {
+      google.script.run.withSuccessHandler(function(res) {
+        if (res.success) {
+          allProducts = res.data;
+          searchProducts();
+        }
+      }).getAggregatedInventory();
+    }
+
+    let timer = null;
+    function debounceSearch() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(searchProducts, 200);
+    }
+
+    function searchProducts() {
+      const q = document.getElementById('staff-search-input').value.trim().toUpperCase();
+      const sz = document.getElementById('staff-filter-size').value.trim().toUpperCase();
+      const sort = document.getElementById('staff-sort').value;
+      const container = document.getElementById('staff-result-list');
+
+      if (!q && !sz) {
+        container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 100px 20px; color: rgba(255,255,255,0.2); font-size: 14px;">請輸入產品編號或尺寸進行查詢</div>';
+        return;
+      }
+
+      let filtered = allProducts.filter(item => {
+        if (!item) return false;
+        const matchText = !q || (item.sku.toUpperCase().includes(q) || item.sCn.toUpperCase().includes(q));
+        const matchSize = !sz || (item.size || "").toUpperCase().replace(/[xX*]/g, '').includes(sz.replace(/[xX*]/g, ''));
+        return matchText && matchSize;
+      });
+
+      if (sort === 'stock-desc') filtered.sort((a,b) => (b.qty||0)-(a.qty||0));
+      else if (sort === 'physical-desc') filtered.sort((a,b) => (b.physical||0)-(a.physical||0));
+      else if (sort === 'sku-asc') filtered.sort((a,b) => a.sku.localeCompare(b.sku));
+
+      let html = '';
+      filtered.slice(0, 100).forEach(item => {
+        const availQty = Math.floor(item.qty || 0);
+        const physical = Math.floor(item.physical || 0);
+        const reserved = Math.floor(item.reserved || 0);
+        const pack = item.pack || '-';
+        const weight = Math.ceil(parseFloat(item.weight) || 0);
+
+        let originFlag = '';
+        if (item.origin === '西班牙') originFlag = '西班牙';
+        else if (item.origin === '義大利') originFlag = '義大利';
+        else if (item.origin) originFlag = item.origin;
+
+        html += `
+          <div style="background: #111; border: 1px solid #222; border-radius: 20px; padding: 18px; position: relative; margin-bottom: 5px;">
+            <div style="display: flex; gap: 20px;">
+              <div style="width: 100px; flex-shrink: 0;">
+                <div style="border-radius: 12px; overflow: hidden; background: #000; cursor: pointer; position: relative;" onclick="showFullImg(-1, '${item.img}', '${item.sku}')">
+                  <img src="${item.img || ''}" style="width: 100%; height: auto; display: block;">
+                  ${reserved > 0 ? `
+                    <div style="position: absolute; bottom: 6px; right: 6px; background: rgba(0,0,0,0.6); backdrop-filter: blur(8px); padding: 3px 8px; border-radius: 20px; display: flex; align-items: center; gap: 5px; border: 1px solid rgba(255,255,255,0.15);">
+                      <span style="font-size: 9px; color: #fff; font-weight: 700; display: flex; align-items: center; gap: 3px;">
+                        <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        保留
+                      </span>
+                      <span style="background: var(--staff-gold); color: #000; width: 15px; height: 15px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 900;">${item.reserveCount || 1}</span>
+                    </div>
+                  ` : ''}
+                </div>
+                <div style="font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 10px; line-height: 1.6;">
+                  <div style="color: rgba(34,197,94,0.6);">${pack}片 | ${weight}kg</div>
+                </div>
+              </div>
+              <div style="flex: 1; min-width: 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                  <div style="font-size: 11px; font-weight: 700; color: #777;">
+                    <span style="color: var(--staff-gold); margin-right: 6px;">${item.sCn}</span>
+                    <span>${item.size}</span>
+                  </div>
+                  <div style="background: rgba(194,157,102,0.1); color: var(--staff-gold); font-size: 9px; padding: 3px 8px; border-radius: 20px; border: 1px solid rgba(194,157,102,0.3); cursor: pointer;" onclick="openGallery('${item.sku}')">
+                    實景圖
+                  </div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                   <div style="color: #fff; font-size: 19px; font-weight: 900; letter-spacing: 1px;">${item.sku}</div>
+                   <div style="font-size: 10px; color: rgba(255,255,255,0.4);">${originFlag}</div>
+                </div>
+                <div style="background: rgba(34,197,94,0.1); border-radius: 10px; padding: 8px 12px; border: 1px solid rgba(34,197,94,0.2); margin-bottom: 8px;">
+                   <div style="color: #22c55e; font-size: 16px; font-weight: 800;">可用 ${availQty} 片 | ${item.pyeong} 坪</div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; color: rgba(255,255,255,0.3); font-size: 11px;">
+                   <div style="display: flex; gap: 12px;">
+                      <span>庫存:<b style="color:#bbb;">${physical}片</b></span>
+                      <span>保留:<b style="color:#bbb;">${reserved}片</b></span>
+                   </div>
+                   <div style="color: var(--staff-gold); cursor: pointer; text-decoration: underline;" onclick="showBatches('${item.sku}')">
+                      批號(${(item.batches && item.batches.length) || 0})
+                   </div>
+                </div>
+                ${item.hasArrival ? `
+                <div style="margin-top: 8px; background: rgba(0,122,255,0.12); border: 1px solid rgba(0,122,255,0.35); border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 800; color: #007aff;">
+                   🔵 預計 ${item.eta || '近期'} 到貨${item.etaQty > 0 ? ' ' + Math.floor(item.etaQty) + ' 片' : ''}
+                </div>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }
+
+    function showFullImg(idx, directUrl = null, sku = null) {
+      var imgEl = document.getElementById('staff-full-img');
+      var videoEl = document.getElementById('staff-full-video');
+      
+      if (directUrl) {
+         currentIndex = -1; 
+         imgEl.src = directUrl;
+         imgEl.style.display = 'block';
+         videoEl.style.display = 'none';
+         videoEl.src = '';
+         currentSku = sku;
+      } else {
+         currentIndex = idx;
+         var item = currentGalleryList[idx];
+         if (item.isVideo) {
+           imgEl.style.display = 'none';
+           videoEl.style.display = 'block';
+           videoEl.src = item.previewUrl;
+         } else {
+           imgEl.style.display = 'block';
+           imgEl.src = item.url;
+           videoEl.style.display = 'none';
+           videoEl.src = '';
+         }
+      }
+      updateWatermark();
+      document.getElementById('staff-image-modal').style.display = 'flex';
+    }
+
+    function closeFullImg() { document.getElementById('staff-image-modal').style.display = 'none'; }
+
+    function navGallery(dir) {
+      if (currentIndex === -1 || currentGalleryList.length === 0) return;
+      currentIndex += dir;
+      if (currentIndex < 0) currentIndex = currentGalleryList.length - 1;
+      if (currentIndex >= currentGalleryList.length) currentIndex = 0;
+      
+      var item = currentGalleryList[currentIndex];
+      var imgEl = document.getElementById('staff-full-img');
+      var videoEl = document.getElementById('staff-full-video');
+      
+      imgEl.style.transform = 'scale(0.9)';
+      setTimeout(function() {
+        if (item.isVideo) {
+          imgEl.style.display = 'none';
+          videoEl.style.display = 'block';
+          videoEl.src = item.previewUrl;
+        } else {
+          imgEl.style.display = 'block';
+          imgEl.src = item.url;
+          videoEl.style.display = 'none';
+          videoEl.src = '';
+        }
+        imgEl.style.transform = 'scale(1)';
+        updateWatermark();
+      }, 100);
+    }
+
+    function updateWatermark() {
+      const showSku = document.getElementById('check-sku').checked;
+      const showStock = document.getElementById('check-stock').checked;
+      const showPyeong = document.getElementById('check-pyeong').checked;
+      const layer = document.getElementById('watermark-layer');
+      if (!showSku && !showStock && !showPyeong) { layer.style.display = 'none'; return; }
+      const item = allProducts.find(p => p.sku === currentSku);
+      if (!item) return;
+      document.getElementById('wm-sku').innerText = showSku ? item.sku : '';
+      let details = [];
+      if (showStock) details.push(Math.floor(item.qty) + ' 片');
+      if (showPyeong) details.push(item.pyeong + ' 坪');
+      document.getElementById('wm-data').innerText = details.join(' | ');
+      layer.style.display = 'block';
+    }
+
+    function downloadCurrentImg() {
+      const url = document.getElementById('staff-full-img').src;
+      const a = document.createElement('a');
+      a.href = url.replace('=w1200', '=w0');
+      a.download = currentSku + '.jpg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    function shareToLine() {
+      const url = document.getElementById('staff-full-img').src;
+      const item = allProducts.find(p => p.sku === currentSku);
+      const text = currentSku + "\n可用庫存：" + Math.floor(item.qty) + "片 | " + item.pyeong + "坪\n圖片連結：" + url.replace('=w1200', '=w0');
+      window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank');
+    }
+
+    function batchAction(type) {
+      const selected = Array.from(document.querySelectorAll('.gallery-check:checked')).map(function(cb) { return cb.getAttribute('data-url'); });
+      
+      if (selected.length === 0) {
+        alert('請先勾選想要操作的照片');
+        return;
+      }
+
+      if (type === 'preview') {
+        var list = document.getElementById('staff-album-list');
+        var html = '';
+        selected.forEach(function(url) {
+          html += '<div style="background:#111; border-radius:12px; overflow:hidden; border:1px solid #222;">';
+          html += '<img src="' + url.replace('=w1200', '=w0') + '" style="width:100%; height:auto; display:block;">';
+          html += '</div>';
+        });
+        list.innerHTML = html;
+        document.getElementById('staff-album-modal').style.display = 'flex';
+      } else if (type === 'share') {
+        const item = allProducts.find(p => p.sku === currentSku);
+        let text = "【" + currentSku + "】精選影像分享\n可用庫存：" + Math.floor(item.qty) + "片 | " + item.pyeong + "坪\n\n";
+        selected.forEach((url, i) => { text += "圖片 " + (i+1) + "：" + url.replace('=w1200', '=w0') + "\n"; });
+        window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank');
+      }
+    }
+
+    function toggleSelectAll() {
+      const cbs = document.querySelectorAll('.gallery-check');
+      const allChecked = Array.from(cbs).every(cb => cb.checked);
+      cbs.forEach(cb => cb.checked = !allChecked);
+    }
+
+    function showBatches(sku) {
+      const item = allProducts.find(p => p.sku === sku);
+      if (!item || !item.batches) return;
+      document.getElementById('staff-batch-title').innerText = sku + " 批號明細";
+      let html = '';
+      item.batches.forEach(b => {
+        html += '<div style="display:flex; justify-content:space-between; padding:12px; border-bottom:1px solid #222;"><div style="color:#fff; font-weight:700;">' + (b.batch || '無批號') + '</div><div style="color:var(--staff-gold); font-weight:800;">' + b.qty + ' 片 | ' + b.pyeong + ' 坪</div></div>';
+      });
+      document.getElementById('staff-batch-list').innerHTML = html;
+      document.getElementById('staff-batch-modal').style.display = 'flex';
+    }
+
+    function openGallery(sku) {
+      const item = allProducts.find(p => p.sku === sku);
+      if (!item) return;
+      currentSku = sku;
+      const grid = document.getElementById('staff-gallery-grid');
+      const modal = document.getElementById('staff-gallery-modal');
+      if (item.folderId) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:50px; color:var(--staff-gold); font-size:16px;">正在載入雲端影像...</div>';
+        modal.style.display = 'flex';
+        google.script.run.withSuccessHandler(function(res) {
+          if (res) { currentGalleryData = res; switchGalleryTab('scene'); }
+          else { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:50px; color:#666;">無影像</div>'; }
+        }).getFolderImages(item.folderId);
+      } else { alert('無雲端資料夾'); }
+    }
+
+    function switchGalleryTab(type) {
+      ['scene', 'single', 'mold', 'intro'].forEach(t => {
+        const el = document.getElementById('tab-' + t);
+        el.style.background = (t === type) ? '#222' : '#111';
+        el.style.color = (t === type) ? '#fff' : 'rgba(255,255,255,0.4)';
+      });
+      renderGallery(type);
+    }
+
+    function renderGallery(activeType = 'scene') {
+      const grid = document.getElementById('staff-gallery-grid');
+      const title = document.getElementById('staff-gallery-title');
+      let label = '實景展示';
+      let source = [];
+      if (activeType === 'scene') { label = '實景展示'; source = currentGalleryData.scenes; }
+      else if (activeType === 'single') { label = '單片圖庫'; source = currentGalleryData.singles; }
+      else if (activeType === 'mold') { label = '模面圖庫'; source = currentGalleryData.molds; }
+      else if (activeType === 'intro') { label = '系列介紹'; source = currentGalleryData.intros; }
+      title.innerText = currentSku + " " + label;
+      let html = '';
+      if (activeType === 'intro' && currentGalleryData.catalogs.length > 0) {
+        currentGalleryData.catalogs.forEach(cat => {
+          html += '<div style="grid-column:1/-1; padding:15px;"><div style="background:var(--staff-gold); color:#000; padding:15px; border-radius:12px; text-align:center; font-weight:900; cursor:pointer;" onclick="window.open(\'' + cat.url + '\', \'_blank\')">開啟電子目錄 (PDF)</div></div>';
+        });
+      }
+      const thisSkuFiles = source.filter(f => f.name.includes(currentSku));
+      const otherFiles = source.filter(f => !f.name.includes(currentSku));
+      currentGalleryList = [...thisSkuFiles, ...otherFiles];
+      if (thisSkuFiles.length > 0) {
+        html += '<div style="grid-column:1/-1; padding:15px 10px 10px; color:var(--staff-gold); font-size:12px; font-weight:800;">本編號專屬照片</div>';
+        thisSkuFiles.forEach(function(f, idx) {
+          html += '<div style="aspect-ratio:1/1; overflow:hidden; background:#111; position:relative;">';
+          html += '<input type="checkbox" class="gallery-check" data-url="' + f.url + '" onclick="event.stopPropagation()" style="position:absolute; top:8px; right:8px; z-index:10; width:22px; height:22px; border:2px solid #fff;">';
+          if (f.isVideo) {
+            html += '<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:30px; pointer-events:none; z-index:5; background:rgba(0,0,0,0.2);">▶</div>';
+          }
+          html += '<img src="' + f.url + '" style="width:100%; height:100%; object-fit:cover; display:block; cursor:pointer;" onclick="showFullImg(' + idx + ')">';
+          html += '</div>';
+        });
+      }
+      if (otherFiles.length > 0) {
+        html += '<div style="grid-column:1/-1; padding:25px 10px 10px; color:rgba(255,255,255,0.4); font-size:12px; font-weight:800; border-top:1px solid #111; margin-top:10px;">全系列參考照</div>';
+        otherFiles.forEach(function(f, idx) {
+          var globalIdx = thisSkuFiles.length + idx;
+          html += '<div style="aspect-ratio:1/1; overflow:hidden; background:#111; opacity:0.7; position:relative;">';
+          html += '<input type="checkbox" class="gallery-check" data-url="' + f.url + '" onclick="event.stopPropagation()" style="position:absolute; top:8px; right:8px; z-index:10; width:22px; height:22px; border:2px solid #fff;">';
+          if (f.isVideo) {
+            html += '<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:30px; pointer-events:none; z-index:5; background:rgba(0,0,0,0.2);">▶</div>';
+          }
+          html += '<img src="' + f.url + '" style="width:100%; height:100%; object-fit:cover; display:block; cursor:pointer;" onclick="showFullImg(' + globalIdx + ')">';
+          html += '</div>';
+        });
+      }
+      if (html === '') html = '<div style="grid-column:1/-1; text-align:center; padding:100px 20px; color:#444;">無資料</div>';
+      grid.innerHTML = html;
+    }
+  </script>
+</body>
+</html>

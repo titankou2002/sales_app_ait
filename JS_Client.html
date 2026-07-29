@@ -1,0 +1,396 @@
+<script>
+  /**
+   * 💎 客戶端專屬邏輯 (v1.1)
+   * 修正：移除所有已刪除元件的引用，對齊旗艦版介面
+   */
+  const info = (window.APP_CONFIG && APP_CONFIG.clientInfo) ? APP_CONFIG.clientInfo : { name: "", company: "", level: "LEVEL 2" };
+  
+  // 嘗試自 localStorage 還原上次登入的客戶身分
+  let savedName = "";
+  let savedCompany = "";
+  let savedLevel = "LEVEL 2";
+  let savedUserId = "";
+  try {
+    savedName = localStorage.getItem('AIT_CLIENT_USER_NAME') || "";
+    savedCompany = localStorage.getItem('AIT_CLIENT_USER_COMPANY') || "";
+    savedLevel = localStorage.getItem('AIT_CLIENT_LEVEL') || "LEVEL 2";
+    savedUserId = localStorage.getItem('AIT_CLIENT_USER_ID') || "";
+  } catch(e){}
+
+  window.clientState = {
+    userId: info.name ? 'DIRECT_' + info.name : (savedUserId || ''),
+    userName: info.name || savedName || '',
+    userCompany: info.company || savedCompany || '',
+    level: info.name ? (info.level || 'LEVEL 2') : savedLevel,
+    isAuthorized: !!(info.name || savedName)
+  };
+  window.allProducts = []; // 🚀 存放預載入的所有產品
+
+  /**
+   * 🚀 初始化客戶端 (LINE LIFF 版)
+   */
+  window.initClientPortal = function () {
+    showPage('page-client-view');
+
+    // ✨ 啟動星空粒子動畫
+    if (typeof initParticleCanvas === 'function') {
+      initParticleCanvas('clientCanvas');
+    }
+
+    const params = (window.APP_CONFIG && APP_CONFIG.params) ? APP_CONFIG.params : {};
+    
+    // 🚀 支援直達專屬連結登入 (免 LINE 登入 / 免 LINE 綁定)
+    if (params.view === 'client' && params.clientName && params.key) {
+      showLoading(true, true);
+      google.script.run
+        .withSuccessHandler(function (res) {
+          showLoading(false);
+          if (res.success && res.isAuthorized) {
+            window.clientState.userId = 'DIRECT_' + params.clientName;
+            window.clientState.userName = res.name;
+            window.clientState.userCompany = res.company;
+            window.clientState.level = res.level;
+            window.clientState.isAuthorized = true;
+            
+            try {
+              localStorage.setItem('AIT_CLIENT_USER_ID', window.clientState.userId);
+              localStorage.setItem('AIT_CLIENT_USER_NAME', window.clientState.userName);
+              localStorage.setItem('AIT_CLIENT_USER_COMPANY', window.clientState.userCompany);
+              localStorage.setItem('AIT_CLIENT_LEVEL', window.clientState.level);
+            } catch(e){}
+            
+            // 載入預載好的直達產品資料
+            window.allProducts = res.products || [];
+            console.log("資料直達載入完成：" + window.allProducts.length + " 筆");
+            
+            // 隱藏登入綁定提示與報到提示
+            const tipEl = document.getElementById('client-auth-tip');
+            if (tipEl) tipEl.style.display = 'none';
+          } else {
+            alert("⚠️ 專屬直達連結驗證失敗，請聯絡業務人員重新發行！");
+          }
+        })
+        .withFailureHandler(function (err) {
+          showLoading(false);
+          alert("⚡ 連線異常，無法驗證專屬連結: " + err.toString());
+        })
+        .verifyClientDirectAccess(params.clientName, params.key);
+      return;
+    }
+
+    // 🛡️ 初始化訪客唯一識別碼
+    if (!window.clientState.userId) {
+      let localUserId = localStorage.getItem('AIT_LOCAL_CLIENT_ID');
+      if (!localUserId) {
+        localUserId = 'GUEST_' + Math.random().toString(36).substring(2, 10);
+        localStorage.setItem('AIT_LOCAL_CLIENT_ID', localUserId);
+      }
+      window.clientState.userId = localUserId;
+      window.clientState.level = 'LEVEL 2'; // 訪客預設為 LEVEL 2
+    }
+
+    // 🚩 預載入所有資料 (跟機器人一樣快的原因)
+    showLoading(true, true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          window.allProducts = res.data;
+          console.log("資料預載入完成：" + res.data.length + " 筆");
+        }
+      })
+      .getClientFullData();
+
+    // LIFF 處理
+    const LIFF_ID = (window.APP_CONFIG && APP_CONFIG.clientLiffId) ? APP_CONFIG.clientLiffId : '';
+    if (typeof liff !== 'undefined') {
+      liff.init({ liffId: LIFF_ID })
+        .then(() => {
+          // 🚀 進入客戶端時隱藏右上角全局 Logo
+          const logo = document.getElementById('persistentLogo');
+          if (logo) logo.style.display = 'none';
+
+          // 🛡️ 修正：如果是 iframe (GAS 環境) 且未登入，不要強行跳轉，避免 X-Frame-Options 錯誤
+          if (!liff.isLoggedIn()) {
+            if (liff.isInClient()) {
+              liff.login();
+            } else {
+              console.warn("非 LINE 環境，略過自動登入以避免框架錯誤");
+            }
+          } else {
+            liff.getProfile().then(p => {
+              window.clientState.userId = p.userId;
+              google.script.run
+                .withSuccessHandler(res => {
+                  if (res.success && res.isAuthorized) {
+                    window.clientState.userName = res.name;
+                    window.clientState.userCompany = res.company || '未知公司';
+                    window.clientState.level = res.level;
+                    window.clientState.isAuthorized = true;
+                    
+                    try {
+                      localStorage.setItem('AIT_CLIENT_USER_ID', window.clientState.userId);
+                      localStorage.setItem('AIT_CLIENT_USER_NAME', window.clientState.userName);
+                      localStorage.setItem('AIT_CLIENT_USER_COMPANY', window.clientState.userCompany);
+                      localStorage.setItem('AIT_CLIENT_LEVEL', window.clientState.level);
+                    } catch(e){}
+                  }
+                })
+                .verifyClientMember(p.userId);
+            });
+          }
+        })
+        .catch(err => console.error("LIFF Error", err));
+    }
+  };
+
+  /**
+   * 🔍 即時搜尋防抖動 (現在是本地端秒搜！)
+   */
+  let searchTimer = null;
+  window.debounceSearchClientProducts = function () {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      window.searchClientProducts();
+    }, 150); // 本地搜尋，延遲可以縮短到 0.15 秒
+  };
+
+  /**
+   * 📝 外部客戶查詢防刷限流與延遲日誌記錄
+   */
+  let logTimer = null;
+  let lastLoggedQuery = "";
+  window.logSearchDebounced = function (queryInfo, reqPyeong, resultMsg) {
+    if (logTimer) clearTimeout(logTimer);
+
+    // 只有當查詢內容與前一次不同時才記錄，防範使用者打字中途或重複按壓消耗額度
+    const currentQueryKey = queryInfo + "_" + reqPyeong;
+    if (currentQueryKey === lastLoggedQuery) return;
+
+    logTimer = setTimeout(() => {
+      lastLoggedQuery = currentQueryKey;
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res && !res.success && res.exceeded) {
+            window.clientState.isExceeded = true;
+            const container = document.getElementById('client-result-list');
+            if (container) {
+              container.innerHTML = `
+                <div style="text-align:center; padding:60px 20px; background: rgba(239, 68, 68, 0.05); border: 1px dashed rgba(239, 68, 68, 0.2); border-radius: 20px; margin-top: 20px;">
+                  <div style="font-size:40px; margin-bottom:15px; filter: drop-shadow(0 0 10px rgba(239,68,68,0.5));">⚠️</div>
+                  <div style="font-size:16px; font-weight:700; color:#ef4444; margin-bottom:10px;">已達每小時查詢上限</div>
+                  <div style="font-size:12px; color:rgba(255,255,255,0.5); max-width:400px; margin:0 auto; line-height:1.6;">
+                    您的權限等級為 <span style="color:#facc15; font-weight:bold;">${res.level || window.clientState.level}</span>，每小時限查詢 ${res.limit} 次。<br>
+                    您的查詢次數已達上限，請於一小時後再試，或聯繫業務窗口為您調升等級！
+                  </div>
+                </div>
+              `;
+            }
+          }
+        })
+        .logExternalClientSearch(
+          queryInfo, 
+          reqPyeong, 
+          resultMsg, 
+          window.clientState.userId, 
+          window.clientState.level,
+          window.clientState.userName,
+          window.clientState.userCompany
+        );
+    }, 1500); // 1.5 秒無輸入才發送後端 Log 請求以節約次數
+  };
+
+  /**
+   * 🔍 搜尋產品 (本地端過濾 + 100% 對齊圖 3 排版)
+   */
+  window.searchClientProducts = function () {
+    const input = document.getElementById('client-search-input');
+    const q = input.value.trim().toUpperCase();
+    const filterSize = document.getElementById('filter-size').value.trim().toUpperCase();
+    const sortVal = document.getElementById('filter-sort').value;
+    const container = document.getElementById('client-result-list');
+    const reqPyeong = parseFloat(document.getElementById('client-required-pyeong').value) || 0;
+    const reqQty = parseFloat(document.getElementById('client-required-qty').value) || 0;
+
+    const userLevel = window.clientState.level || 'LEVEL 2';
+    const isFree = true; // 外部客戶端介面一律為匿名展示，不顯示具體庫存數
+
+    // 🔒 外部查詢限制：已經被判定為次數超限
+    if (window.clientState.isExceeded) {
+      container.innerHTML = `
+        <div style="text-align:center; padding:60px 20px; background: rgba(239, 68, 68, 0.05); border: 1px dashed rgba(239, 68, 68, 0.2); border-radius: 20px; margin-top: 20px;">
+          <div style="font-size:40px; margin-bottom:15px; filter: drop-shadow(0 0 10px rgba(239,68,68,0.5));">⚠️</div>
+          <div style="font-size:16px; font-weight:700; color:#ef4444; margin-bottom:10px;">已達每小時查詢上限</div>
+          <div style="font-size:12px; color:rgba(255,255,255,0.5); max-width:400px; margin:0 auto; line-height:1.6;">
+            您的查詢次數已超出您目前的權限等級限制，請於一小時後再試，或聯繫業務窗口為您調升等級！
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    // 🔒 外部人查詢限制：必須輸入坪數或片數才能查詢
+    if (reqPyeong <= 0 && reqQty <= 0) {
+      if (q.length > 0 || filterSize.length > 0) {
+        container.innerHTML = `
+          <div style="text-align:center; padding:60px 20px; background: rgba(239, 68, 68, 0.05); border: 1px dashed rgba(239, 68, 68, 0.2); border-radius: 20px; margin-top: 20px;">
+            <div style="font-size:40px; margin-bottom:15px; filter: drop-shadow(0 0 10px rgba(239,68,68,0.5));">🔒</div>
+            <div style="font-size:16px; font-weight:700; color:#ef4444; margin-bottom:10px;">外部查詢限制：請先輸入「需求坪數」或「需求片數」</div>
+            <div style="font-size:12px; color:rgba(255,255,255,0.5); max-width:400px; margin:0 auto; line-height:1.6;">
+              為維護庫存資料安全，外部使用者必須提供您的需求坪數或需求片數。系統將僅判定「🟢 庫存充足」或「🔴 庫存不足」，不會透露具體片數與總坪數。
+            </div>
+          </div>
+        `;
+      } else {
+        container.innerHTML = '';
+      }
+      return;
+    }
+
+    if (q.length < 1 && reqPyeong <= 0 && reqQty <= 0 && !filterSize) {
+      container.innerHTML = '';
+      return;
+    }
+
+    // 🚀 過濾邏輯 (保留編號/系列與尺寸過濾，但庫存不足時依然呈現紅字警告而非過濾消失)
+    let filtered = window.allProducts.filter(item => {
+      if (!item) return false;
+      const sku = (item.sku || "").toUpperCase();
+      const sCn = (item.sCn || "").toUpperCase();
+
+      const matchText = q.length === 0 || (sku.includes(q) || sCn.includes(q));
+      const matchSize = !filterSize || (item.size || "").toUpperCase().replace(/[xX*]/g, '').includes(filterSize.replace(/[xX*]/g, ''));
+      
+      return matchText && matchSize;
+    });
+
+    // 🚀 排序邏輯 (預設改為庫存多至少)
+    if (sortVal === 'sku-asc') {
+      filtered.sort((a, b) => (a.sku || "").localeCompare(b.sku || ""));
+    } else {
+      // 預設 (default) 與 stock-desc 皆按庫存排序
+      filtered.sort((a, b) => (b.pyeong || 0) - (a.pyeong || 0));
+    }
+
+    filtered = filtered.slice(0, 40);
+
+    if (filtered.length === 0) {
+      container.innerHTML = '<div style="text-align:center; padding:100px 0; opacity:0.4;">查無相關編號或符合條件的產品</div>';
+      return;
+    }
+
+    const highlightText = (text, query) => {
+      if (!query || !text) return text;
+      const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const regex = new RegExp(`(${escapedQuery})`, 'gi');
+      return text.replace(regex, '<span style="color:#ff3b30; font-weight:bold;">$1</span>');
+    };
+
+    let html = '';
+
+    filtered.forEach(item => {
+      // 🚀 燈號與標記
+      let statusDot = '';
+      if (item.level === 1) statusDot = `<span style="display:inline-block; width:8px; height:8px; background:#ef4444; border-radius:50%; vertical-align:middle; margin-left:5px;"></span>`;
+      else if (item.level === 2) statusDot = `<span style="display:inline-block; width:8px; height:8px; background:#f97316; border-radius:50%; vertical-align:middle; margin-left:5px;"></span>`;
+      else if (item.level === 4) statusDot = `<span style="display:inline-block; width:8px; height:8px; background:#3b82f6; border-radius:50%; vertical-align:middle; margin-left:5px;"></span>`;
+      const sleepMark = item.isSleep ? `<span style="display:inline-block; width:16px; height:16px; background:#fff; color:#000; border-radius:50%; font-size:10px; font-weight:900; line-height:16px; text-align:center; vertical-align:middle; margin-left:5px;">S</span>` : '';
+
+      // 🚀 權限分流邏輯
+      let stockDisplay = '';
+      let secondaryStats = '';
+      let batchInfo = '';
+
+      if (isFree) {
+        // --- FREE 帳號邏輯 ---
+        if (reqPyeong <= 0 && reqQty <= 0) {
+          stockDisplay = `<div style="color: #facc15; font-size: 14px; font-weight: 700; background: rgba(250,204,21,0.1); padding: 5px 10px; border-radius: 6px; display:inline-block;">請輸入需求數量</div>`;
+        } else {
+          const isSufficient = (item.pyeong || 0) >= reqPyeong && (item.qty || 0) >= reqQty;
+          stockDisplay = isSufficient
+            ? `<div style="color: #22c55e; font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px;"><span style="font-size:24px;">🟢</span> 庫存充足</div>`
+            : `<div style="color: #ef4444; font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px;"><span style="font-size:24px;">🔴</span> 庫存不足</div>`;
+        }
+        secondaryStats = `<div style="color: #666; font-size: 11px; margin-bottom: 6px; white-space: nowrap;">數量僅供參考，請洽業務確認</div>`;
+        batchInfo = ``;
+      } else {
+        // --- VIP / 業務邏輯 ---
+        const availQty = Math.floor(item.qty || 0);
+        stockDisplay = `<div style="color: #22c55e; font-size: 18px; font-weight: 800;">可用 ${availQty} 片 | ${item.pyeong} 坪</div>`;
+        secondaryStats = `<div style="color: #444; font-size: 11px; margin-bottom: 6px;">總庫存 ${item.physical || 0} 片 | 保留 ${item.reserved || 0} 片</div>`;
+        batchInfo = `<div style="color: #634731; font-size: 11px; display: flex; align-items: center; gap: 4px;"><i class="fas fa-box-open"></i> ${(item.batches && item.batches.length) || 1} 個批號，點選看明細</div>`;
+        if (item.hasArrival) {
+          batchInfo += `<div style="margin-top:6px; background:rgba(0,122,255,0.12); border:1px solid rgba(0,122,255,0.35); border-radius:6px; padding:4px 8px; font-size:11px; font-weight:800; color:#007aff;">🔵 預計 ${item.eta || '近期'} 到貨${item.etaQty > 0 ? ' ' + Math.floor(item.etaQty) + ' 片' : ''}</div>`;
+        }
+      }
+
+      const highlightedSCn = highlightText(item.sCn || '', q);
+      const highlightedSku = highlightText(item.sku || '', q);
+
+      html += `
+        <div style="background: #111; border-radius: 20px; margin-bottom: 12px; padding: 15px; border: 1px solid #222; position: relative;">
+          <div style="display: flex; gap: 15px;">
+            <div style="display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;">
+              <div style="width: 100px; height: 75px; border-radius: 12px; overflow: hidden; background: #000; position: relative;">
+                <img src="${item.img || ''}" style="width: 100%; height: 100%; object-fit: cover;" onclick="window.showFullImage('${item.img}', '${item.sku}')">
+                <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.4); padding: 2px 5px; font-size: 8px; color: #facc15;">${item.origin || '進口'}</div>
+              </div>
+              <!-- 📦 包裝資訊 -->
+              <div style="font-size: 10px; color: rgba(255,255,255,0.4); line-height: 1.4;">
+                <div>包裝：<span style="color:#22c55e; font-weight:700;">${item.pack || '-'}</span>片 | <span style="color:#22c55e; font-weight:700;">${Math.ceil(parseFloat(item.weight) || 0)}</span>kg</div>
+              </div>
+            </div>
+
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 2px;">
+                <span style="color: #f97316; font-size: 13px; font-weight: 700;">${highlightedSCn}</span>
+                <span style="color: #888; font-size: 11px;">${item.size}</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px;">
+                <span style="color: #fff; font-size: 18px; font-weight: 900; line-height: 1.1; word-break: break-all;">${highlightedSku}</span>
+                <div style="display:inline-flex; align-items:center;">${sleepMark}</div>
+              </div>
+              <div style="margin-bottom: 4px;">${stockDisplay}</div>
+              ${secondaryStats}
+              ${batchInfo}
+            </div>
+ 
+            <div style="display: flex; align-items: flex-start; padding-top: 5px;">
+              <div style="border: 1px solid rgba(59,130,246,0.5); color: #3b82f6; font-size: 11px; padding: 6px 12px; border-radius: 8px; background: rgba(29,78,216,0.15); font-weight: 700; cursor: pointer; white-space: nowrap;"
+                   onclick="window.openGallery('${item.sku}')">
+                <i class="fas fa-images" style="margin-right: 4px;"></i>實景圖
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+    container.innerHTML = html;
+
+    // 📝 外部客戶查詢日誌回寫 (防抖動非同步記錄，並執行限流驗證)
+    if ((reqPyeong > 0 || reqQty > 0) && (q.length > 0 || filterSize.length > 0)) {
+      const queryInfo = [
+        q ? `型號/系列: ${q}` : "",
+        filterSize ? `尺寸: ${filterSize}` : ""
+      ].filter(Boolean).join(" | ");
+      const isAnySufficient = filtered.length > 0;
+      
+      const reqVal = reqPyeong > 0 ? `${reqPyeong} 坪` : `${reqQty} 片`;
+      window.logSearchDebounced(queryInfo, reqVal, isAnySufficient ? "🟢 庫存充足" : "🔴 庫存不足或無此型號");
+    }
+  };
+
+  /**
+   * 🖼️ 全螢幕看圖
+   */
+  window.showFullImage = function (url, sku) {
+    const modal = document.getElementById('client-image-modal');
+    const img = document.getElementById('client-full-img');
+    const title = document.getElementById('client-img-sku');
+    if (modal && img) {
+      img.src = url;
+      title.innerText = sku;
+      modal.style.display = 'flex';
+    }
+  };
+</script>

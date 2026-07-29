@@ -1,0 +1,565 @@
+<script>
+/**
+ * 🛰️ 客戶管理前端邏輯 - 內部查庫存旗艦版 (V2.1 篩選排序版)
+ */
+
+var _allReservedData = []; // 存儲原始資料
+var _uniqueBizList = [];   // 業務清單
+var _selectedBiz = [];     // 當前選取的業務
+var _selectedReservedRows = []; // 目前選取的列號 (用於 LINE/更新)
+
+/**
+ * 切換分頁 (陳列牆 vs 保留單)
+ */
+function switchAlbumTab(tabId) {
+  var tabs = ['layout', 'reserved'];
+  
+  for (var i = 0; i < tabs.length; i++) {
+    var t = tabs[i];
+    var tabEl = document.getElementById('tab-' + t);
+    var contentEl = document.getElementById(t + '-content-area');
+    if (tabEl) tabEl.classList.remove('active');
+    if (contentEl) contentEl.style.display = 'none';
+  }
+  
+  var activeTab = document.getElementById('tab-' + tabId);
+  var activeContent = document.getElementById(tabId + '-content-area');
+  if (activeTab) activeTab.classList.add('active');
+  if (activeContent) activeContent.style.display = 'block';
+  
+  if (tabId === 'reserved') {
+    loadReservedOrders();
+  }
+}
+
+/**
+ * 載入當前客戶的保留單
+ */
+function loadReservedOrders() {
+  var container = document.getElementById('reserved-list');
+  var customerName = state.currentCustomer;
+  
+  if (!customerName) return;
+  
+  // 顯示加載中，並先渲染工具列佔位
+  container.innerHTML = 
+    '<div class="reserve-toolbar">' +
+      '<select class="reserve-select" disabled><option>載入中...</option></select>' +
+      '<button class="reserve-filter-btn" disabled>業務篩選</button>' +
+      '<button class="reserve-filter-btn" disabled style="background:var(--ait-gold-soft); color:var(--ait-gold); border-color:rgba(194,157,102,0.2);">📝 申請保留</button>' +
+    '</div>' +
+    '<div style="text-align:center; padding:60px 20px; color:rgba(255,255,255,0.2);">' +
+      '<div class="loading-spinner" style="margin-bottom:15px; border-top-color:var(--ait-gold);"></div>' +
+      '正在彙整 ' + customerName + ' 的保留資料...' +
+    '</div>';
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res.success) {
+        _allReservedData = res.data.reserved;
+        _uniqueBizList = res.data.uniqueBiz;
+        _selectedBiz = [].concat(_uniqueBizList); // 預設全選
+        renderReservedDashboard();
+      } else {
+        container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">讀取失敗: ' + res.msg + '</div>';
+      }
+    })
+    .getCustomerDashboardData(customerName);
+}
+
+/**
+ * 渲染完整的保留單面板 (工具列 + 卡片)
+ */
+function renderReservedDashboard() {
+  var container = document.getElementById('reserved-list');
+  var sortVal = document.getElementById('reserve-sort-type') ? document.getElementById('reserve-sort-type').value : 'days-desc';
+
+  var html = 
+    '<div class="reserve-toolbar">' +
+      '<select id="reserve-sort-type" class="reserve-select" onchange="renderReservedDashboard()">' +
+        '<option value="days-desc" ' + (sortVal === 'days-desc' ? 'selected' : '') + '>依保留天數 (久 → 近)</option>' +
+        '<option value="days-asc" ' + (sortVal === 'days-asc' ? 'selected' : '') + '>依保留天數 (近 → 久)</option>' +
+        '<option value="biz-asc" ' + (sortVal === 'biz-asc' ? 'selected' : '') + '>依業務人員排序</option>' +
+        '<option value="name-asc" ' + (sortVal === 'name-asc' ? 'selected' : '') + '>依案名/地址 A-Z</option>' +
+      '</select>' +
+      '<button class="reserve-filter-btn" onclick="toggleBizFilter()">業務篩選</button>' +
+      '<button class="reserve-filter-btn" onclick="openAddReservationModal()" style="background:var(--ait-gold-soft); color:var(--ait-gold); border-color:rgba(194,157,102,0.4);">📝 申請保留</button>' +
+    '</div>' +
+    '<div id="biz-filter-panel" class="filter-panel">' +
+      '<div class="filter-title">選取業務人員</div>' +
+      '<div class="filter-list">' +
+        '<label class="filter-item" onclick="selectAllBiz(true)"><span style="color:var(--ait-gold);">全選</span></label>' +
+        '<label class="filter-item" onclick="selectAllBiz(false)"><span style="color:#f87171;">全不選</span></label>' +
+        _uniqueBizList.map(function(b) {
+          var checked = _selectedBiz.indexOf(b) !== -1 ? 'checked' : '';
+          return '<label class="filter-item"><input type="checkbox" class="biz-cb" value="' + b + '" ' + checked + '> ' + b + '</label>';
+        }).join('') +
+      '</div>' +
+      '<button style="width:100%; margin-top:15px; height:34px; background:var(--ait-gold); color:#000; border:none; border-radius:8px; font-weight:800;" onclick="applyBizFilter()">套用篩選</button>' +
+    '</div>' +
+    '<div id="reserved-cards-container"></div>' +
+    '<!-- 🟢 新增：選取操作工具列 -->' +
+    '<div id="selection-toolbar" class="selection-toolbar">' +
+      '<div class="selection-info">' +
+        '<div id="selection-count" class="selection-count">已選取 0 項</div>' +
+        '<div class="selection-label">可進行 LINE 分享或更新進度</div>' +
+      '</div>' +
+      '<div class="selection-actions">' +
+        '<button class="btn-status-update" onclick="openStatusUpdateMenu()">更新進度</button>' +
+        '<button class="btn-line-share" onclick="shareToLine()">' +
+          '<span>LINE 分享</span>' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+  
+  container.innerHTML = html;
+  _selectedReservedRows = []; // 重置選取狀態
+  renderReservedCards();
+}
+
+/**
+ * 僅重新渲染下方的卡片 (過濾與排序後)
+ */
+function renderReservedCards() {
+  var cardContainer = document.getElementById('reserved-cards-container');
+  var sortType = document.getElementById('reserve-sort-type').value;
+  
+  // 1. 過濾
+  var filtered = _allReservedData.filter(function(g) {
+    return _selectedBiz.indexOf(g.biz) !== -1;
+  });
+
+  // 2. 排序
+  if (sortType === 'days-desc') filtered.sort(function(a,b) { return b.maxDays - a.maxDays; });
+  else if (sortType === 'days-asc') filtered.sort(function(a,b) { return a.maxDays - b.maxDays; });
+  else if (sortType === 'biz-asc') filtered.sort(function(a,b) { return a.biz.localeCompare(b.biz); });
+  else if (sortType === 'name-asc') filtered.sort(function(a,b) { return a.name.localeCompare(b.name); });
+
+  if (filtered.length === 0) {
+    cardContainer.innerHTML = '<div style="text-align:center; padding:100px 20px; color:rgba(255,255,255,0.15);"><div style="font-size:50px; margin-bottom:15px;">\uD83D\uDCE6</div><div style="font-weight:700; letter-spacing:1px;">查無符合條件的保留紀錄</div></div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < filtered.length; i++) {
+    var g = filtered[i];
+    var dayClass = 'day-safe';
+    var dayText = '已保留 ' + g.maxDays + ' 天';
+    if (g.maxDays > 120) {
+      dayClass = 'day-extreme';
+      dayText = '\uD83D\uDC80 已保留 ' + g.maxDays + ' 天 \uD83D\uDC80';
+    } else if (g.maxDays > 70) {
+      dayClass = 'day-danger';
+    } else if (g.maxDays > 45) {
+      dayClass = 'day-warning';
+    }
+
+    var itemsHtml = '';
+    for (var j = 0; j < g.items.length; j++) {
+      var it = g.items[j];
+      var isChecked = _selectedReservedRows.indexOf(it.rowIdx) !== -1 ? 'checked' : '';
+      
+      itemsHtml += '<div class="reserve-item-row" style="position:relative; padding-left:25px;">' +
+        '<div class="reserve-checkbox-container">' +
+          '<input type="checkbox" class="reserve-checkbox" ' + isChecked + ' onchange="toggleRowSelection(' + it.rowIdx + ', this.checked)">' +
+        '</div>' +
+        '<div class="reserve-thumb">' +
+          '<img src="' + (it.img || 'https://placehold.co/100x80/000/444?text=NO+IMG') + '" onerror="this.style.display=\'none\'; this.parentNode.innerHTML=\'<span style=&quot;font-size:8px;color:#444;font-weight:bold;&quot;>NO IMG</span>\'">' +
+        '</div>' +
+        '<div class="reserve-item-info">' +
+          '<div class="reserve-item-top">' +
+            '<div class="reserve-item-sku">' + it.sku + '</div>' +
+            '<div class="reserve-item-qty">' + it.qty + ' 片 / ' + it.pyeong + ' 坪</div>' +
+          '</div>' +
+          '<div class="reserve-item-meta" style="display:flex; justify-content:space-between; align-items:center;">' + 
+            '<span>' + it.series + ' | ' + (it.size || '規格外') + '</span>' +
+            '<span class="status-badge ' + (it.status !== '保留中' ? 'highlight' : '') + '">' + it.status + '</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    html += '<div class="reserve-group-card">' +
+      '<div class="reserve-header-row">' +
+        '<div class="reserve-top-meta">' +
+          '<span class="reserve-biz-tag">' + g.biz + '</span>' +
+          '<h3 class="reserve-case-title">' + g.name + '</h3>' +
+          '<span class="reserve-day-status ' + dayClass + '">' + dayText + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="reserve-items-container">' + itemsHtml + '</div>' +
+      '<div class="reserve-footer-detail">' +
+        '<span>\uD83D\uDCC5 保留日: <span style="color:#eee;">' + g.items[0].date + '</span></span>' +
+        '<span style="opacity:0.2;">|</span>' +
+        '<span class="' + (g.items[0].deposit === '已付訂' ? 'deposit-paid' : 'deposit-none') + '">訂金: ' + g.items[0].deposit + '</span>' +
+        (g.items[0].note ? '<span style="opacity:0.2;">|</span> <span style="font-style:italic;">備註: ' + g.items[0].note + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  }
+  
+  cardContainer.innerHTML = html;
+}
+
+/**
+ * 顯示/隱藏業務篩選
+ */
+function toggleBizFilter() {
+  var panel = document.getElementById('biz-filter-panel');
+  if (!panel) return;
+  panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
+}
+
+/**
+ * 全選/全不選
+ */
+function selectAllBiz(isAll) {
+  var cbs = document.querySelectorAll('.biz-cb');
+  for (var i = 0; i < cbs.length; i++) cbs[i].checked = isAll;
+}
+
+/**
+ * 套用篩選
+ */
+function applyBizFilter() {
+  var cbs = document.querySelectorAll('.biz-cb:checked');
+  _selectedBiz = Array.from(cbs).map(function(cb) { return cb.value; });
+  toggleBizFilter();
+  renderReservedCards();
+}
+
+/**
+ * 重置分頁狀態
+ */
+function resetCustomerTabs() {
+  if (typeof switchAlbumTab === 'function') switchAlbumTab('layout');
+  var rList = document.getElementById('reserved-list');
+  if (rList) rList.innerHTML = '';
+  _selectedReservedRows = [];
+}
+
+/**
+ * 🛰️ 選取邏輯
+ */
+function toggleRowSelection(rowIdx, isChecked) {
+  if (isChecked) {
+    if (_selectedReservedRows.indexOf(rowIdx) === -1) _selectedReservedRows.push(rowIdx);
+  } else {
+    var idx = _selectedReservedRows.indexOf(rowIdx);
+    if (idx !== -1) _selectedReservedRows.splice(idx, 1);
+  }
+  updateSelectionToolbar();
+}
+
+function updateSelectionToolbar() {
+  var bar = document.getElementById('selection-toolbar');
+  var countEl = document.getElementById('selection-count');
+  if (!bar) return;
+  
+  if (_selectedReservedRows.length > 0) {
+    bar.classList.add('active');
+    countEl.innerText = '已選取 ' + _selectedReservedRows.length + ' 項';
+  } else {
+    bar.classList.remove('active');
+  }
+}
+
+/**
+ * 📱 LINE 分享功能
+ */
+function shareToLine() {
+  if (_selectedReservedRows.length === 0) {
+    showToast("⚠️ 請先選取要分享的項目");
+    return;
+  }
+  
+  var message = "【高雅瓷磁磚 - 客戶保留確認單】\n";
+  message += "客戶名稱：" + (state.currentCustomer || "未指定") + "\n";
+  message += "--------------------------\n";
+  
+  var contentArr = [];
+  _allReservedData.forEach(function(g) {
+    var groupItems = [];
+    g.items.forEach(function(it) {
+      if (_selectedReservedRows.indexOf(it.rowIdx) !== -1) {
+        groupItems.push("  - " + it.sku + " (" + it.series + ")\n     數量：" + it.qty + "片 / " + it.pyeong + "坪\n     進度：" + it.status);
+      }
+    });
+    
+    if (groupItems.length > 0) {
+      var groupHeader = "案名：" + g.name + "\n業務：" + g.biz + "\n";
+      contentArr.push(groupHeader + groupItems.join("\n\n"));
+    }
+  });
+  
+  if (contentArr.length === 0) {
+    showToast("⚠️ 找不到選取的資料");
+    return;
+  }
+  
+  message += contentArr.join("\n\n--------------------------\n");
+  message += "\n\n--------------------------\n請協助確認保留內容，謝謝！";
+  
+  // 使用 line://msg/text/ 這種行動版深層連結，效果通常比 https 更好
+  var lineUrl = "line://msg/text/" + encodeURIComponent(message);
+  
+  // 如果是在 PC 端或深層連結失敗，提供備案
+  var fallbackUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(message);
+  
+  try {
+    window.location.href = lineUrl;
+    // 延遲一段時間看是否跳轉成功，否則開新分頁
+    setTimeout(function() {
+      window.open(fallbackUrl, '_blank');
+    }, 500);
+  } catch (e) {
+    window.open(fallbackUrl, '_blank');
+  }
+}
+
+/**
+ * 🚀 進度更新彈窗 (使用簡單的 prompt 作為示範，後續可改為自訂 UI)
+ */
+function openStatusUpdateMenu() {
+  var newStatus = prompt("請輸入新的處理進度：\n(例如：已出貨、已結案、已取消、保留中)", "已出貨");
+  if (newStatus === null) return;
+  
+  if (!newStatus.trim()) {
+    showToast("⚠️ 請輸入有效的進度內容");
+    return;
+  }
+  
+  executeStatusUpdate(newStatus);
+}
+
+function executeStatusUpdate(status) {
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(function(res) {
+      showLoading(false);
+      if (res.success) {
+        showToast("✨ " + res.msg);
+        _selectedReservedRows = [];
+        loadReservedOrders(); // 重新整理資料
+      } else {
+        showToast("❌ 更新失敗: " + res.msg);
+      }
+    })
+    .updateReservedStatus(_selectedReservedRows, status);
+}
+
+/**
+ * 📝 開啟申請保留單 Modal
+ */
+function openAddReservationModal(prefilledSku) {
+  var modal = document.getElementById('reserve-add-modal');
+  if (!modal) return;
+  
+  // 1. 填入客戶與業務 (唯讀)
+  document.getElementById('reserve-add-customer').value = state.currentCustomer || '';
+  document.getElementById('reserve-add-biz').value = state.currentSales || '未指定';
+  
+  // 2. 預設日期為今天
+  var today = new Date();
+  var month = ('0' + (today.getMonth() + 1)).slice(-2);
+  var date = ('0' + today.getDate()).slice(-2);
+  document.getElementById('reserve-add-date').value = today.getFullYear() + '-' + month + '-' + date;
+  
+  // 3. 清空並重建 SKU datalist
+  var datalist = document.getElementById('reserve-sku-options');
+  if (datalist && state.inventoryData) {
+    datalist.innerHTML = state.inventoryData.map(function(item) {
+      return '<option value="' + item.sku + '">' + item.sCn + ' | 可用 ' + Math.round(item.pyeong) + ' 坪</option>';
+    }).join('');
+  }
+  
+  // 4. 重置欄位與明細
+  document.getElementById('reserve-add-case').value = '';
+  document.getElementById('reserve-add-note').value = '';
+  document.getElementById('reserve-add-deposit').checked = false;
+  
+  var listContainer = document.getElementById('reserve-sku-list');
+  if (listContainer) {
+    listContainer.innerHTML = '';
+    // 新增首列
+    addNewReserveSkuRow(prefilledSku);
+  }
+  
+  modal.style.display = 'flex';
+}
+
+function closeReserveAddModal() {
+  var modal = document.getElementById('reserve-add-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+/**
+ * ➕ 新增一列 SKU 保留品項
+ */
+function addNewReserveSkuRow(skuVal) {
+  var listContainer = document.getElementById('reserve-sku-list');
+  if (!listContainer) return;
+  
+  var div = document.createElement('div');
+  div.className = 'reserve-sku-row';
+  div.style.cssText = 'display:grid; grid-template-columns: 2fr 1fr 1fr; gap:10px; align-items:center; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); border-radius:10px; padding:8px 10px;';
+  
+  div.innerHTML = 
+    '<div>' +
+      '<input type="text" class="edit-input-dark reserve-sku-input" list="reserve-sku-options" placeholder="輸入編號 (例: SI21207)" value="' + (skuVal || '') + '" oninput="handleReserveSkuInput(this)" style="width:100%; box-sizing:border-box;">' +
+    '</div>' +
+    '<div>' +
+      '<input type="number" class="edit-input-dark reserve-qty-input" placeholder="片數" oninput="handleReserveQtyInput(this)" style="width:100%; box-sizing:border-box;">' +
+    '</div>' +
+    '<div style="display:flex; align-items:center; justify-content:space-between; padding-left:5px;">' +
+      '<span class="reserve-pyeong-label" style="font-size:12px; color:var(--ait-gold); font-weight:800; white-space:nowrap;">0 坪</span>' +
+      '<button onclick="removeReserveSkuRow(this)" style="background:none; border:none; color:#ff4d4d; font-size:18px; font-weight:800; cursor:pointer; padding: 0 5px;">×</button>' +
+    '</div>';
+    
+  listContainer.appendChild(div);
+  if (skuVal) {
+    var inputEl = div.querySelector('.reserve-sku-input');
+    handleReserveSkuInput(inputEl);
+  }
+}
+
+/**
+ * ❌ 移除指定列
+ */
+function removeReserveSkuRow(btn) {
+  var row = btn.closest('.reserve-sku-row');
+  var listContainer = document.getElementById('reserve-sku-list');
+  if (listContainer && listContainer.children.length <= 1) {
+    showToast('⚠️ 保留單至少需要一個品項！');
+    return;
+  }
+  if (row) row.remove();
+}
+
+/**
+ * 🔍 當輸入 SKU 時，更新可用庫存庫及換算比
+ */
+function handleReserveSkuInput(input) {
+  var row = input.closest('.reserve-sku-row');
+  if (!row) return;
+  
+  var skuVal = input.value.trim().replace(/[\s\-]/g, '').toUpperCase();
+  
+  // 查找即時產品資訊
+  var product = null;
+  if (state.inventoryData && skuVal) {
+    product = state.inventoryData.find(function(item) {
+      return item.sku.trim().replace(/[\s\-]/g, '').toUpperCase() === skuVal;
+    });
+  }
+  
+  // 將產品 ratio 暫存於行上以利換算
+  row.dataset.ratio = product ? product.ratio : 36;
+  
+  // 如果產品存在，更新坪數換算
+  if (product) {
+    input.style.borderColor = 'rgba(194, 157, 102, 0.4)';
+    recalculateRowPyeong(row);
+  } else {
+    input.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+  }
+}
+
+function handleReserveQtyInput(input) {
+  var row = input.closest('.reserve-sku-row');
+  if (row) recalculateRowPyeong(row);
+}
+
+/**
+ * 🧮 重新計算該行的坪數
+ */
+function recalculateRowPyeong(row) {
+  var qtyInput = row.querySelector('.reserve-qty-input');
+  var label = row.querySelector('.reserve-pyeong-label');
+  if (!qtyInput || !label) return;
+  
+  var qty = parseFloat(qtyInput.value) || 0;
+  var ratio = parseFloat(row.dataset.ratio) || 36;
+  var pyeong = ratio > 0 ? (qty / ratio).toFixed(1) : '0.0';
+  
+  label.innerText = pyeong + ' 坪';
+}
+
+/**
+ * 🚀 提交保留單並存檔
+ */
+function saveNewReservation() {
+  var customerName = document.getElementById('reserve-add-customer').value;
+  var salesperson = document.getElementById('reserve-add-biz').value;
+  var caseName = document.getElementById('reserve-add-case').value.trim();
+  var dateVal = document.getElementById('reserve-add-date').value;
+  var note = document.getElementById('reserve-add-note').value.trim();
+  var hasDeposit = document.getElementById('reserve-add-deposit').checked;
+  
+  if (!caseName) {
+    showToast('⚠️ 請填寫案名/工程名稱！');
+    return;
+  }
+  
+  // 收集品項明細
+  var rows = document.querySelectorAll('.reserve-sku-row');
+  var items = [];
+  var hasInvalidItem = false;
+  
+  rows.forEach(function(row) {
+    var skuInput = row.querySelector('.reserve-sku-input');
+    var qtyInput = row.querySelector('.reserve-qty-input');
+    
+    var sku = skuInput ? skuInput.value.trim() : '';
+    var qty = qtyInput ? parseFloat(qtyInput.value) || 0 : 0;
+    
+    if (!sku || qty <= 0) {
+      hasInvalidItem = true;
+      if (skuInput) skuInput.style.borderColor = '#ef4444';
+      if (qtyInput) qtyInput.style.borderColor = '#ef4444';
+    } else {
+      items.push({ sku: sku, qty: qty });
+    }
+  });
+  
+  if (hasInvalidItem) {
+    showToast('⚠️ 請確認所有品項的編號與數量均輸入正確！');
+    return;
+  }
+  
+  if (items.length === 0) {
+    showToast('⚠️ 請至少填寫一筆保留品項！');
+    return;
+  }
+  
+  var payload = {
+    customerName: customerName,
+    salesperson: salesperson,
+    caseName: caseName,
+    date: dateVal,
+    items: items,
+    note: note,
+    hasDeposit: hasDeposit
+  };
+  
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(function(res) {
+      showLoading(false);
+      if (res.success) {
+        showToast("✨ " + res.msg, "success");
+        closeReserveAddModal();
+        
+        // 🚀 自動重載保留單清單
+        loadReservedOrders();
+        
+        // 🔄 重新加載庫存資料以更新現貨餘量顯示
+        if (typeof loadInventoryData === 'function') {
+          loadInventoryData();
+        }
+      } else {
+        showToast("❌ 建立保留單失敗: " + res.msg);
+      }
+    })
+    .createReservation(payload);
+}
+</script>

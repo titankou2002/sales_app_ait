@@ -1,0 +1,35 @@
+<svg width="924" height="334" viewBox="0 0 924 334" xmlns="http://www.w3.org/2000/svg">
+  <title>eliTile</title>
+  <desc>eliTile logo - transparent background, white</desc>
+
+  <!-- Horizontal line -->
+  <line x1="49" y1="54" x2="884" y2="54" stroke="white" stroke-width="12"/>
+
+  <!-- e: gap on RIGHT (~36° at 3 o'clock), middle bar to gap -->
+  <path d="M 166 189 A 62 62 0 1 0 166 227"
+        fill="none" stroke="white" stroke-width="12" stroke-linecap="round"/>
+  <line x1="46" y1="208" x2="166" y2="208" stroke="white" stroke-width="12"/>
+
+  <!-- l -->
+  <line x1="264" y1="91" x2="264" y2="274" stroke="white" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- i -->
+  <circle cx="365" cy="108" r="13" fill="white"/>
+  <line x1="365" y1="135" x2="365" y2="274" stroke="white" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- T stem flush with line -->
+  <line x1="474" y1="60" x2="474" y2="277" stroke="white" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- i -->
+  <circle cx="585" cy="108" r="13" fill="white"/>
+  <line x1="585" y1="135" x2="585" y2="274" stroke="white" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- l -->
+  <line x1="685" y1="91" x2="685" y2="274" stroke="white" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- ǝ: mirror of e, gap on LEFT -->
+  <path d="M 782 189 A 62 62 0 1 1 782 227"
+        fill="none" stroke="white" stroke-width="12" stroke-linecap="round"/>
+  <line x1="782" y1="208" x2="878" y2="208" stroke="white" stroke-width="12"/>
+
+</svg>

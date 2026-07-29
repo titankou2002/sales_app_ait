@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>鈦傳速 | 版面記錄神器</title>
+    
+    <!-- 手機桌面圖示設定 -->
+    <link rel="apple-touch-icon" href="aitlogo.png">
+    <link rel="shortcut icon" href="aitlogo.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="版面記錄">
+
+    <style>
+        /* 移除邊距並隱藏捲軸 */
+        body, html { 
+            margin: 0; 
+            padding: 0; 
+            height: 100%; 
+            overflow: hidden; 
+            background: #0F1115; /* 使用與 App 一致的深色背景 */
+        }
+        
+        /* 
+           這層 wrapper 的作用是向上位移 65px，
+           用來遮掉 Google Apps Script 頂部的「此應用程式是由 Google...」橫幅
+        */
+        .wrapper { 
+            position: absolute; 
+            top: -65px; 
+            left: 0; 
+            width: 100%; 
+            height: calc(100% + 65px); 
+            border: none; 
+        }
+        
+        iframe { 
+            width: 100%; 
+            height: 100%; 
+            border: none; 
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px; font-weight:700; opacity:0.6;">
+            請從主系統入口開啟版面記錄神器
+        </div>
+    </div>
+</body>
+</html>

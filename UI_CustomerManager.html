@@ -1,0 +1,109 @@
+<style>
+/* 客戶管理模組 - 旗艦版 UI (Modular V2.1) */
+:root {
+  --ait-gold: #c29d66;
+  --ait-gold-soft: rgba(194, 157, 102, 0.15);
+}
+
+/* Tab 切換器樣式 */
+.album-tabs-container {
+  display: flex; background: rgba(255, 255, 255, 0.03);
+  margin: 10px 16px; padding: 4px; border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.album-tab {
+  flex: 1; text-align: center; padding: 12px; font-size: 14px; font-weight: 800;
+  color: rgba(255, 255, 255, 0.4); border-radius: 10px; cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.album-tab.active {
+  background: rgba(255, 255, 255, 0.1); color: #fff;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+/* 🚀 旗艦版工具列 (排序與篩選) */
+.reserve-toolbar {
+  display: flex; gap: 10px; padding: 12px 16px;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  align-items: center;
+}
+
+.reserve-select {
+  flex: 1; height: 36px; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
+  color: #fff; font-size: 13px; padding: 0 10px; outline: none;
+}
+
+.reserve-filter-btn {
+  height: 36px; padding: 0 15px; background: var(--ait-gold-soft);
+  color: var(--ait-gold); border: 1px solid rgba(194,157,102,0.2);
+  border-radius: 10px; font-size: 13px; font-weight: 800; cursor: pointer;
+}
+
+/* 🕵️ 業務篩選面板 (浮窗) */
+.filter-panel {
+  display: none; position: absolute; top: 120px; right: 16px;
+  width: 200px; background: #1a1a1a; border: 1px solid #333;
+  border-radius: 16px; z-index: 1000; padding: 15px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  animation: fadeIn 0.3s ease-out;
+}
+
+.filter-title { font-size: 12px; color: var(--ait-gold); margin-bottom: 12px; font-weight: 800; }
+.filter-list { max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.filter-item { display: flex; align-items: center; gap: 10px; color: #eee; font-size: 14px; cursor: pointer; }
+.filter-item input { width: 16px; height: 16px; accent-color: var(--ait-gold); }
+
+/* 保留單分組卡片 */
+.reserve-group-card {
+  background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 20px; margin: 0 16px 20px; padding: 16px;
+  border-left: 4px solid var(--ait-gold);
+  animation: cardSlideUp 0.5s ease-out both;
+}
+
+.reserve-header-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; }
+.reserve-top-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.reserve-case-title { font-size: 17px; font-weight: 900; color: #fff; flex: 1; letter-spacing: 0.5px; }
+.reserve-biz-tag { font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.4); }
+.reserve-day-status { font-size: 11px; font-weight: 800; }
+
+.reserve-items-container { background: rgba(0, 0, 0, 0.2); border-radius: 14px; padding: 12px; margin-bottom: 12px; }
+.reserve-item-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.03); }
+.reserve-item-row:first-child { border-top: none; }
+
+.reserve-thumb {
+  width: 65px; height: 50px; background: #000; border-radius: 8px;
+  overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.reserve-thumb img { width: 100%; height: 100%; object-fit: contain; }
+
+.reserve-item-info { flex: 1; min-width: 0; }
+.reserve-item-top { display: flex; justify-content: space-between; align-items: center; }
+.reserve-item-sku { font-size: 14px; font-weight: 900; color: var(--ait-gold); font-family: 'Inter', sans-serif; }
+.reserve-item-qty { font-size: 14px; font-weight: 800; color: #fff; }
+.reserve-item-meta { font-size: 10px; color: rgba(255, 255, 255, 0.3); margin-top: 2px; }
+
+.reserve-footer-detail {
+  font-size: 10px; color: rgba(255, 255, 255, 0.4); border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+}
+
+.day-extreme { color: #ff00ff; text-shadow: 0 0 10px rgba(255,0,255,0.3); font-weight: 900; } 
+.day-danger { color: #ff4d4d; } 
+.day-warning { color: #facc15; } 
+.day-safe { color: rgba(255, 255, 255, 0.3); }
+
+.deposit-paid { color: #00cc66; font-weight: 700; }
+.deposit-none { color: #ff4d4d; font-weight: 700; }
+
+@keyframes cardSlideUp {
+  from { opacity: 0; transform: translateY(15px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+</style>

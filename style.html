@@ -1,0 +1,364 @@
+<style>
+  /* 📊 業務邏輯 UI 樣式 (庫存、查詢、編輯) */
+
+  /* 🏮 庫存燈號與卡片標準 */
+  .border-red    { border: 2.5px solid #ff3b30 !important; box-shadow: 0 0 10px rgba(255,59,48,0.4), inset 0 0 15px rgba(255,59,48,0.3) !important; }
+  .border-orange { border: 2.5px solid #ff9500 !important; box-shadow: 0 0 10px rgba(255,149,0,0.3), inset 0 0 15px rgba(255,149,0,0.2) !important; }
+  .border-yellow { border: 2px solid #ffcc00 !important; box-shadow: inset 0 0 15px rgba(255,204,0,0.1); }
+  .border-green  { border: 1.5px solid #34c759 !important; }
+  .album-item.border-red,
+  .inv-card.border-red,
+  .sku-row.oos-red {
+    box-shadow:
+      0 0 0 2px rgba(255, 59, 48, 0.55),
+      0 0 16px rgba(255, 59, 48, 0.35),
+      inset 0 0 18px rgba(255, 59, 48, 0.18) !important;
+  }
+  .album-item.border-red,
+  .inv-card.border-red {
+    border-color: #ff3b30 !important;
+  }
+  /* ✅ 複合選擇器修正：確保差第顆色廣正確顯示 */
+  .sku-row.oos-red    { border-left: 6px solid #ff3b30 !important; background: rgba(255,59,48,0.1) !important; }
+  .sku-row.oos-orange { border-left: 6px solid #ff9500 !important; background: rgba(255,149,0,0.08) !important; }
+  .sku-row.oos-yellow { border-left: 6px solid #ffcc00 !important; background: rgba(255,204,0,0.05) !important; }
+
+  @keyframes bluePulse {
+    0%   { box-shadow: 0 0 5px rgba(0, 122, 255, 0.4); border-color: rgba(0, 122, 255, 0.6) !important; }
+    50%  { box-shadow: 0 0 20px rgba(0, 122, 255, 0.9); border-color: rgba(0, 122, 255, 1) !important; }
+    100% { box-shadow: 0 0 5px rgba(0, 122, 255, 0.4); border-color: rgba(0, 122, 255, 0.6) !important; }
+  }
+  .arrival-blue-pulse { animation: bluePulse 2s infinite ease-in-out !important; }
+
+  .oos-red    { border-left: 6px solid #ff3b30 !important; background: rgba(255,59,48,0.1) !important; }
+  .oos-orange { border-left: 6px solid #ff9500 !important; background: rgba(255,149,0,0.08) !important; }
+  .oos-yellow { border-left: 6px solid #ffcc00 !important; background: rgba(255,204,0,0.05) !important; }
+  .oos-green  { border-left: 6px solid #34c759 !important; }
+
+  .inv-card {
+    display: flex; gap: 12px; background: rgba(255, 255, 255, 0.06); border-radius: 20px;
+    padding: 14px; align-items: center; cursor: pointer; width: 100%; box-sizing: border-box;
+    transition: all 0.2s; border: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 12px;
+  }
+
+  .inv-search-bar {
+    padding: 12px 16px; display: flex; gap: 8px; background: var(--bg-primary);
+    position: sticky; top: 60px; z-index: 10; box-sizing: border-box;
+  }
+
+  .sku-row-thumb, .inv-thumb {
+    width: 100px !important; height: 62px !important; border-radius: 8px; object-fit: cover;
+    background: #111; flex-shrink: 0;
+  }
+
+  /* 👥 客戶與相簿網格 */
+  .customer-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 20px 16px 120px; }
+  .customer-item {
+    background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px;
+    aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+    padding: 8px; text-align: center; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    backdrop-filter: blur(10px);
+  }
+  .customer-item:active { transform: scale(0.95); background: var(--card-hover); }
+  .customer-name { font-size: 19px; font-weight: 900; line-height: 1.1; letter-spacing: -0.5px; }
+
+  .album-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding: 20px 16px 120px; }
+  .album-item {
+    position: relative; border-radius: 24px; background: rgba(255,255,255,0.05);
+    overflow: hidden; aspect-ratio: 1 / 1.4; transition: all 0.3s; border: 1px solid var(--card-border);
+  }
+  .album-thumb { width: 100%; height: 100%; object-fit: cover; opacity: 0.8; }
+  .card-glass-overlay {
+    position: absolute; inset: 0; padding: 16px; display: flex; flex-direction: column; justify-content: flex-end;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.2) 60%, transparent 100%);
+  }
+
+  /* 🏷️ 卡片內標籤 */
+  .card-top-badges {
+    position: absolute; top: 12px; left: 12px; z-index: 5;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .mini-stat {
+    background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px; padding: 4px 10px;
+    font-size: 11px; font-weight: 800; color: #fff;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+  }
+  .date-badge {
+    background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(5px);
+    border-radius: 6px; padding: 2px 6px;
+    display: inline-block; margin-top: 4px;
+    font-size: 9px; font-weight: 600; color: rgba(255, 255, 255, 0.7);
+  }
+
+  /* ℹ️ 詳細資訊 Modal 內部 */
+  .detail-image { width: 100%; aspect-ratio: 4/5; object-fit: cover; border-radius: 24px; margin-bottom: 24px; }
+  .sku-row {
+    display: flex; align-items: stretch; background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08); padding: 12px; border-radius: 20px; gap: 14px; margin-bottom: 10px;
+  }
+  .sku-row-content { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+  .sku-row-id { font-size: 14px; font-weight: 900; color: #fff; }
+
+  /* 🔧 編輯模式樣式 */
+  .sku-edit-row { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 20px; padding: 16px; margin-bottom: 12px; }
+  .edit-input {
+    width: 100%; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px; padding: 10px 14px; font-size: 15px; color: #fff;
+  }
+
+  .admin-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0; }
+  .btn-primary { background: #fff; color: #000; font-weight: 800; padding: 14px; border-radius: 14px; border: none; }
+  .btn-danger { background: rgba(255, 59, 48, 0.08); color: #ff3b30; font-weight: 800; padding: 14px; border-radius: 14px; border: 1px solid rgba(255, 59, 48, 0.2); }
+
+  /* 🌟 新增版面 Modal 具體元件 */
+  .add-photo-section {
+    width: 100%; aspect-ratio: 4 / 3; background: rgba(255, 255, 255, 0.03);
+    border: 2px dashed rgba(255, 255, 255, 0.1); border-radius: 16px;
+    display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer;
+  }
+  .add-photo-preview img { width: 100%; height: 100%; object-fit: cover; border-radius: 16px; }
+  .photo-placeholder { text-align: center; color: rgba(255, 255, 255, 0.3); font-size: 14px; }
+  .btn-add-sku-small { background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); color: white; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; }
+  .gps-toggle-row { background: rgba(255, 255, 255, 0.03); padding: 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
+  .btn-save-full {
+    width: 100%; padding: 18px; border-radius: 16px; background: linear-gradient(135deg, #e21b7a, #ff3b30);
+    color: white; font-weight: 800; border: none; font-size: 17px; box-shadow: 0 10px 30px rgba(226, 27, 122, 0.4);
+    display: flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+  .btn-save-full:active { transform: scale(0.96); box-shadow: 0 5px 15px rgba(226, 27, 122, 0.3); }
+
+  /* 💎 新增品項 Premium Row */
+  .edit-row-premium {
+    display: flex; gap: 10px; align-items: center; background: #fff;
+    padding: 6px; border-radius: 50px; margin-bottom: 12px;
+    animation: fadeIn 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  }
+  .edit-row-premium input {
+    background: transparent !important; border: none !important; color: #000 !important;
+    font-weight: 700; padding: 10px 15px !important; font-size: 15px !important;
+    width: 100%; min-width: 0;
+  }
+  .edit-row-premium .edit-sku-input { flex: 2.5; }
+  .edit-row-premium .edit-qty-input { flex: 1; border-left: 1px solid #eee !important; border-radius: 0 !important; text-align: center; padding: 10px 5px !important; }
+  .btn-remove-premium {
+    width: 32px; height: 32px; border-radius: 50%; background: #f5f5f5; border: 1px solid #eee;
+    color: #000; font-size: 18px; font-weight: 900; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; margin-right: 4px; transition: all 0.2s;
+  }
+  .btn-remove-premium:active { transform: scale(0.8); background: #eee; }
+
+  /* 🌚 Dark Mode Inputs */
+  .edit-field-group .edit-input-dark {
+    width: 100%; background: rgba(255, 255, 255, 0.05); border: 1.5px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px; padding: 18px; font-size: 16px; color: #fff; font-weight: 600; outline: none;
+    transition: all 0.3s;
+  }
+  .edit-field-group .edit-input-dark:focus { border-color: rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.08); }
+  .edit-label-premium { display: block; font-size: 15px; font-weight: 800; color: #fff; margin-bottom: 12px; opacity: 0.9; }
+
+  /* 🟢 Premium Switch */
+  .premium-switch-container {
+    background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 20px; border-radius: 20px; display: flex; justify-content: space-between; align-items: center;
+    margin-top: 30px;
+  }
+  .switch-green input:checked + .slider { background-color: #4ade80 !important; }
+  .btn-close {
+    position: absolute; top: 20px; right: 20px;
+    background: rgba(255, 255, 255, 0.1); border: none; color: white;
+    width: 36px; height: 36px; border-radius: 50%;
+    font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s; z-index: 100;
+  }
+  .btn-close:active { transform: scale(0.9); background: rgba(255, 255, 255, 0.2); }
+
+  /* 🌌 AIT 庫存與影像專屬樣式 */
+  :root {
+    --staff-gold: #c29d66;
+    --staff-gold-dark: #8b6d45;
+  }
+
+  .lamp-tag {
+    font-size: 9px;
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    display: inline-block;
+  }
+
+  .lamp-red {
+    background: rgba(255, 77, 77, 0.2);
+    color: #ff4d4d;
+    border: 1px solid rgba(255, 77, 77, 0.3);
+  }
+
+  .lamp-yellow {
+    background: rgba(255, 204, 0, 0.2);
+    color: #ffcc00;
+    border: 1px solid rgba(255, 204, 0, 0.3);
+  }
+
+  .lamp-green {
+    background: rgba(0, 204, 102, 0.2);
+    color: #00cc66;
+    border: 1px solid rgba(0, 204, 102, 0.3);
+  }
+
+  .staff-card {
+    cursor: pointer;
+    transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .staff-card:active {
+    transform: scale(0.96);
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .batch-link {
+    color: var(--staff-gold);
+    text-decoration: none;
+    font-size: 10px;
+    cursor: pointer;
+    font-weight: 400;
+    opacity: 0.6;
+  }
+
+  .gallery-tab {
+    padding: 0 15px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.3s;
+  }
+
+  .gallery-tab.active {
+    background: rgba(194, 157, 102, 0.15);
+    color: var(--staff-gold);
+  }
+
+  .gallery-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--staff-gold);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 15px 12px;
+    background: rgba(255, 255, 255, 0.01);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    letter-spacing: 1px;
+  }
+
+  .gallery-section-header::after {
+    content: '▼';
+    font-size: 8px;
+    opacity: 0.4;
+    transition: 0.3s;
+  }
+
+  .gallery-section-header.collapsed::after {
+    content: '◀';
+  }
+
+  .gallery-grid-container {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    overflow: hidden;
+    transition: max-height 0.4s ease;
+  }
+
+  .wm-check-group {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .wm-check-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .wm-check-item input {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--staff-gold);
+    cursor: pointer;
+  }
+
+  .toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+  }
+
+  /* 💻 AIT 旗艦版 - 電腦版 3 格展開與固定頂部 bar */
+  @media (min-width: 992px) {
+    #page-inventory.active {
+      height: 100vh !important;
+      overflow: hidden !important;
+      display: flex !important;
+      flex-direction: column !important;
+    }
+    #staff-result-list {
+      grid-template-columns: repeat(3, 1fr) !important;
+      overflow-y: auto !important;
+      flex: 1 !important;
+      padding-bottom: 120px !important;
+    }
+  }
+
+  .bonus-input {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 4px !important;
+    color: #fff !important;
+    padding: 4px 8px !important;
+    font-size: 13px !important;
+    width: 80px !important;
+    text-align: center !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    transition: all 0.2s !important;
+  }
+  .bonus-input:focus {
+    border-color: var(--neon-cyan) !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+  }
+  /* Remove number input spinners */
+  .bonus-input::-webkit-outer-spin-button,
+  .bonus-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .bonus-input[type=number] {
+    -moz-appearance: textfield;
+  }
+</style>
+

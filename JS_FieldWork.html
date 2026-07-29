@@ -1,0 +1,2348 @@
+<script>
+  /**
+   * 🚗 外勤管理模組邏輯 (Field Work Logic)
+   */
+  var fwState = {
+    currentSales: '',
+    currentLocation: null,
+    carMapping: {},
+    plateList: [],
+    watchId: null,
+    timerId: null,
+    summary: null
+  };
+
+  /**
+   * 📊 使用頻率統計（客戶名稱／工作概況：越常選越排前面，各業務各自獨立記憶於本機）
+   */
+  function fwFreqKey(kind) {
+    return 'fw_freq_' + kind + '_' + String(state.currentSales || '').trim();
+  }
+  function fwBumpFreq(kind, label) {
+    if (!label) return;
+    try {
+      const key = fwFreqKey(kind);
+      const map = JSON.parse(localStorage.getItem(key) || '{}');
+      map[label] = (map[label] || 0) + 1;
+      localStorage.setItem(key, JSON.stringify(map));
+    } catch (e) {}
+  }
+  function fwSortByFreq(kind, items) {
+    try {
+      const map = JSON.parse(localStorage.getItem(fwFreqKey(kind)) || '{}');
+      return items
+        .map((x, i) => ({ x, i, f: map[x] || 0 }))
+        .sort((a, b) => (b.f - a.f) || (a.i - b.i))
+        .map(d => d.x);
+    } catch (e) {
+      return items;
+    }
+  }
+
+  /**
+   * 🌀 顯示/隱藏外勤模組載入遮罩
+   */
+  window.showFwLoading = function (show, text = '處理中...') {
+    const overlay = document.getElementById('fw-loading');
+    const textEl = document.getElementById('fw-loading-text');
+    if (overlay) {
+      overlay.style.display = show ? 'flex' : 'none';
+      if (textEl) textEl.innerText = text;
+    }
+  };
+
+  /**
+   * 🚀 開啟智能報表模組
+   */
+  window.openFieldWorkModule = function () {
+    if (!state.currentSales) {
+      state.currentFlow = 'fieldwork';
+      showPage('sales-page');
+      // 移除 Toast 提示，靖默跳轉即可
+      return;
+    }
+
+    showPage('page-fieldwork');
+    initFwClock();
+    startGpsTracking();
+    getFwCustomers();
+    initFwTaskList(); // 預設任務清單
+    initFwSettings();
+    loadFwLogStatsBar();
+
+    // 📅 日誌為預設進入分頁，比照 switchFwTab('fw-log') 初始化
+    const todayStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
+    if (document.getElementById('log-date')) document.getElementById('log-date').value = todayStr;
+    refreshFwTimeline(todayStr);
+    if (typeof fwCalRender === 'function') fwCalRender();
+  };
+
+  /**
+   * 💰 載入日誌頁上方的「本日/當月業績 + 睡美人業績」提示條
+   */
+  window.loadFwLogStatsBar = function () {
+    const salesEl = document.getElementById('fw-log-stat-sales');
+    const sleeperEl = document.getElementById('fw-log-stat-sleeper');
+    if (!salesEl || !sleeperEl || !state.currentSales) return;
+    const name = String(state.currentSales).trim();
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (!res || !res.success) return;
+        const p = (res.data.people || []).find(x => x.name === name);
+        if (!p) return; // 名單裡沒有這個人（例如非業務身分），不顯示提示
+
+        salesEl.innerText = `${p.day}萬 / ${p.month}萬`;
+        sleeperEl.innerText = `睡：${(p.sleeper && p.sleeper.month) || 0}萬`;
+        salesEl.style.display = 'inline';
+        sleeperEl.style.display = 'inline';
+      })
+      .withFailureHandler(function () { /* 靜默失敗，不影響日誌填寫 */ })
+      .getSalesOverview();
+  };
+
+  /**
+   * ⚙️ 載入系統設定
+   */
+  window.initFwSettings = function () {
+    google.script.run
+      .withFailureHandler(function (err) {
+        console.error("載入設定失敗:", err);
+      })
+      .withSuccessHandler(function (res) {
+        if (res.success) {
+          fwState.carMapping = res.carMapping;
+          fwState.plateList = res.plateList;
+
+          // 更新 Datalist
+          const dl = document.getElementById('plate-list');
+          if (dl) {
+            dl.innerHTML = fwState.plateList.map(p => `<option value="${p}">`).join('');
+          }
+
+          // 如果已經登入，嘗試帶入車號
+          autoFillPlate();
+
+          // 🚀 強制相容：如果目前是在保養分頁，當設定載入完成且帶入車號後，自動重新加載保養數據，避免異步賽跑導致空白
+          const maintPlateVal = document.getElementById('maint-plate-number') ? document.getElementById('maint-plate-number').value : '';
+          if (maintPlateVal) {
+            loadMaintenanceTabData();
+          }
+        }
+      })
+      .getFwSettings();
+  };
+
+  /**
+   * 🚗 自動帶入車號
+   */
+  window.autoFillPlate = function () {
+    if (!state.currentSales) return;
+    const salesName = state.currentSales.trim();
+    const defaultPlate = fwState.carMapping[salesName];
+
+    if (defaultPlate) {
+      const drvPlate = document.getElementById('drv-plate-number');
+      const maintPlate = document.getElementById('maint-plate-number');
+      // 🚀 強制填入預設車號
+      if (drvPlate) drvPlate.value = defaultPlate;
+      if (maintPlate) maintPlate.value = defaultPlate;
+    }
+  };
+
+  function initFwClock() {
+    if (fwState.timerId) clearInterval(fwState.timerId);
+    const timeEl = document.getElementById('fw-current-time');
+    const dateEl = document.getElementById('fw-current-date');
+    const update = () => {
+      const now = new Date();
+      if (timeEl) timeEl.innerText = now.toTimeString().split(' ')[0];
+      if (dateEl) dateEl.innerText = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日';
+    };
+    update();
+    fwState.timerId = setInterval(update, 1000);
+  }
+
+  function startGpsTracking() {
+    const indicator = document.getElementById('fw-gps-status');
+    if (!navigator.geolocation) {
+      if (indicator) indicator.innerHTML = '瀏覽器不支援 GPS';
+      return;
+    }
+
+    const gpsOptions = {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 30000
+    };
+
+    const handleGpsError = (err) => {
+      const codeMap = {
+        1: '權限被拒絕，請確認手機設定已允許 LINE 或瀏覽器取用定位',
+        2: '位置資訊不可用 (請確認 GPS 已開啟)',
+        3: '定位逾時 (請確認定位訊號良好)'
+      };
+      const msg = codeMap[err && err.code] || 'GPS 定位失敗';
+      if (indicator) {
+        indicator.innerHTML = `<span class="dot" style="background:#ff4d4d"></span> ${msg}`;
+      }
+      console.warn('GPS error:', err);
+
+      // 🖥️ 自動偵測桌面裝置：GPS 失敗時若非行動裝置，自動開啟出差模式
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (!isMobile) {
+        const tripToggle = document.getElementById('fw-trip-mode');
+        if (tripToggle && !tripToggle.checked) {
+          tripToggle.checked = true;
+          if (indicator) {
+            indicator.innerHTML = '<span class="dot" style="background:#f5a623"></span> 桌面模式・自動切換出差打卡';
+          }
+        }
+      }
+    };
+
+    navigator.geolocation.getCurrentPosition((pos) => updateGpsDisplay(pos), handleGpsError, gpsOptions);
+
+    if (fwState.watchId) navigator.geolocation.clearWatch(fwState.watchId);
+    fwState.watchId = navigator.geolocation.watchPosition((pos) => updateGpsDisplay(pos), handleGpsError, gpsOptions);
+  }
+
+  function updateGpsDisplay(pos) {
+    fwState.currentLocation = pos.coords;
+    const indicator = document.getElementById('fw-gps-status');
+    if (indicator) indicator.innerHTML = '<span class="dot" style="background:#4ade80"></span> GPS 已就緒';
+
+    const latlngEl = document.getElementById('fw-current-latlng');
+    const accEl = document.getElementById('fw-current-accuracy');
+
+    if (latlngEl) {
+      latlngEl.innerText = pos.coords.latitude.toFixed(5) + ', ' + pos.coords.longitude.toFixed(5);
+    }
+    if (accEl) {
+      accEl.innerText = '精度 ' + Math.round(pos.coords.accuracy) + 'm';
+    }
+  }
+
+  /**
+   * 🔄 切換 Tab
+   */
+  window.switchFwTab = function (tabId, el) {
+    document.querySelectorAll('.fw-tab').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
+
+    document.querySelectorAll('.fw-tab-content').forEach(c => c.classList.remove('active'));
+    const target = document.getElementById(tabId);
+    if (target) target.classList.add('active');
+
+    if (tabId === 'fw-dashboard') refreshFwDashboard();
+    if (tabId === 'fw-log') {
+      getFwCustomers();
+
+      // 🚀 初始化日誌日期
+      const todayStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
+      if (document.getElementById('log-date')) document.getElementById('log-date').value = todayStr;
+      if (document.getElementById('fw-log-view-date')) {
+        const viewDate = document.getElementById('fw-log-view-date');
+        viewDate.value = todayStr;
+        refreshFwTimeline(todayStr);
+      } else {
+        refreshFwTimeline();
+      }
+
+      initFwTaskList();
+      fwCalRender(); // 🚀 同步初始化日曆
+    }
+    if (tabId === 'fw-driving') {
+      loadDrivingTabData();
+      autoFillPlate();
+    }
+    if (tabId === 'fw-maint') {
+      autoFillPlate();
+      loadMaintenanceTabData();
+    }
+    if (tabId === 'fw-omniscient') {
+      const isAuth = document.getElementById('fw-omni-real-content').style.display === 'block';
+      if (isAuth) refreshOmniscientView();
+    }
+  };
+
+  /**
+   * 🚗 自動填寫預設車牌
+   */
+  window.autoFillPlate = function () {
+    if (!state.currentSales) return;
+    // 🚀 從後端傳回的 fwState.carMapping 中精確匹配 (加上 trim 避免前後空格導致配對失敗)
+    const salesName = String(state.currentSales).trim();
+    const defaultPlate = fwState.carMapping[salesName];
+    if (defaultPlate) {
+      const drvPlate = document.getElementById('drv-plate-number');
+      const maintPlate = document.getElementById('maint-plate-number');
+      if (drvPlate) drvPlate.value = defaultPlate;
+      if (maintPlate) maintPlate.value = defaultPlate;
+    }
+  };
+
+  /**
+   * 🆔 設備 ID
+   */
+  function getFwDeviceId() {
+    let id = localStorage.getItem('ait_device_id');
+    if (!id) {
+      id = 'DEV_' + Math.random().toString(36).substr(2, 9).toUpperCase() + '_' + Date.now();
+      localStorage.setItem('ait_device_id', id);
+    }
+    return id;
+  }
+
+  /**
+   * 🚀 打卡處理
+   */
+  window.handlePunch = function (type) {
+    var isTrip = document.getElementById('fw-trip-mode') ? document.getElementById('fw-trip-mode').checked : false;
+    var coords = fwState.currentLocation;
+
+    var performPunch = function (actualCoords) {
+      var payload = {
+        employeeName: state.currentSales,
+        deviceId: getFwDeviceId(),
+        type: type,
+        isBusinessTrip: isTrip,
+        location: {
+          latitude: actualCoords.latitude,
+          longitude: actualCoords.longitude,
+          accuracy: actualCoords.accuracy
+        }
+      };
+
+      showLoading(true, true);
+      google.script.run
+        .withSuccessHandler(function (res) {
+          showLoading(false);
+          if (res.success) {
+            showToast(`${type === 'checkin' ? '上班' : '下班'}成功！${res.distance ? '(距離 ' + res.distance + 'm)' : ''}`);
+            if (res.punchStatus === '遲到') showToast('注意：本次打卡紀錄為「遲到」');
+            refreshPunchStatus();
+            refreshFwDashboard();
+          } else {
+            alert(res.msg);
+          }
+        })
+        .saveAttendance(payload);
+    };
+
+    if (coords) {
+      performPunch(coords);
+      return;
+    }
+
+    // 🖥️ 自動偵測桌面裝置：若非行動裝置且無座標，自動切換出差模式
+    var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (!isTrip && !isMobile) {
+      var tripToggle = document.getElementById('fw-trip-mode');
+      if (tripToggle) tripToggle.checked = true;
+      isTrip = true; // 立即生效
+    }
+
+    if (isTrip) {
+      // 出差打卡模式下若定位不可用，使用預設公司位置作為備用座標
+      coords = {
+        latitude: 25.0004864,
+        longitude: 121.0339143,
+        accuracy: 999
+      };
+      performPunch(coords);
+    } else {
+      // 🚀 關鍵修復：主動使用用戶點擊手勢觸發一次 GPS 定位獲取
+      showLoading(true, '正在取得 GPS 定位...');
+      
+      var gpsOptions = {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 10000
+      };
+
+      navigator.geolocation.getCurrentPosition(
+        function (pos) {
+          showLoading(false);
+          updateGpsDisplay(pos);
+          performPunch(pos.coords);
+        },
+        function (err) {
+          showLoading(false);
+          var codeMap = {
+            1: '權限被拒絕，請至手機設定確認已允許 LINE 或瀏覽器使用定位服務。',
+            2: '無法取得位置，請確認 GPS 已開啟且訊號良好。',
+            3: '定位逾時，請移動至收訊較佳處重試。'
+          };
+          var errMsg = codeMap[err && err.code] || 'GPS 定位失敗';
+          showToast('⚠️ ' + errMsg);
+          console.warn("Manual GPS retrieval failed:", err);
+        },
+        gpsOptions
+      );
+    }
+  };
+
+  function refreshPunchStatus() {
+    if (!state.currentSales) return;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success) {
+          const inTimeEl = document.getElementById('fw-in-time');
+          const outTimeEl = document.getElementById('fw-out-time');
+          if (inTimeEl) inTimeEl.innerText = res.checkin || '--:--';
+          if (outTimeEl) outTimeEl.innerText = res.checkout || '--:--';
+
+          const inStatus = document.getElementById('fw-in-status');
+          const inBtn = document.getElementById('btn-punch-in');
+          const statusTag = document.getElementById('fw-punch-status');
+
+          if (res.checkin && inStatus) {
+            inStatus.innerText = res.checkinStatus || '正常';
+            inStatus.className = 'punch-status-tag ' + (res.checkinStatus === '遲到' ? 'status-late' : 'status-normal');
+            if (res.checkinStatus === '遲到' && inBtn) inBtn.classList.add('late');
+          } else if (inStatus) {
+            inStatus.innerText = '';
+            if (inBtn) inBtn.classList.remove('late');
+          }
+
+          // 總覽頁面同步
+          const dashStatus = document.getElementById('fw-dash-status-text');
+          if (dashStatus) {
+            dashStatus.innerText = res.punchIn ? '上班中' : '未上班';
+            dashStatus.style.color = res.punchIn ? '#4ade80' : '#f87171';
+          }
+
+          if (statusTag) {
+            if (res.checkout) {
+              statusTag.innerText = '已下班';
+              statusTag.style.background = 'rgba(0,0,0,0.3)';
+            } else if (res.checkin) {
+              statusTag.innerText = '工作中';
+              statusTag.style.background = 'rgba(74, 222, 128, 0.3)';
+            } else {
+              statusTag.innerText = '未上班';
+              statusTag.style.background = 'rgba(255,255,255,0.2)';
+            }
+          }
+        }
+      })
+      .getTodayStatus(state.currentSales);
+  }
+
+  /**
+   * 👥 取得客戶清單
+   */
+  function getFwCustomers() {
+    if (!state.currentSales) return;
+    google.script.run
+      .withSuccessHandler(function (list) {
+        const dl = document.getElementById('customer-list');
+        if (!dl) return;
+
+        // 🚀 新增回公司選項（固定置頂），其餘客戶依選取頻率排序
+        let options = ['回公司(永安)'];
+        if (list && list.length > 0) {
+          options = options.concat(fwSortByFreq('cust', list));
+        }
+
+        dl.innerHTML = options.map(c => `<option value="${c}">`).join('');
+      })
+      .getSalesCustomers(state.currentSales);
+  }
+
+  /**
+   * 📅 重新整理今日行程預覽
+   */
+  // ✂️ 行程足跡摘要簡化：系統配送「樣品結案」→送樣、「配送完工」→送貨；空字串維持空（不顯示括號）
+  function fwSimplifySummary(summary) {
+    var s = String(summary == null ? '' : summary).trim();
+    if (!s) return '';
+    if (s.indexOf('樣品結案') !== -1) return '送樣';
+    if (s.indexOf('配送完工') !== -1) return '送貨';
+    return s;
+  }
+
+  function refreshFwTimeline(dateStr) {
+    if (!state.currentSales) return;
+    const container = document.getElementById('fw-log-timeline');
+
+    // 如果沒有傳入日期，則抓取 UI 上的日期，若 UI 也沒有則用今日
+    const today = new Date();
+    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+
+    const targetDate = dateStr || (document.getElementById('fw-log-view-date') ? document.getElementById('fw-log-view-date').value : todayStr);
+
+    // 更新 UI 上的標題 (如果是今日則顯示「今日」，否則顯示「日期」)
+    const viewTitle = document.getElementById('fw-log-view-title');
+    if (viewTitle) viewTitle.innerText = (targetDate === todayStr) ? '今日' : '';
+
+    const viewDateInput = document.getElementById('fw-log-view-date');
+    if (viewDateInput && viewDateInput.value !== targetDate) viewDateInput.value = targetDate;
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success && res.logs.length > 0) {
+          // Arrow format: 客戶(任務) → 客戶(任務)
+          let html = '';
+          res.logs.forEach((log, idx) => {
+            const isBack = (log.customer === '回公司(永安)');
+            const tlSum = isBack ? '' : fwSimplifySummary(log.summary);
+            html += `<div class="fw-tl-chip" onclick="clickFwLog('${log.id}', '${log.time}', '${log.customer}', '${log.summary}', \`${log.detail || ''}\`)">
+            <span class="tl-customer">${log.customer}</span>
+            ${tlSum ? `<span class="tl-task">(${tlSum})</span>` : ''}
+          </div>`;
+            if (idx < res.logs.length - 1) {
+              html += `<div class="fw-tl-arrow">→</div>`;
+            }
+          });
+          container.innerHTML = html;
+        } else {
+          container.innerHTML = '<div style="text-align:center;opacity:0.3;padding:20px;font-size:12px;">該日尚無紀錄</div>';
+        }
+      })
+      .getWorkLogHistory(state.currentSales, targetDate);
+  }
+
+  /**
+   * 📋 初始化任務清單（預設一筆）
+   */
+  function initFwTaskList() {
+    const list = document.getElementById('fw-task-list');
+    if (!list) return;
+    list.innerHTML = '';
+    addFwTask();
+  }
+
+  /**
+   * ➕ 新增任務卡片
+   */
+  window.addFwTask = function () {
+    const list = document.getElementById('fw-task-list');
+    if (!list) return;
+    const idx = list.children.length;
+    const div = document.createElement('div');
+    div.className = 'fw-task-item';
+    div.dataset.mode = 'onsite';
+    div.innerHTML = `
+    <div class="fw-task-header">
+      <span class="fw-task-label">任務 ${idx + 1}</span>
+      <button class="fw-task-delete" onclick="removeFwTask(this)" ${idx === 0 ? 'style="display:none"' : ''}>×</button>
+    </div>
+    <div class="fw-mode-tabs">
+      <button type="button" class="fw-mode-tab active" onclick="fwSetTaskMode(this,'onsite')">實體</button>
+      <button type="button" class="fw-mode-tab mode-online" onclick="fwSetTaskMode(this,'online')">線上</button>
+    </div>
+    <div class="fw-field">
+      <label>工作概況</label>
+      <input type="text" class="task-result" placeholder="點擊選擇任務..." readonly onclick="pickWorkSummary(this)">
+    </div>
+    <div class="fw-field">
+      <label>詳細說明</label>
+      <textarea class="task-content" rows="2" placeholder="請描述洽談細節或後續追蹤..."></textarea>
+    </div>
+    <div class="fw-field fw-online-photo-section" style="display:none;">
+      <label>線上對話截圖 (LINE)</label>
+      <input type="file" accept="image/*" multiple style="display:none;" onchange="handleFwOnlinePhotoSelect(this)">
+      <button type="button" class="fw-btn-online-photo" onclick="this.previousElementSibling.click()">📷 上傳LINE截圖</button>
+      <div class="fw-online-photo-preview"></div>
+    </div>
+  `;
+    list.appendChild(div);
+    // 第一筆以外展示删除鈕
+    list.querySelectorAll('.fw-task-delete').forEach((btn, i) => {
+      btn.style.display = i === 0 && list.children.length === 1 ? 'none' : 'flex';
+    });
+  };
+
+  /**
+   * ➖ 刪除指定任務卡片
+   */
+  window.removeFwTask = function (btn) {
+    const item = btn.closest('.fw-task-item');
+    if (item) item.remove();
+    // 重新編號
+    document.querySelectorAll('#fw-task-list .fw-task-label').forEach((el, i) => {
+      el.innerText = `任務 ${i + 1}`;
+    });
+    // 動態控制第一筆刪除鈕顯示
+    const items = document.querySelectorAll('#fw-task-list .fw-task-item');
+    items.forEach((it, i) => {
+      const d = it.querySelector('.fw-task-delete');
+      if (d) d.style.display = i === 0 && items.length === 1 ? 'none' : 'flex';
+    });
+  };
+
+  /**
+   * 📝 提交工作日誌（支援同客戶多任務）
+   */
+  window.submitFwWorkLog = function () {
+    const customerInput = document.getElementById('log-customer');
+    const customer = customerInput ? customerInput.value.trim() : "";
+    if (!customer) { showToast('請輸入客戶名稱'); return; }
+
+    const isBackToCompany = (customer === '回公司(永安)');
+    const taskItems = document.querySelectorAll('#fw-task-list .fw-task-item');
+    if (taskItems.length === 0) { showToast('請新增至少一筆任務'); return; }
+
+    const tasks = [];
+    taskItems.forEach(item => {
+      let result = item.querySelector('.task-result').value.trim();
+      const content = item.querySelector('.task-content').value.trim();
+      if (isBackToCompany && !result) { result = '回公司'; }
+      // 不再強制檢查 result 是否為必填
+      tasks.push({ result, content, onlinePhotoUrls: item._onlinePhotoUrls || [] });
+    });
+
+    // 📊 累積使用頻率（依實際存檔為準，下次選單自動把常用的排前面）
+    fwBumpFreq('cust', customer);
+    tasks.forEach(t => { if (t.result) fwBumpFreq('task', t.result); });
+
+    const submitBtn = document.getElementById('btn-submit-worklog');
+    const originalText = submitBtn ? submitBtn.innerText : "儲存";
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = "提交中..."; }
+
+    showLoading(true, true);
+    const loc = (fwState.currentLocation) ? `${fwState.currentLocation.latitude}, ${fwState.currentLocation.longitude}` : '';
+
+    if (fwState.editingLogId) {
+      // 編輯模式 (目前仍採單筆更新)
+      const task = tasks[0];
+      google.script.run
+        .withFailureHandler(handleGASFailure)
+        .withSuccessHandler(function (res) {
+          showLoading(false);
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = "儲存工作日誌"; }
+          if (res.success) {
+            showToast('更新成功');
+            fwState.editingLogId = null;
+            resetWorkLogForm();
+            refreshFwTimeline(document.getElementById('log-date').value);
+            refreshFwDashboard();
+            if (typeof fwCalRender === 'function') fwCalRender();
+          } else {
+            alert('❌ 更新失敗：' + (res.msg || '未知原因'));
+          }
+        })
+        .updateWorkLog({
+          id: fwState.editingLogId,
+          employeeName: state.currentSales,
+          originalTime: fwState.editingLogTime,
+          originalCustomer: fwState.editingLogOriginalCustomer,
+          customerName: customer,
+          result: task.result,
+          content: task.content,
+          date: document.getElementById('log-date').value
+        });
+    } else {
+      // 🚀 關鍵優化：改為批次存檔 (濃縮模式)
+      google.script.run
+        .withFailureHandler(handleGASFailure)
+        .withSuccessHandler(function (res) {
+          showLoading(false);
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = originalText; }
+          if (res.success) {
+            showToast(`已成功濃縮存檔 ${tasks.length} 筆任務`);
+            resetWorkLogForm();
+            const logDate = document.getElementById('log-date').value;
+            refreshFwTimeline(logDate);
+            refreshFwDashboard();
+            if (typeof fwCalRender === 'function') fwCalRender();
+          } else {
+            alert('❌ 儲存失敗：' + (res.msg || '未知原因'));
+          }
+        })
+        .saveWorkLogBatch({
+          employeeName: state.currentSales,
+          customerName: customer,
+          tasks: tasks,
+          location: loc,
+          date: document.getElementById('log-date').value
+        });
+    }
+  };
+
+  /**
+   * 🖱️ 點擊日誌處理 (彈出面板替代 Prompt)
+   */
+  window.clickFwLog = function (id, time, customer, summary, detail) {
+    openFwActionSheet(`針對「${customer}」的紀錄操作`, [
+      { label: '✏️ 修改內容', onClick: () => editFwLog(id, time, customer, summary, detail) },
+      { label: '🗑️ 刪除這一筆', onClick: () => deleteFwLog(id, time, customer), danger: true }
+    ]);
+  };
+
+  /**
+   * 🎭 Action Sheet 控制器
+   */
+  /**
+   * 📝 處理請假證明照片
+   */
+  window.handleLeavePhoto = function (input) {
+    if (input.files && input.files[0]) {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const img = document.getElementById('leave-img-preview');
+        const icon = document.getElementById('leave-photo-icon');
+        img.src = e.target.result;
+        img.style.display = 'block';
+        icon.style.display = 'none';
+        document.getElementById('leave-photo-box').style.border = 'none';
+      };
+      reader.readAsDataURL(input.files[0]);
+    }
+  };
+
+  /**
+   * 🚀 提交請假報備
+   */
+  window.submitLeaveRequest = function () {
+    const type = document.getElementById('leave-type').value;
+    const start = document.getElementById('leave-start').value;
+    const end = document.getElementById('leave-end').value;
+    const reason = document.getElementById('leave-reason').value;
+    const fileInput = document.getElementById('leave-file');
+
+    if (!start || !end || !reason) {
+      showToast('請填寫完整日期與原因', 'error');
+      return;
+    }
+
+    showFwLoading(true, '正在提交請假報備...');
+
+    const currentSalesName = state.currentSales || fwState.currentSales;
+
+    const processSubmit = (photoData = '') => {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          showFwLoading(false);
+          if (res.success) {
+            showToast('請假報備已提交');
+            // 重置表單
+            const start = document.getElementById('leave-start');
+            const end = document.getElementById('leave-end');
+            const reason = document.getElementById('leave-reason');
+            if (start) start.value = '';
+            if (end) end.value = '';
+            if (reason) reason.value = '';
+            document.getElementById('leave-img-preview').style.display = 'none';
+            document.getElementById('leave-photo-icon').style.display = 'block';
+            document.getElementById('leave-photo-box').style.border = '1.5px dashed rgba(255,255,255,0.2)';
+          } else {
+            showToast('提交失敗: ' + res.message);
+          }
+        })
+        .submitLeaveRequest({
+          salesName: currentSalesName,
+          type: type,
+          start: start,
+          end: end,
+          reason: reason,
+          photo: photoData,
+          deviceId: getFwDeviceId()
+        });
+    };
+
+    if (fileInput.files && fileInput.files[0]) {
+      const reader = new FileReader();
+      reader.onload = (e) => processSubmit(e.target.result);
+      reader.readAsDataURL(fileInput.files[0]);
+    } else {
+      processSubmit();
+    }
+  };
+
+  window.openFwActionSheet = function (title, options) {
+    const sheet = document.getElementById('fw-action-sheet');
+    const titleEl = document.getElementById('fw-action-title');
+    const btnContainer = document.getElementById('fw-action-btns');
+
+    titleEl.innerText = title;
+    btnContainer.innerHTML = '';
+
+    options.forEach(opt => {
+      const btn = document.createElement('div');
+      btn.className = 'fw-action-btn' + (opt.danger ? ' danger' : '');
+      btn.innerText = opt.label;
+      btn.onclick = () => {
+        closeFwActionSheet();
+        opt.onClick();
+      };
+      btnContainer.appendChild(btn);
+    });
+
+    sheet.style.display = 'flex';
+  };
+
+  /**
+   * 🔀 切換任務卡片的「實體／線上」聯絡方式
+   */
+  window.fwSetTaskMode = function (btn, mode) {
+    const item = btn.closest('.fw-task-item');
+    if (!item) return;
+    item.dataset.mode = mode;
+    item.querySelectorAll('.fw-mode-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    // 切換模式後，已選的工作概況可能不適用於新模式，清空讓使用者重選
+    const resultInput = item.querySelector('.task-result');
+    if (resultInput) {
+      resultInput.value = '';
+      resultInput.readOnly = true;
+      resultInput.placeholder = '點擊選擇任務...';
+    }
+    // 線上模式才顯示 LINE 截圖上傳區；切回實體時清空已選照片
+    const photoSection = item.querySelector('.fw-online-photo-section');
+    if (photoSection) {
+      photoSection.style.display = (mode === 'online') ? 'block' : 'none';
+      if (mode !== 'online') {
+        item._onlinePhotoUrls = [];
+        const preview = photoSection.querySelector('.fw-online-photo-preview');
+        if (preview) preview.innerHTML = '';
+      }
+    }
+  };
+
+  /**
+   * 🖼️ 圖片壓縮（最長邊 1200px, JPEG 0.7），與其他照片上傳功能同一套邏輯
+   */
+  function fwCompressImageFile_(file, callback) {
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      const img = new Image();
+      img.onload = function () {
+        const canvas = document.createElement('canvas');
+        let width = img.width, height = img.height;
+        const maxDim = 1200;
+        if (width > height) {
+          if (width > maxDim) { height *= maxDim / width; width = maxDim; }
+        } else {
+          if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        callback(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /**
+   * 📷 選取線上任務的 LINE 截圖：壓縮後逐張上傳到 Drive，成功才存進該任務卡片的網址清單
+   */
+  window.handleFwOnlinePhotoSelect = function (input) {
+    const item = input.closest('.fw-task-item');
+    if (!item) return;
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    const previewBox = item.querySelector('.fw-online-photo-preview');
+    if (!item._onlinePhotoUrls) item._onlinePhotoUrls = [];
+
+    files.forEach(file => {
+      const chip = document.createElement('div');
+      chip.className = 'fw-online-photo-chip';
+      chip.innerHTML = '<div class="fw-online-photo-loading">上傳中</div>';
+      if (previewBox) previewBox.appendChild(chip);
+
+      fwCompressImageFile_(file, function (dataUrl) {
+        const base64 = dataUrl.split(',')[1];
+        google.script.run
+          .withFailureHandler(function () {
+            chip.innerHTML = '<div class="fw-online-photo-fail">上傳失敗</div>';
+          })
+          .withSuccessHandler(function (res) {
+            if (res && res.success) {
+              item._onlinePhotoUrls.push(res.url);
+              chip.innerHTML = `<img src="${dataUrl}" class="fw-online-photo-thumb">` +
+                `<span class="fw-online-photo-remove" onclick="fwRemoveOnlinePhoto(this, '${res.url}')">×</span>`;
+            } else {
+              chip.innerHTML = '<div class="fw-online-photo-fail">上傳失敗</div>';
+            }
+          })
+          .uploadFwOnlinePhoto(base64, 'image/jpeg');
+      });
+    });
+    input.value = ''; // 清空，允許重複選取同一張
+  };
+
+  /**
+   * 🗑️ 移除已上傳的線上截圖（僅從本次表單移除，不影響已存檔的紀錄）
+   */
+  window.fwRemoveOnlinePhoto = function (el, url) {
+    const item = el.closest('.fw-task-item');
+    if (item && item._onlinePhotoUrls) {
+      const idx = item._onlinePhotoUrls.indexOf(url);
+      if (idx !== -1) item._onlinePhotoUrls.splice(idx, 1);
+    }
+    const chip = el.closest('.fw-online-photo-chip');
+    if (chip) chip.remove();
+  };
+
+  /**
+   * 🎭 工作概況選擇器 (替代失靈的下拉選單)
+   */
+  window.pickWorkSummary = function (inputEl) {
+    const taskItem = inputEl.closest('.fw-task-item');
+    const isOnline = taskItem && taskItem.dataset.mode === 'online';
+    const fixedLabels = isOnline
+      ? ['線上-找磚', '線上-樣品', '線上-保留', '線上-圖片', '線上-帳務合約']
+      : ['送貨入店', '入店退貨', '送樣品', '案件追蹤', '版面上架', '版面下架', '版面巡視', '客訴處理', '送帳單', '對帳/收款', '聊天', '吃飯/下午茶'];
+    // 依此業務個人選取頻率排序，越常選越排前面
+    const sortedOptions = fwSortByFreq('task', fixedLabels).map(label => ({
+      label, onClick: () => { inputEl.value = label; }
+    }));
+    sortedOptions.push({
+      label: '其它 (自填)', onClick: () => {
+        inputEl.value = '';
+        inputEl.readOnly = false;
+        inputEl.placeholder = '請手動輸入任務內容...';
+        setTimeout(() => inputEl.focus(), 300);
+      }
+    });
+    // 每次重啟時先設回唯讀
+    inputEl.readOnly = true;
+    openFwActionSheet('請選擇工作項目', sortedOptions);
+  };
+
+  window.closeFwActionSheet = function () {
+    document.getElementById('fw-action-sheet').style.display = 'none';
+  };
+
+  /**
+   * 🧹 重置日誌表單
+   */
+  window.resetWorkLogForm = function () {
+    fwState.editingLogId = null;
+    fwState.editingLogTime = null;
+    fwState.editingLogOriginalCustomer = null;
+    const cust = document.getElementById('log-customer');
+    if (cust) cust.value = '';
+
+    const submitBtn = document.getElementById('btn-submit-worklog');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerText = '儲存工作日誌';
+    }
+
+    if (typeof initFwTaskList === 'function') initFwTaskList();
+  };
+
+  /**
+   * ✏️ 進入編輯模式
+   */
+  window.editFwLog = function (id, time, customer, summary, detail) {
+    fwState.editingLogId = id;
+    fwState.editingLogTime = time;
+    fwState.editingLogOriginalCustomer = customer;
+    const logCust = document.getElementById('log-customer');
+    if (logCust) logCust.value = customer;
+
+    // 清空並帶入單一任務
+    const list = document.getElementById('fw-task-list');
+    list.innerHTML = '';
+
+    const editIsOnline = String(summary || '').indexOf('線上-') === 0;
+    const div = document.createElement('div');
+    div.className = 'fw-task-item';
+    div.dataset.mode = editIsOnline ? 'online' : 'onsite';
+    div.innerHTML = `
+    <div class="fw-task-header">
+      <span class="fw-task-label">修改任務</span>
+      <button class="fw-task-delete" style="display:none">×</button>
+    </div>
+    <div class="fw-mode-tabs">
+      <button type="button" class="fw-mode-tab${editIsOnline ? '' : ' active'}" onclick="fwSetTaskMode(this,'onsite')">實體</button>
+      <button type="button" class="fw-mode-tab mode-online${editIsOnline ? ' active' : ''}" onclick="fwSetTaskMode(this,'online')">線上</button>
+    </div>
+    <div class="fw-field">
+      <label>工作概況</label>
+      <input type="text" class="task-result" value="${summary}" readonly onclick="pickWorkSummary(this)">
+    </div>
+    <div class="fw-field">
+      <label>詳細說明</label>
+      <textarea class="task-content" rows="3">${detail}</textarea>
+    </div>
+  `;
+    list.appendChild(div);
+
+    const submitBtn = document.getElementById('btn-submit-worklog');
+    if (submitBtn) submitBtn.innerText = '確認更新日誌';
+
+    showToast('已進入編輯模式');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  /**
+   * 🗑️ 刪除日誌處理
+   */
+  window.deleteFwLog = function (id, time, customer) {
+    if (!id) return;
+    if (!confirm(`確定要刪除「${customer}」的這筆紀錄嗎？（只刪這一筆，不會動到同一天的其他紀錄）`)) return;
+
+    showLoading(true, true);
+    google.script.run
+      .withFailureHandler(function (err) {
+        showLoading(false);
+        alert("刪除失敗：" + err);
+      })
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          showToast('已刪除紀錄');
+          if (typeof refreshFwTimeline === 'function') refreshFwTimeline();
+          refreshFwDashboard();
+
+          // 🚀 即時刷新歷史列表與日曆
+          if (typeof fwCalRender === 'function') fwCalRender();
+          if (fwCalState.selectedDate) {
+            fwCalSelectDate(fwCalState.selectedDate);
+          }
+        } else {
+          alert('刪除失敗：' + res.msg);
+        }
+      })
+      .deleteWorkLogEntry({ id: id, time: time, customer: customer });
+  };
+
+  /**
+   * 🚗 里程計算
+   */
+  window.calcDrvDist = function () {
+    const start = parseFloat(document.getElementById('drv-start-odometer').value) || 0;
+    const end = parseFloat(document.getElementById('drv-end-odometer').value) || 0;
+    const dist = Math.max(0, end - start);
+    const distEl = document.getElementById('drv-dist');
+    if (distEl) distEl.value = dist > 0 ? dist : '';
+  };
+
+  /**
+   * 🚗 儲存行駛日誌
+   */
+  /**
+   * 🚗 儲存里程紀錄 (獨立)
+   */
+  window.submitFwMileage = function (btn) {
+    const originalText = btn ? btn.innerText : "儲存";
+    const drvDate = document.getElementById('drv-date').value;
+    const plate = document.getElementById('drv-plate-number').value;
+    const startOdo = document.getElementById('drv-start-odometer').value;
+    const endOdo = document.getElementById('drv-end-odometer').value;
+
+    if (!plate) { showToast('請輸入或選擇車牌號碼'); return; }
+    if (!startOdo || !endOdo) { showToast('請完整填寫開始與結束里程'); return; }
+    if (parseFloat(endOdo) < parseFloat(startOdo)) { showToast('結束里程不能小於開始里程'); return; }
+
+    if (btn) { btn.disabled = true; btn.innerText = "正在儲存..."; }
+    showLoading(true, true);
+
+    google.script.run
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.innerText = originalText; }
+        showLoading(false);
+        alert("儲存失敗：" + err);
+      })
+      .withSuccessHandler(function (res) {
+        if (btn) { btn.disabled = false; btn.innerText = originalText; }
+        showLoading(false);
+        if (res.success) {
+          showToast(`里程儲存成功！行駛 ${res.distance} km`);
+          const drvStart = document.getElementById('drv-start-odometer');
+          const drvEnd = document.getElementById('drv-end-odometer');
+          if (drvStart) drvStart.value = endOdo;
+          if (drvEnd) drvEnd.value = '';
+          refreshFwDashboard();
+        } else {
+          alert('儲存失敗：' + res.msg);
+        }
+      })
+      .saveDrivingFuelRecord({
+        employeeName: state.currentSales,
+        date: drvDate,
+        plateNumber: plate,
+        startOdometer: startOdo,
+        endOdometer: endOdo,
+        fuelLiters: 0,
+        fuelAmount: 0,
+        route: (document.getElementById('drv-route') ? document.getElementById('drv-route').value.trim() : ''),
+        note: "里程紀錄"
+      });
+  };
+
+  /**
+   * ⛽ 儲存加油紀錄 (獨立)
+   */
+  window.submitFwFuel = function (btn) {
+    const originalText = btn ? btn.innerText : "儲存";
+    const drvDate = document.getElementById('drv-date').value;
+    const plate = document.getElementById('drv-plate-number').value;
+    const fuelLiters = document.getElementById('drv-fuel-liters').value;
+    const fuelAmount = document.getElementById('drv-fuel-amount').value;
+
+    if (!plate) { showToast('請輸入或選擇車牌號碼'); return; }
+    if (!fuelLiters || !fuelAmount) { showToast('請填寫加油公升與金額'); return; }
+
+    if (btn) { btn.disabled = true; btn.innerText = "正在儲存..."; }
+    showLoading(true, true);
+
+    google.script.run
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.innerText = originalText; }
+        showLoading(false);
+        alert("儲存失敗：" + err);
+      })
+      .withSuccessHandler(function (res) {
+        if (btn) { btn.disabled = false; btn.innerText = originalText; }
+        showLoading(false);
+        if (res.success) {
+          showToast('加油紀錄儲存成功');
+          const fuelLiters = document.getElementById('drv-fuel-liters');
+          const fuelAmount = document.getElementById('drv-fuel-amount');
+          if (fuelLiters) fuelLiters.value = '';
+          if (fuelAmount) fuelAmount.value = '';
+          refreshFwDashboard();
+        } else {
+          alert('儲存失敗：' + res.msg);
+        }
+      })
+      .saveDrivingFuelRecord({
+        employeeName: state.currentSales,
+        date: drvDate,
+        plateNumber: plate,
+        startOdometer: 0,
+        endOdometer: 0,
+        fuelLiters: fuelLiters,
+        fuelAmount: fuelAmount,
+        route: (document.getElementById('drv-route') ? document.getElementById('drv-route').value.trim() : ''),
+        note: "加油紀錄"
+      });
+  };
+
+  /**
+   * ⛽ 開啟加油歷史紀錄
+   */
+  window.openFuelHistory = function () {
+    if (!state.currentSales) return;
+    const modal = document.getElementById('modal-fuel-history');
+    const container = document.getElementById('fuel-history-list');
+
+    if (modal) modal.style.display = 'flex';
+    if (container) container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入中...</div>';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success && res.logs.length > 0) {
+          // 過濾出有加油金額或加油公升的紀錄
+          const fuelLogs = res.logs.filter(log => (parseFloat(log.fuelAmt) > 0 || parseFloat(log.fuelLiters) > 0));
+          if (fuelLogs.length > 0) {
+            let html = '';
+            fuelLogs.forEach(log => {
+              const litersStr = log.fuelLiters ? `${log.fuelLiters} L` : '';
+              const amtStr = log.fuelAmt ? `$${log.fuelAmt}` : '';
+              const litersAndAmt = [amtStr, litersStr].filter(Boolean).join(' / ');
+
+              html += `
+              <div style="background:rgba(251,191,36,0.05); border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid rgba(251,191,36,0.2);">
+                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                  <span style="color:#fbbf24; font-weight:800; font-size:14px;">⛽ 加油紀錄 ${log.date}</span>
+                  <span style="font-size:11px; opacity:0.6;">${log.plate}</span>
+                </div>
+                <div style="font-size:16px; color:#fff; font-weight:700; margin-bottom:5px;">${litersAndAmt}</div>
+                ${log.note ? `<div style="font-size:12px; opacity:0.7; line-height:1.4; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1);">📝 ${log.note}</div>` : ''}
+              </div>
+            `;
+            });
+            container.innerHTML = html;
+          } else {
+            container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.3;">查無加油紀錄</div>';
+          }
+        } else {
+          container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.3;">查無加油紀錄</div>';
+        }
+      })
+      .getDrivingHistory(state.currentSales);
+  };
+
+  function renderDrivingHistory(logs) {
+    const container = document.getElementById('driving-history-list');
+    if (!container) return;
+
+    if (!logs || logs.length === 0) {
+      container.innerHTML = '<div style="text-align:center; padding:40px; opacity:0.4;">尚無歷史紀錄</div>';
+      return;
+    }
+
+    let html = '';
+    logs.forEach(log => {
+      const endVal = parseFloat(log.end) || 0;
+      const startVal = parseFloat(log.start) || 0;
+      const fuelVal = parseFloat(log.fuelAmt) || 0;
+      const isMileage = endVal > 0;
+      const isFuel = fuelVal > 0;
+
+      // 如果同時有 (雖然目前邏輯是分開存，但預留相容)
+      if (isMileage) {
+        html += `
+        <div style="background:rgba(74,222,128,0.05); border-radius:12px; padding:12px; margin-bottom:10px; border:1px solid rgba(74,222,128,0.2);">
+          <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+            <span style="font-weight:800; color:#4ade80; font-size:14px;">🚗 行駛紀錄 ${log.date}</span>
+            <span style="font-size:12px; opacity:0.6;">${log.plate}</span>
+          </div>
+          <div style="color:#fff; font-weight:700; font-size:16px;">${log.dist || 0} <span style="font-size:12px; opacity:0.7;">km</span></div>
+          <div style="font-size:12px; opacity:0.6; margin-bottom:8px;">里程：${startVal} → ${endVal}</div>
+          ${log.route ? `<div style="font-size:11px; color:#999; line-height:1.4; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1);">📍 ${log.route}</div>` : ''}
+        </div>
+      `;
+      }
+
+      if (isFuel) {
+        html += `
+        <div style="background:rgba(251,191,36,0.05); border-radius:12px; padding:12px; margin-bottom:10px; border:1px solid rgba(251,191,36,0.2);">
+          <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+            <span style="font-weight:800; color:#fbbf24; font-size:14px;">⛽ 加油紀錄 ${log.date}</span>
+            <span style="font-size:12px; opacity:0.6;">${log.plate}</span>
+          </div>
+          <div style="color:#fff; font-weight:700; font-size:16px;">$${log.fuelAmt} <span style="font-size:12px; opacity:0.7;">TWD</span></div>
+          <div style="font-size:11px; color:#999; margin-top:8px;">此紀錄僅包含加油資訊</div>
+        </div>
+      `;
+      }
+    });
+    container.innerHTML = html;
+  }
+
+  function refreshDrivingInfo() {
+    // 此函式已被 loadDrivingTabData 取代內容，保留空函式避免調用報錯
+  }
+
+  function loadDrivingTabData() {
+    if (!state.currentSales) return;
+
+    // 0. 預設日期為前一天
+    const today = new Date();
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const dateStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+    if (document.getElementById('drv-date')) document.getElementById('drv-date').value = dateStr;
+    if (document.getElementById('drv-fuel-date')) document.getElementById('drv-fuel-date').value = dateStr;
+
+    // 1. 帶入上次結束里程
+    google.script.run
+      .withSuccessHandler(function (res) {
+        const el = document.getElementById('drv-start-odometer');
+        if (el) {
+          if (res.success) {
+            el.value = (res.odometer !== undefined && res.odometer !== null) ? res.odometer : '';
+            el.placeholder = (res.odometer === 0) ? '請輸入起始里程' : '前次里程';
+          } else {
+            el.placeholder = '載入失敗';
+          }
+        }
+        const dateTag = document.getElementById('fw-last-odom-date');
+        if (dateTag) dateTag.innerText = res.date ? `(${res.date})` : '';
+      })
+      .withFailureHandler(function (err) {
+        const el = document.getElementById('drv-start-odometer');
+        if (el) el.placeholder = '載入失敗';
+        console.error("里程載入失敗:", err);
+      })
+      .getLastOdometer(state.currentSales);
+    // 2. 帶入今日行程
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success && res.logs.length > 0) {
+          const route = res.logs.map(l => { const s = fwSimplifySummary(l.summary); return s ? `${l.customer}(${s})` : l.customer; }).join('→');
+          const drvRoute = document.getElementById('drv-route');
+          if (drvRoute) drvRoute.value = route;
+        }
+      })
+      .getTodayLogs(state.currentSales);
+  }
+
+  function refreshFwDashboard() {
+    if (!state.currentSales) return;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success) {
+          // 1. 💰 顯示目前的業績金額 (轉換為「萬」單位)
+          const monthSalesEl = document.getElementById('fw-dash-month-sales');
+          const yearSalesEl = document.getElementById('fw-dash-year-sales');
+          if (monthSalesEl) {
+            const mVal = (res.monthSales || 0) / 10000;
+            monthSalesEl.innerText = (mVal % 1 === 0 ? mVal : mVal.toFixed(1)) + ' 萬';
+          }
+          if (yearSalesEl) {
+            const yVal = (res.yearSales || 0) / 10000;
+            yearSalesEl.innerText = (yVal % 1 === 0 ? yVal : yVal.toFixed(1)) + ' 萬';
+          }
+
+          // 2. 🕒 上班時間與打卡狀態
+          const dateEl = document.getElementById('fw-dash-date');
+          if (dateEl) dateEl.innerText = res.date || '';
+
+          const statusTextEl = document.getElementById('fw-dash-status-text');
+          if (statusTextEl) {
+            statusTextEl.innerText = res.punchIn ? '上班中' : '未上班';
+            statusTextEl.style.color = res.punchIn ? '#4ade80' : '#f87171';
+          }
+          const checkinEl = document.getElementById('fw-dash-checkin');
+          if (checkinEl) checkinEl.innerText = res.punchInTime || '--:--';
+
+          // 3. 📍 渲染今日工作行程 (中間區塊)
+          const visitCountEl = document.getElementById('fw-dash-visit-count');
+          const itineraryEl = document.getElementById('fw-dash-itinerary');
+          if (visitCountEl) visitCountEl.innerText = `共 ${res.visitCount || 0} 筆`;
+
+          if (itineraryEl) {
+            if (res.visitCount > 0 && res.visits) {
+              let html = '';
+              res.visits.forEach(v => {
+                const isBack = (v.customer === '回公司(永安)');
+                html += `
+                <div style="background:rgba(255,255,255,0.05); border-radius:10px; padding:10px; margin-bottom:8px; border-left:3px solid #4ade80;">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-weight:700; color:#fff; font-size:14px;">${v.customer}</span>
+                    <span style="font-size:11px; opacity:0.5;">${v.time || ''}</span>
+                  </div>
+                  ${isBack ? '' : `<div style="font-size:12px; color:#4ade80; margin-top:2px;">${v.summary}</div>`}
+                </div>
+              `;
+              });
+              itineraryEl.innerHTML = html;
+            } else {
+              itineraryEl.innerHTML = '<div style="text-align:center; opacity:0.3; padding:20px; font-size:13px;">今日尚無紀錄</div>';
+            }
+          }
+
+          // 4. 生成摘要文字 (用於分享)
+          if (res.visitCount > 0) {
+            let text = `今日已完成 ${res.visitCount} 家客戶拜訪，重點摘要如下：\n`;
+            if (res.visits) {
+              res.visits.forEach((v, idx) => {
+                const isBack = (v.customer === '回公司(永安)');
+                text += `- ${v.customer}${isBack ? '' : `: ${v.summary || '洽談中'}`}\n`;
+              });
+            }
+            fwState.dailyText = text;
+          }
+        }
+      })
+      .withFailureHandler(function (err) {
+        console.error("Dashboard 載入失敗:", err);
+        showToast("總覽資料載入失敗: " + err, "error");
+      })
+      .getDailyReportData(state.currentSales);
+  }
+
+  /**
+   * 🛣️ 開啟行駛歷史
+   */
+  window.openDrivingHistory = function () {
+    if (!state.currentSales) return;
+    const modal = document.getElementById('modal-driving-history');
+    const container = document.getElementById('driving-history-list');
+
+    modal.style.display = 'flex';
+    container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入中...</div>';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success && res.logs.length > 0) {
+          let html = '';
+          res.logs.forEach(log => {
+            html += `
+            <div style="background:rgba(255,255,255,0.05); border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
+              <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                <span style="color:#facc15; font-weight:800;">${log.date}</span>
+                <span style="font-size:11px; opacity:0.6;">${log.plate}</span>
+              </div>
+              <div style="font-size:13px; color:#4ade80; margin-bottom:5px; font-weight:700;">${log.dist} km (${log.start} → ${log.end})</div>
+              <div style="font-size:12px; opacity:0.7; line-height:1.4;">${log.route || '無詳細行程'}</div>
+              ${log.fuelAmt ? `<div style="font-size:11px; color:#fbbf24; margin-top:5px;">⛽ 加油金額: $${log.fuelAmt}</div>` : ''}
+            </div>
+          `;
+          });
+          container.innerHTML = html;
+        } else {
+          container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.3;">查無行駛紀錄</div>';
+        }
+      })
+      .getDrivingHistory(state.currentSales);
+  };
+
+  window.shareDailyReport = function () {
+    const salesperson = state.currentSales;
+    const dateEl = document.getElementById('fw-dash-date');
+    const date = dateEl ? dateEl.innerText : "";
+
+    const checkinEl = document.getElementById('fw-dash-checkin');
+    const checkin = checkinEl ? checkinEl.innerText : "--:--";
+
+    const summary = fwState.dailyText || "";
+
+    let msg = `【今日外勤報表】 ${date}\n`;
+    msg += `業務：${salesperson}\n`;
+    msg += `上班時間：${checkin}\n`;
+    msg += `------------------\n`;
+    msg += summary;
+
+    const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(msg);
+    window.open(lineUrl, '_blank');
+  };
+
+
+  window.showFwReports = function () {
+    const month = document.getElementById('report-month').value;
+    switchFwTab('fw-reports');
+    showLoading(true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) renderFwReport(res.data);
+      })
+      .getFieldWorkSummary(state.currentSales, month);
+  };
+
+  function renderFwReport(data) {
+    const container = document.getElementById('fw-report-container');
+    container.innerHTML = `
+    <div class="fw-report-card">
+      <div class="fw-report-title">本月數據概覽</div>
+      <div class="fw-report-stats">
+        <div class="fw-report-stat"><div class="label">工作天數</div><div class="value">${data.workDays} 天</div></div>
+        <div class="fw-report-stat"><div class="label">總拜訪數</div><div class="value">${data.totalVisits} 次</div></div>
+        <div class="fw-report-stat"><div class="label">總里程</div><div class="value">${data.totalMileage.toFixed(1)} km</div></div>
+        <div class="fw-report-stat"><div class="label">總油費</div><div class="value">$${data.totalFuelCost.toFixed(0)}</div></div>
+      </div>
+    </div>
+  `;
+  }
+
+  window.generateFwAttendanceReport = function () {
+    const month = document.getElementById('report-month').value;
+    showLoading(true, true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          renderFwReportTable(res);
+          document.getElementById('fw-report-modal').style.display = 'flex';
+        }
+      })
+      .generateAttendanceReport(state.currentSales, month);
+  };
+
+  function renderFwReportTable(res) {
+    const body = document.getElementById('fw-report-modal-body');
+    const modalTitle = document.getElementById('fw-report-modal-title');
+    if (modalTitle) modalTitle.innerText = `${res.employeeName} - ${res.month} 考勤明細`;
+    let rows = res.list.map(item => `
+    <tr>
+      <td style="background:#f9f9f9; font-weight:800;">${item.date.split('-')[2]}日</td>
+      <td class="${item.status === '遲到' ? 'text-red' : ''}">${item.checkin || '-'}</td>
+      <td>${item.checkout || '-'}</td>
+      <td><span class="${item.status === '遲到' ? 'text-red' : ''}">${item.status || (item.checkin ? '正常' : '')}</span></td>
+      <td>${item.remark ? `<span class="badge-trip">${item.remark}</span>` : ''}</td>
+    </tr>`).join('');
+    body.innerHTML = `<table class="fw-report-table"><thead><tr><th>日期</th><th>上班</th><th>下班</th><th>狀態</th><th>備註</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  window.closeFwReportModal = function () {
+    document.getElementById('fw-report-modal').style.display = 'none';
+  };
+
+  window.printFwReport = function () {
+    const printContent = document.getElementById('fw-report-modal-body').innerHTML;
+    const title = document.getElementById('fw-report-modal-title').innerText;
+    const win = window.open('', '', 'height=700,width=900');
+    win.document.write(`<html><head><title>${title}</title>`);
+    win.document.write('<style>table { width: 100%; border-collapse: collapse; font-family: sans-serif; } th, td { border: 1px solid #000; padding: 8px; text-align: center; } th { background: #eee; } .text-red { color: red; font-weight:bold; } .badge-trip { border: 1px solid #999; padding: 2px 4px; border-radius: 4px; font-size: 11px; }</style>');
+    win.document.write('</head><body>');
+    win.document.write(`<h2 style="text-align:center;">${title}</h2>`);
+    win.document.write(printContent);
+    win.document.write('</body></html>');
+    win.document.close();
+    win.print();
+  };
+
+  /**
+  /**
+   * 📅 日曆狀態
+   */
+  var fwCalState = {
+    year: new Date().getFullYear(),
+    month: new Date().getMonth(),
+    logDates: new Set(),
+    selectedDate: null
+  };
+
+  function fwCalRender() {
+    const monthStr = `${fwCalState.year}-${String(fwCalState.month + 1).padStart(2, '0')}`;
+    const title = document.getElementById('fw-cal-month-title');
+    if (title) title.innerText = `${fwCalState.year}年${fwCalState.month + 1}月`;
+    fwCalDrawGrid(new Set());
+    if (!state.currentSales) return;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success) {
+          fwCalState.logDates = new Set(res.dates);
+          fwCalDrawGrid(fwCalState.logDates);
+        }
+      })
+      .getWorkLogMonthDates(state.currentSales, monthStr);
+  }
+
+  function fwCalDrawGrid(logDates) {
+    const grid = document.getElementById('fw-cal-grid');
+    if (!grid) return;
+    const today = new Date();
+    const y = fwCalState.year, m = fwCalState.month;
+    const firstDay = new Date(y, m, 1).getDay();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    let html = '';
+    for (let i = 0; i < firstDay; i++) html += `<div class="fw-cal-day empty"></div>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const isToday = today.getFullYear() === y && today.getMonth() === m && today.getDate() === d;
+      const hasLog = logDates.has(dateStr);
+      let cls = 'fw-cal-day';
+      if (isToday) cls += ' today';
+      if (hasLog) cls += ' has-log';
+      html += `<div class="${cls}" onclick="fwCalSelectDate('${dateStr}',this)">${d}${hasLog ? '<div class="fw-cal-dot"></div>' : ''}</div>`;
+    }
+    grid.innerHTML = html;
+  }
+
+  window.fwCalPrevMonth = function () {
+    fwCalState.month--;
+    if (fwCalState.month < 0) { fwCalState.month = 11; fwCalState.year--; }
+    fwCalRender();
+  };
+  window.fwCalNextMonth = function () {
+    fwCalState.month++;
+    if (fwCalState.month > 11) { fwCalState.month = 0; fwCalState.year++; }
+    fwCalRender();
+  };
+
+  window.fwCalSelectDate = function (dateStr, el) {
+    fwCalState.selectedDate = dateStr;
+    document.querySelectorAll('.fw-cal-day').forEach(d => d.classList.remove('selected'));
+    if (el) el.classList.add('selected');
+    const logArea = document.getElementById('fw-history-logs');
+    logArea.innerHTML = '<div style="text-align:center;opacity:0.5;padding:20px;font-size:13px;">Loading...</div>';
+    google.script.run
+      .withFailureHandler(function (err) {
+        logArea.textContent = '載入失敗: ' + (err.message || err);
+      })
+      .withSuccessHandler(function (res) {
+        const parts = dateStr.split('-');
+        const title = `${parseInt(parts[0])}年${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+        if (res.success && res.logs.length > 0) {
+          let html = `<div class="fw-history-date-title">${title} (共 ${res.logs.length} 筆)</div><div class="fw-timeline" style="padding-left:10px;">`;
+          res.logs.forEach(log => {
+            html += `<div class="fw-timeline-item">
+            <div class="fw-timeline-dot"></div>
+            <div class="fw-timeline-time">${log.time}</div>
+            <div class="fw-timeline-card" onclick="clickFwLog('${log.id}', '${log.time}', '${log.customer}', '${log.summary}', \`${log.detail || ''}\`)">
+              <div class="fw-timeline-customer">${log.customer}</div>
+              <div class="fw-timeline-summary">${log.summary}</div>
+              <div class="fw-timeline-detail">${log.detail || ''}</div>
+            </div>
+          </div>`;
+          });
+          html += '</div>';
+          logArea.innerHTML = html;
+        } else {
+          logArea.innerHTML = `<div class="fw-history-date-title">${title}</div><div style="text-align:center;opacity:0.35;padding:20px;font-size:13px;">該日尚無工作日誌</div>`;
+        }
+      })
+      .getWorkLogHistory(state.currentSales, dateStr);
+  };
+
+  /**
+   * 🤫 管理者登入邂輯
+   */
+  window.triggerAdminLogin = function () {
+    // 直接開啟，不再跳出密碼鎖
+    openAdminGodView();
+  };
+
+  window.submitAdminAuth = function () {
+    const input = document.getElementById('admin-input-pwd');
+    const modal = document.getElementById('admin-auth-modal');
+    const pwd = input ? input.value.trim() : '';
+
+    // 🔑 固定密碼驗證
+    if (pwd === "3220") {
+      if (modal) modal.style.display = 'none';
+      showToast("🔑 身份驗證成功", "success");
+      openAdminGodView();
+    } else {
+      showToast("❌ 密碼錯誤，請重試", "error");
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+    }
+  };
+
+  /**
+   * 🔄 全知視角子分頁切換：每日總覽 ↔ 客戶到訪紀錄
+   */
+  window.adminGodSwitchTab = function (tab) {
+    const dailyBox = document.getElementById('admin-godtab-daily');
+    const rankBox = document.getElementById('admin-godtab-ranking');
+    const btnDaily = document.getElementById('admin-godtab-btn-daily');
+    const btnRank = document.getElementById('admin-godtab-btn-ranking');
+    const isDaily = tab === 'daily';
+
+    if (dailyBox) dailyBox.style.display = isDaily ? '' : 'none';
+    if (rankBox) rankBox.style.display = isDaily ? 'none' : 'flex';
+    if (btnDaily) { btnDaily.style.background = isDaily ? 'rgba(250,204,21,0.12)' : 'transparent'; btnDaily.style.color = isDaily ? '#facc15' : 'rgba(255,255,255,0.5)'; }
+    if (btnRank) { btnRank.style.background = isDaily ? 'transparent' : 'rgba(250,204,21,0.12)'; btnRank.style.color = isDaily ? 'rgba(255,255,255,0.5)' : '#facc15'; }
+
+    if (!isDaily) initAdminVisitRankingTab();
+  };
+
+  let adminVisitCurrentBiz = '';
+  let adminVisitData = null;
+  let adminVisitRenderedList = null; // 目前畫面上實際渲染(已排序)的清單，供下探時對應正確 index
+
+  function initAdminVisitRankingTab() {
+    const chipsBox = document.getElementById('admin-visit-biz-chips');
+    if (!chipsBox) return;
+    if (chipsBox.dataset.inited === '1') return; // 只需初始化一次
+    chipsBox.dataset.inited = '1';
+    // 客戶到訪紀錄固定只看謝博皓／潘右森／陳勁多三人，高弘治不在此列
+    const list = ['謝博皓', '潘右森', '陳勁多'];
+    chipsBox.innerHTML = list.map(name => `
+      <button class="admin-visit-biz-chip" data-name="${name}" onclick="adminVisitSelectBiz('${name}')"
+              style="border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.65);
+                     border-radius:18px; padding:8px 18px; font-size:14px; font-weight:800; cursor:pointer;">${name}</button>
+    `).join('');
+  }
+
+  const adminVisitClientCache = {}; // 業務名 → 已抓取過的 customers 陣列，切回去不用再打後端
+  window.adminVisitSelectBiz = function (name, forceRefresh) {
+    adminVisitCurrentBiz = name;
+    document.querySelectorAll('.admin-visit-biz-chip').forEach(el => {
+      const on = el.getAttribute('data-name') === name;
+      el.style.background = on ? 'rgba(250,204,21,0.15)' : 'rgba(255,255,255,0.05)';
+      el.style.borderColor = on ? '#facc15' : 'rgba(255,255,255,0.25)';
+      el.style.color = on ? '#facc15' : 'rgba(255,255,255,0.65)';
+    });
+
+    const box = document.getElementById('admin-visit-ranking-content');
+
+    // 🚀 本次網頁工作階段內已抓過就直接重繪，不再打後端（切換業務不用重讀）
+    if (!forceRefresh && adminVisitClientCache[name]) {
+      adminVisitData = adminVisitClientCache[name];
+      renderAdminVisitRanking();
+      return;
+    }
+
+    box.innerHTML = '<div style="text-align:center; opacity:0.4; padding:40px 0; font-size:13px;">載入中…</div>';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (!res || !res.success) {
+          box.innerHTML = `<div style="text-align:center; color:#fca5a5; padding:40px 0; font-size:13px;">載入失敗：${res ? res.msg : '無回應'}</div>`;
+          return;
+        }
+        adminVisitData = res.customers || [];
+        adminVisitClientCache[name] = adminVisitData;
+        renderAdminVisitRanking();
+      })
+      .withFailureHandler(function (err) {
+        box.innerHTML = `<div style="text-align:center; color:#fca5a5; padding:40px 0; font-size:13px;">錯誤：${err}</div>`;
+      })
+      .getCustomerVisitRanking(name);
+  };
+
+  const FW_TAG_LABELS_ = { '送貨': '送貨', '樣': '送樣', '帳': '對帳', '上': '上架', '下': '下架', '巡': '巡視', '版': '版面更新', '退': '退貨', '聊': '聊天' };
+  const FW_TAG_COLORS_FRONT_ = { '送貨': '#facc15', '樣': '#f87171', '帳': '#60a5fa', '上': '#4ade80', '下': '#4ade80', '巡': '#2dd4bf', '版': '#a78bfa', '退': '#facc15', '聊': '#c084fc' };
+  const FW_TAG_ORDER_FRONT_ = ['送貨', '樣', '帳', '上', '下', '巡', '版', '退', '聊'];
+
+  // 🔀 排序：到訪次數 / 上次到訪天數（各自可升冪、降冪）
+  let adminVisitSortField = 'visitCount';
+  let adminVisitSortDir = 'desc';
+  window.adminVisitSetSort = function (field) {
+    if (adminVisitSortField === field) {
+      adminVisitSortDir = (adminVisitSortDir === 'desc') ? 'asc' : 'desc';
+    } else {
+      adminVisitSortField = field;
+      adminVisitSortDir = 'desc';
+    }
+    renderAdminVisitRanking();
+  };
+
+  function renderAdminVisitSortBar() {
+    const mkBtn = (field, label) => {
+      const active = adminVisitSortField === field;
+      const arrow = active ? (adminVisitSortDir === 'desc' ? ' ↓' : ' ↑') : '';
+      return `<button onclick="adminVisitSetSort('${field}')"
+                style="border:1px solid ${active ? '#facc15' : 'rgba(255,255,255,0.25)'}; background:${active ? 'rgba(250,204,21,0.15)' : 'rgba(255,255,255,0.05)'};
+                       color:${active ? '#facc15' : 'rgba(255,255,255,0.6)'}; border-radius:16px; padding:6px 14px; font-size:12.5px; font-weight:800; cursor:pointer;">${label}${arrow}</button>`;
+    };
+    return `<div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+      ${mkBtn('visitCount', '到訪次數')}
+      ${mkBtn('daysSince', '上次到訪天數')}
+      ${mkBtn('salesYear', '業績')}
+      ${mkBtn('avgPerVisit', '每次到訪業績')}
+    </div>`;
+  }
+
+  function renderAdminVisitRanking() {
+    const box = document.getElementById('admin-visit-ranking-content');
+    if (!adminVisitData || !adminVisitData.length) {
+      box.innerHTML = renderAdminVisitSortBar() + '<div style="text-align:center; opacity:0.35; padding:40px 0; font-size:13px;">此業務目前尚無到訪紀錄</div>';
+      return;
+    }
+    const sorted = adminVisitData.slice().sort((a, b) => {
+      const dir = adminVisitSortDir === 'desc' ? -1 : 1;
+      const av = a[adminVisitSortField] || 0, bv = b[adminVisitSortField] || 0;
+      return (av - bv) * dir;
+    });
+    adminVisitRenderedList = sorted;
+    const maxCount = Math.max.apply(null, sorted.map(c => c.visitCount)) || 1;
+
+    box.innerHTML = renderAdminVisitSortBar() + sorted.map((c, i) => {
+      const barPct = Math.max(4, Math.round(c.visitCount / maxCount * 100));
+      const statsLine = Object.keys(c.tagCounts || {})
+        .filter(t => c.tagCounts[t] > 0)
+        .map(t => `<span style="color:${FW_TAG_COLORS_FRONT_[t]}; font-weight:800;">${FW_TAG_LABELS_[t]} ${c.tagCounts[t]}次</span>`)
+        .join('<span style="opacity:0.25;"> · </span>');
+
+      // ⚠️ 超過 30 天沒到訪才顯示提醒
+      const stale = c.daysSince !== null && c.daysSince > 30;
+      const staleTag = stale
+        ? `<div style="font-size:11.5px; font-weight:800; color:#f87171; background:rgba(248,113,113,0.1); border:1px solid rgba(248,113,113,0.3); border-radius:8px; padding:3px 8px;">${c.lastVisitDisplay} ${c.daysSince}天</div>`
+        : '';
+
+      // 📅 每月一排的逐日格子（只計工作日，週末拿掉騰出空間）：格子依當天活動類型上色，可點擊看明細
+      const dayGridHtml = (() => {
+        const oneYearAgo = new Date(Date.now() - 365 * 86400000);
+        const visitedDays = {}; // 'yyyy-MM' -> Map(day number -> {di, color})
+        (c.dates || []).forEach((d, di) => {
+          const dt = new Date(d.date);
+          if (dt < oneYearAgo) return;
+          const key = d.date.slice(0, 7);
+          const day = parseInt(d.date.slice(8, 10), 10);
+          const color = (d.badges && d.badges.length) ? d.badges[0].color : '#facc15';
+          if (!visitedDays[key]) visitedDays[key] = new Map();
+          visitedDays[key].set(day, { di, color });
+        });
+        const monthKeys = Object.keys(visitedDays).sort();
+        if (!monthKeys.length) return '';
+        return `
+        <div style="margin-bottom:12px;">
+          <div style="font-size:11px; opacity:0.4; margin-bottom:6px; letter-spacing:1px;">近一年逐日到訪（點格子看當天明細）</div>
+          <div style="display:flex; flex-direction:column; gap:5px;">
+            ${monthKeys.map(key => {
+              const map = visitedDays[key];
+              const y = parseInt(key.slice(0, 4), 10), m = parseInt(key.slice(5, 7), 10);
+              const monthLabel = m + '月';
+              const daysInMonth = new Date(y, m, 0).getDate();
+              const cells = [];
+              for (let d = 1; d <= daysInMonth; d++) {
+                const dow = new Date(y, m - 1, d).getDay();
+                if (dow === 0 || dow === 6) continue; // 拿掉假日，格子可以放寬
+                const hitInfo = map.get(d);
+                const hit = !!hitInfo;
+                cells.push(`<span title="${monthLabel}${d}日"${hit ? ` onclick="event.stopPropagation(); adminVisitToggleDate(${i}, ${hitInfo.di})"` : ''}
+                  style="width:11px; height:11px; border-radius:3px; background:${hit ? hitInfo.color : 'rgba(255,255,255,0.08)'}; ${hit ? 'cursor:pointer;' : ''}"></span>`);
+              }
+              return `
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div style="width:24px; font-size:10.5px; opacity:0.5; flex-shrink:0;">${monthLabel}</div>
+                <div style="display:flex; flex-wrap:wrap; gap:3px; flex:1;">${cells.join('')}</div>
+                <div style="width:26px; font-size:10.5px; font-weight:800; color:#facc15; text-align:right; flex-shrink:0;">${map.size}次</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      })();
+
+      return `
+      <div class="admin-visit-cust-card" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:14px 16px; margin-bottom:10px;">
+        <div style="position:relative; border-radius:10px; overflow:hidden; margin:-6px -8px; padding:6px 8px;">
+        <div style="position:absolute; left:0; top:0; bottom:0; width:${barPct}%; background:linear-gradient(90deg, rgba(250,204,21,0.16), rgba(250,204,21,0.03)); z-index:0; border-radius:10px;"></div>
+        <div style="position:relative; z-index:1; display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="adminVisitToggleCust(${i})">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:26px; height:26px; border-radius:50%; background:${i === 0 ? 'rgba(250,204,21,0.2)' : 'rgba(255,255,255,0.08)'}; color:${i === 0 ? '#facc15' : 'rgba(255,255,255,0.5)'}; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:900;">${i + 1}</div>
+            <div style="font-size:16px; font-weight:800; color:#fff;">${c.name}</div>
+            ${(c.salesYear !== undefined) ? `<div style="font-size:11.5px; font-weight:700; opacity:0.75; white-space:nowrap;">今日${c.salesToday}萬・當月${c.salesMonth}萬・年度${c.salesYear}萬</div>` : ''}
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            ${staleTag}
+            <div style="font-size:13px; font-weight:900; color:#facc15; background:rgba(250,204,21,0.1); border:1px solid rgba(250,204,21,0.25); border-radius:8px; padding:4px 10px;">${c.visitCount} 次到訪</div>
+            <div id="admin-visit-arrow-${i}" style="opacity:0.4; font-size:12px; transition:transform 0.2s;">▾</div>
+          </div>
+        </div>
+        </div>
+        <div id="admin-visit-dates-${i}" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+          ${dayGridHtml}
+          ${statsLine ? `<div style="font-size:12px; margin-bottom:10px;">${statsLine}</div>` : ''}
+          <div id="admin-visit-detail-${i}" style="display:none; margin-top:10px;"></div>
+        </div>
+      </div>
+    `;
+    }).join('');
+  }
+
+  window.adminVisitToggleCust = function (i) {
+    const el = document.getElementById('admin-visit-dates-' + i);
+    const arrow = document.getElementById('admin-visit-arrow-' + i);
+    if (!el) return;
+    const show = el.style.display === 'none';
+    el.style.display = show ? 'block' : 'none';
+    if (arrow) arrow.style.transform = show ? 'rotate(180deg)' : 'rotate(0deg)';
+  };
+
+  window.adminVisitToggleDate = function (custIdx, dateIdx) {
+    const c = adminVisitRenderedList[custIdx];
+    const d = c.dates[dateIdx];
+    const detailBox = document.getElementById('admin-visit-detail-' + custIdx);
+    if (!detailBox) return;
+
+    // 再次點同一天 → 收合
+    if (detailBox.dataset.activeDate === String(dateIdx) && detailBox.style.display === 'block') {
+      detailBox.style.display = 'none';
+      detailBox.dataset.activeDate = '';
+      return;
+    }
+
+    detailBox.innerHTML =
+      `<div style="font-size:12.5px; font-weight:900; color:#facc15; margin-bottom:8px;">${d.dateDisplay || d.date}</div>`
+      + d.items.map(v => `
+      <div style="display:flex; gap:10px; background:rgba(0,0,0,0.2); border-radius:10px; padding:10px 12px; margin-bottom:6px;">
+        <div style="color:#facc15; font-family:monospace; font-weight:900; font-size:13px; min-width:42px;">${v.time}</div>
+        <div style="flex:1;">
+          <div style="color:#fff; font-weight:700; font-size:13px;">${v.summary || '（無摘要）'}</div>
+          ${v.detail ? `<div style="color:rgba(255,255,255,0.5); font-size:11.5px; margin-top:3px;">${String(v.detail).replace(/\n/g, '<br>')}</div>` : ''}
+        </div>
+      </div>
+    `).join('');
+    detailBox.style.display = 'block';
+    detailBox.dataset.activeDate = String(dateIdx);
+  };
+
+  window.openAdminGodView = function (selectedDate) {
+    showPage('page-admin-godview');
+    showLoading(true, true);
+
+    const dateEl = document.getElementById('admin-god-date');
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+    const targetDate = selectedDate || yesterdayStr;
+
+    if (dateEl) dateEl.value = targetDate;
+
+    google.script.run
+      .withFailureHandler(function (err) {
+        showLoading(false);
+        showToast("系統連線異常，請重試", "error");
+        document.getElementById('admin-godview-content').innerHTML = `<div style='text-align:center; padding:20px; opacity:0.5;'>載入逾時，請點擊返回鍵重試。</div>`;
+      })
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          // 🚀 強制將日期選取器的數值同步為後端動態抓取的日期
+          if (dateEl && res.chosenDate) {
+            dateEl.value = res.chosenDate;
+          }
+          renderAdminGodView(res.data);
+        } else {
+          showToast("抓取資料失敗：" + res.msg, "error");
+        }
+      })
+      .getAllSalesDailyReports(targetDate);
+  };
+
+  function renderAdminGodView(reports) {
+    const container = document.getElementById('admin-godview-content');
+    if (!reports || reports.length === 0) {
+      container.innerHTML = '<div style="text-align:center; opacity:0.3; margin-top:50px;">目前尚無任何業務資料</div>';
+      return;
+    }
+
+    // 📐 響應式排版：畫面夠寬（平板/桌機）時三欄並排一次看三人，手機窄螢幕自動退回單欄堆疊
+    let html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:15px; padding:10px 15px 15px;">';
+    reports.forEach(r => {
+      // 🚀 極簡化介面：僅保留業務名稱與當日到訪記錄列表
+      let visitsHtml = '';
+      if (r.visits && r.visits.length > 0) {
+        visitsHtml = r.visits.map(v => `
+        <div style="display:flex; gap:12px; margin-bottom:8px; background:rgba(0,0,0,0.15); padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,0.03);">
+          <div style="color:#facc15; font-family:monospace; font-weight:900; font-size:15px; min-width:45px;">${v.time}</div>
+          <div style="flex:1;">
+            <div style="color:#fff; font-weight:700; font-size:15px; margin-bottom:2px;">${v.customer}</div>
+            <div style="color:rgba(255,255,255,0.7); font-size:13px;">${v.summary}</div>
+            ${v.detail ? `<div style="color:rgba(255,255,255,0.4); font-size:11px; margin-top:4px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:4px;">${v.detail.replace(/\n/g, '<br>')}</div>` : ''}
+          </div>
+        </div>
+      `).join('');
+      } else {
+        visitsHtml = '<div style="text-align:center; padding:25px; opacity:0.25; font-size:13px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">尚無拜訪紀錄</div>';
+      }
+
+      // 🖥️ 下半部：今日電腦指派的行程（業務配送清單，不論業務是否已手動記錄拜訪）
+      const fwTaskColors = { '送貨': '#4ade80', '樣品': '#facc15', '入店': '#60a5fa', '退貨': '#f87171' };
+      let assignedHtml = '';
+      if (r.assignedTasks && r.assignedTasks.length > 0) {
+        assignedHtml = r.assignedTasks.map(t => {
+          const tColor = fwTaskColors[t.shippingType] || '#c084fc';
+          return `
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:6px; background:rgba(0,0,0,0.15); padding:9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.03);">
+            <span style="font-size:11px; font-weight:800; color:${tColor}; min-width:34px;">${t.shippingType}</span>
+            <span style="flex:1; color:#fff; font-size:13px;">${t.customer}${t.address ? `<span style="color:rgba(255,255,255,0.35); font-size:11px;"> ${t.address}</span>` : ''}</span>
+            <span style="font-size:11px; font-weight:700; color:${t.isFinished ? '#4ade80' : 'rgba(255,255,255,0.4)'};">${t.status}</span>
+          </div>
+        `;
+        }).join('');
+      } else {
+        assignedHtml = '<div style="text-align:center; padding:14px; opacity:0.2; font-size:12px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">今日無電腦指派任務</div>';
+      }
+
+      html += `
+      <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:16px; padding:16px; box-shadow:0 4px 12px rgba(0,0,0,0.2); min-width:0;">
+        <div style="margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05);">
+          <span style="font-size:17px; font-weight:800; color:#fff;">${r.employeeName}</span>
+          <span style="float:right; font-size:12px; font-weight:600; background:${r.visitCount > 0 ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)'}; color:${r.visitCount > 0 ? '#4ade80' : '#888'}; padding:3px 8px; border-radius:6px;">${r.visitCount} 家</span>
+        </div>
+        <div class="admin-visit-list" style="max-height:70vh; overflow-y:auto;">
+          ${visitsHtml}
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.08);">
+          <div style="font-size:11px; font-weight:800; color:#c084fc; margin-bottom:8px; opacity:0.8;">🖥 今日行程（電腦指派）</div>
+          <div>${assignedHtml}</div>
+        </div>
+      </div>
+    `;
+    });
+    html += '</div>';
+
+    container.innerHTML = html;
+  }
+
+  /**
+   * 📜 讀取業務員 5 日歷史
+   */
+  window.loadSalesHistory = function (name) {
+    showLoading(true, true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          renderAdminHistory(res.employeeName, res.history);
+        } else {
+          showToast("❌ 無法讀取歷史: " + res.msg);
+        }
+      })
+      .getSalesHistoryReport(name, 5);
+  };
+
+  function renderAdminHistory(name, history) {
+    const title = document.getElementById('admin-history-title');
+    const content = document.getElementById('admin-history-content');
+
+    if (title) title.innerText = `${name} 拜訪歷史 (近 5 日)`;
+
+    if (!history || history.length === 0) {
+      content.innerHTML = '<div style="text-align:center; padding:40px; opacity:0.4;">近期尚無拜訪紀錄</div>';
+    } else {
+      let html = '';
+      history.forEach(day => {
+        html += `
+        <div class="admin-history-day">
+          <div class="admin-history-date">${day.date}</div>
+          <div class="fw-timeline">
+      `;
+        day.logs.forEach(log => {
+          html += `
+          <div class="fw-timeline-item" style="padding-bottom:15px;">
+            <div class="fw-timeline-dot"></div>
+            <div class="fw-timeline-time">${log.time}</div>
+            <div class="fw-timeline-card">
+              <div class="fw-timeline-customer">${log.customer}</div>
+              <div class="fw-timeline-summary" style="color:#4ade80;">任務: ${log.summary}</div>
+              <div class="fw-timeline-detail" style="opacity:0.6; font-size:11px;">${log.detail || '(無詳細內容)'}</div>
+            </div>
+          </div>
+        `;
+        });
+        html += `</div></div>`;
+      });
+      content.innerHTML = html;
+    }
+
+    document.getElementById('admin-history-modal').style.display = 'flex';
+  }
+
+  window.closeAdminHistory = function () {
+    document.getElementById('admin-history-modal').style.display = 'none';
+  };
+
+
+  // ===== 🔧 保養邏輯 Maintenance Logic =====
+
+  const fwMaintItems = [
+    '機油', '變速箱油', '方向機油', '水箱水', '電瓶',
+    '前輪碟盤', '後輪碟盤', '前輪來令片', '後輪來令片',
+    '空氣濾芯', '冷氣濾網', '右前輪胎', '右後輪胎', '左前輪胎', '左後輪胎',
+    '火星塞', '皮帶'
+  ];
+  let fwMaintPhotos = [null, null, null];
+
+  /** 載入保養分頁數據 */
+  window.loadMaintenanceTabData = function () {
+    if (!state.currentSales) return;
+    const plate = document.getElementById('maint-plate-number').value;
+    const grid = document.getElementById('fw-maint-grid');
+    grid.innerHTML = '<div style="grid-column: span 2; text-align:center; opacity:0.5;">載入歷史資料中...</div>';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success) {
+          let html = '';
+          fwMaintItems.forEach(item => {
+            const lastDate = res.history[item] || '尚未記錄';
+            html += `
+            <label class="fw-maint-item" style="display: flex; flex-direction: column; cursor: pointer;">
+              <div class="fw-maint-item-top">
+                <input type="checkbox" name="maint-item" value="${item}">
+                <span style="font-weight:700;">${item}</span>
+              </div>
+              <span class="last-date">上次: ${lastDate}</span>
+            </label>
+          `;
+          });
+          grid.innerHTML = html;
+
+          // 預設今日日期
+          const today = new Date();
+          const dateStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+          document.getElementById('maint-date').value = dateStr;
+
+          // 預填上一次的備註
+          if (res.lastNote) document.getElementById('maint-note').value = res.lastNote;
+
+          // 🚗 車輛優先級：如果已經有預設綁定車輛了，就不要被歷史紀錄覆蓋
+          const plateInput = document.getElementById('maint-plate-number');
+          if (plateInput && !plateInput.value && res.lastPlate) {
+            plateInput.value = res.lastPlate;
+          }
+        }
+      })
+      .getMaintenanceHistory(state.currentSales, plate);
+  };
+
+  /** 開啟保養歷史 Modal */
+  window.openMaintHistory = function () {
+    const plate = document.getElementById('maint-plate-number').value;
+    const modal = document.getElementById('modal-maint-history');
+    modal.style.display = 'block';
+    const list = document.getElementById('maint-history-list');
+    list.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入歷史中...</div>';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success && res.list.length > 0) {
+          let html = '';
+          res.list.forEach(h => {
+            html += `
+            <div style="background:rgba(255,255,255,0.05); padding:12px; border-radius:8px; margin-bottom:10px; border-left:4px solid #4ade80;">
+              <div style="display:flex; justify-content:space-between; font-weight:bold; margin-bottom:4px;">
+                <span>${h.date}</span>
+                <span style="color:#4ade80;">$${h.amount}</span>
+              </div>
+              <div style="font-size:12px; opacity:0.8; margin-bottom:4px;">
+                車牌: ${h.plate} | 里程: ${h.mileage} km
+              </div>
+              <div style="font-size:13px; margin-bottom:4px;">
+                項目: ${h.items}
+              </div>
+              ${h.photos && h.photos.length > 0 ? `
+                <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                  ${h.photos.map(url => `
+                    <a href="${url}" target="_blank">
+                      <img src="${url}" style="width:70px; height:70px; border-radius:8px; object-fit:cover; border:1px solid rgba(255,255,255,0.2);">
+                    </a>
+                  `).join('')}
+                </div>
+              ` : ''}
+              ${h.note ? `<div style="font-size:12px; color:#fbbf24; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">註: ${h.note}</div>` : ''}
+            </div>
+          `;
+          });
+          list.innerHTML = html;
+        } else {
+          list.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">暫無紀錄</div>';
+        }
+      })
+      .getFullMaintenanceHistory(state.currentSales, plate);
+  };
+
+  window.closeMaintHistory = function () {
+    document.getElementById('modal-maint-history').style.display = 'none';
+  };
+
+  /** 點擊照片槽位 */
+  window.clickMaintPhoto = function (idx) {
+    document.getElementById(`maint-file-${idx}`).click();
+  };
+
+  /** 處理照片選擇 (增加壓縮邏輯) */
+  window.handleMaintFile = function (input, idx) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+    const reader = new FileReader();
+
+    reader.onload = function (e) {
+      const img = new Image();
+      img.onload = function () {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // 限制最大長邊為 1024px
+        const maxDim = 1024;
+        if (width > height) {
+          if (width > maxDim) { height *= maxDim / width; width = maxDim; }
+        } else {
+          if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // 壓縮為 JPEG，品質 0.7
+        const compressedData = canvas.toDataURL('image/jpeg', 0.7);
+
+        document.getElementById(`maint-img-${idx}`).src = compressedData;
+        document.getElementById(`maint-img-${idx}`).style.display = 'block';
+        document.getElementById(`maint-txt-${idx}`).style.display = 'none';
+
+        fwMaintPhotos[idx] = {
+          contents: compressedData,
+          mimeType: 'image/jpeg',
+          name: file.name
+        };
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  /** 提交保養紀錄 */
+  window.submitFwMaintenance = function () {
+    const date = document.getElementById('maint-date').value;
+    const mileage = document.getElementById('maint-mileage').value;
+    const nextMileage = document.getElementById('maint-next-mileage').value;
+    const note = document.getElementById('maint-note').value;
+    const plate = document.getElementById('maint-plate-number').value;
+    const amount = document.getElementById('maint-amount').value;
+
+    const checkedItems = [];
+    document.querySelectorAll('input[name="maint-item"]:checked').forEach(cb => {
+      checkedItems.push(cb.value);
+    });
+
+    const customItem = document.getElementById('maint-custom').value.trim();
+    if (customItem) checkedItems.push(customItem);
+
+    if (!date) { showToast('請選擇保養日期'); return; }
+    if (!plate) { showToast('請填寫車牌號碼'); return; }
+    if (!mileage) { showToast('請填寫目前里程'); return; }
+    if (!amount) { showToast('請填寫保養金額'); return; }
+    if (checkedItems.length === 0 && !note) { showToast('請至少勾選一項保養項目或填寫備註'); return; }
+
+    showLoading(true, true);
+    google.script.run
+      .withFailureHandler(function (err) {
+        showLoading(false);
+        showToast('❌ 儲存失敗，請稍後再試');
+      })
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res.success) {
+          showToast('保養紀錄已儲存');
+          // 重置表單
+          document.getElementById('maint-mileage').value = '';
+          document.getElementById('maint-next-mileage').value = '';
+          document.getElementById('maint-amount').value = '';
+          document.getElementById('maint-note').value = '';
+          document.getElementById('maint-custom').value = '';
+          fwMaintPhotos = [null, null, null];
+          for (let i = 0; i < 3; i++) {
+            document.getElementById(`maint-img-${i}`).style.display = 'none';
+            document.getElementById(`maint-txt-${i}`).style.display = 'block';
+          }
+          switchFwTab('fw-log', document.querySelectorAll('.fw-tab')[0]);
+        } else {
+          alert('儲存失敗: ' + res.msg);
+        }
+      })
+      .saveMaintenanceRecord({
+        employeeName: state.currentSales,
+        plateNumber: plate,
+        mileage: mileage,
+        nextMileage: nextMileage,
+        items: checkedItems.join('、'),
+        amount: amount,
+        note: note,
+        photos: fwMaintPhotos
+      });
+  };
+
+  /**
+   * 🗓️ 開啟打卡歷史彈窗
+   */
+  window.openAttendanceHistory = function () {
+    const modal = document.getElementById('modal-attendance-history');
+    modal.style.display = 'block';
+    const list = document.getElementById('attendance-history-list');
+    list.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入中...</div>';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res.success) {
+          if (!res.list || res.list.length === 0) {
+            list.innerHTML = '<div style="text-align:center; padding:30px; opacity:0.5;">本月尚無打卡紀錄</div>';
+            return;
+          }
+
+          let html = '';
+          res.list.forEach(item => {
+            const isLate = item.status === '遲到';
+            const isOut = item.type.includes('下班');
+            const statusColor = isOut ? '#94a3b8' : (isLate ? '#f87171' : '#4ade80');
+
+            html += `
+            <div style="background:rgba(255,255,255,0.05); padding:12px; border-radius:8px; margin-bottom:10px; border-left:4px solid ${statusColor};">
+              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                <span style="font-weight:bold;">${item.date} ${item.type}</span>
+                <span style="font-size:12px; color:${statusColor}">${item.status || ''}</span>
+              </div>
+              <div style="font-size:16px; color:#fff; font-family:monospace; margin-bottom:4px;">
+                ${item.time}
+              </div>
+              <div style="font-size:12px; opacity:0.6;">
+                ${item.remark || ''}
+              </div>
+            </div>
+          `;
+          });
+          list.innerHTML = html;
+        }
+      })
+      .getAttendanceReport(state.currentSales);
+  };
+
+
+
+
+  /**
+   * 🔐 驗證全知視角密碼
+   */
+  window.verifyOmniPwd = function () {
+    const pwdInput = document.getElementById('fw-omni-pwd');
+    const pwd = pwdInput.value;
+    // 🚀 預設管理員密碼：3220
+    if (pwd === '3220') {
+      document.getElementById('fw-omni-auth').style.display = 'none';
+      document.getElementById('fw-omni-real-content').style.display = 'block';
+      refreshOmniscientView();
+    } else {
+      showToast('🔐 密碼錯誤', 'error');
+      pwdInput.value = '';
+      pwdInput.focus();
+    }
+  };
+
+  /**
+   * 👁️ 刷新全知視角 (一次看三/多個業務日誌)
+   */
+  window.refreshOmniscientView = function (dateStr) {
+    const container = document.getElementById('fw-omni-container');
+    const dateInput = document.getElementById('fw-omni-date');
+
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const yStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+    const targetDate = dateStr || yStr;
+
+    if (dateInput) dateInput.value = targetDate;
+
+    showFwLoading(true, '正在啟動全知視角...');
+
+    google.script.run
+      .withFailureHandler(function (err) {
+        showFwLoading(false);
+        container.innerHTML = `<div style="text-align:center; color:#ff4d4d; padding:20px;">讀取逾時或連線中斷，請點擊日期重試</div>`;
+      })
+      .withSuccessHandler(function (res) {
+        showFwLoading(false);
+        if (res.success) {
+          let html = '';
+          res.results.forEach(user => {
+            const isActive = user.logs && user.logs.length > 0;
+            html += `
+            <div class="fw-omni-user-card">
+              <div class="fw-omni-user-header">
+                <div class="fw-omni-user-name">
+                  ${user.name}
+                </div>
+                <div class="fw-omni-user-status" style="background:${isActive ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.05)'}; color:${isActive ? '#4ade80' : 'rgba(255,255,255,0.4)'}">
+                  ${isActive ? '工作中' : '待機中'}
+                </div>
+              </div>
+
+              <!-- 📊 數據面板 (3欄) -->
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:20px;">
+                <div style="background:rgba(0,0,0,0.3); padding:12px 8px; border-radius:16px; text-align:center; border:1px solid rgba(255,255,255,0.05);">
+                  <div style="font-size:10px; opacity:0.4; margin-bottom:4px; font-weight:700;">今日拜訪</div>
+                  <div style="font-size:18px; font-weight:900; color:#fff;">${user.stats.visitCount}</div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3); padding:12px 8px; border-radius:16px; text-align:center; border:1px solid rgba(255,255,255,0.05);">
+                  <div style="font-size:10px; opacity:0.4; margin-bottom:4px; font-weight:700;">里程 (km)</div>
+                  <div style="font-size:18px; font-weight:900; color:#fff;">${user.stats.distance}</div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3); padding:12px 8px; border-radius:16px; text-align:center; border:1px solid rgba(255,255,255,0.05);">
+                  <div style="font-size:10px; opacity:0.4; margin-bottom:4px; font-weight:700;">上班時間</div>
+                  <div style="font-size:18px; font-weight:900; color:#4ade80;">${user.stats.checkin}</div>
+                </div>
+              </div>
+              
+              <div style="font-size:11px; font-weight:800; color:#facc15; margin-bottom:10px; opacity:0.8;">今日行程摘要</div>
+              <div class="fw-omni-log-list">
+                ${user.logs.length > 0 ? user.logs.map(log => `
+                  <div class="fw-omni-log-item">
+                    <div class="fw-omni-log-time">${log.time}</div>
+                    <div class="fw-omni-log-content">
+                      <div class="fw-omni-log-customer">${log.customer}</div>
+                      <div class="fw-omni-log-summary">${log.summary}</div>
+                      ${log.detail ? `<div style="font-size:11px; opacity:0.4; margin-top:4px; padding-top:4px; border-top:1px dashed rgba(255,255,255,0.05);">${log.detail.replace(/\n/g, '<br>')}</div>` : ''}
+                    </div>
+                  </div>
+                `).join('') : '<div style="text-align:center; opacity:0.2; font-size:12px; padding:30px; border:1px dashed rgba(255,255,255,0.1); border-radius:16px;">今日尚無日誌</div>'}
+              </div>
+
+              <div style="margin-top:20px; border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
+                <button class="btn-glass-sm" onclick="loadSalesHistory('${user.name}')">
+                  📜 查看 <span>最近 5 日</span> 拜訪歷史
+                </button>
+              </div>
+            </div>
+          `;
+          });
+          container.innerHTML = html;
+        } else {
+          container.innerHTML = `<div style="text-align:center; color:#ff4d4d; padding:20px;">${res.msg}</div>`;
+        }
+      })
+      .getOmniscientLogs(targetDate);
+  };
+</script>
