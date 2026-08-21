@@ -12,6 +12,9 @@
     summary: null
   };
 
+  // 📌 近期行駛/加油紀錄快取（供編輯彈窗取用，2026-08）
+  var fwDrivingLogs = [];
+
   /**
    * 📊 使用頻率統計（客戶名稱／工作概況：越常選越排前面，各業務各自獨立記憶於本機）
    */
@@ -581,6 +584,12 @@
     const customer = customerInput ? customerInput.value.trim() : "";
     if (!customer) { showToast('請輸入客戶名稱'); return; }
 
+    // 🚫 線上截圖還在上傳中就送出的話，這次存檔會漏掉照片網址；擋住並提示稍後再試
+    if (window._fwPendingPhotoUploads > 0) {
+      showToast('圖片上傳中，請稍候幾秒再儲存');
+      return;
+    }
+
     const isBackToCompany = (customer === '回公司(永安)');
     const taskItems = document.querySelectorAll('#fw-task-list .fw-task-item');
     if (taskItems.length === 0) { showToast('請新增至少一筆任務'); return; }
@@ -845,13 +854,17 @@
       chip.innerHTML = '<div class="fw-online-photo-loading">上傳中</div>';
       if (previewBox) previewBox.appendChild(chip);
 
+      window._fwPendingPhotoUploads = (window._fwPendingPhotoUploads || 0) + 1;
+
       fwCompressImageFile_(file, function (dataUrl) {
         const base64 = dataUrl.split(',')[1];
         google.script.run
           .withFailureHandler(function () {
+            window._fwPendingPhotoUploads = Math.max(0, (window._fwPendingPhotoUploads || 1) - 1);
             chip.innerHTML = '<div class="fw-online-photo-fail">上傳失敗</div>';
           })
           .withSuccessHandler(function (res) {
+            window._fwPendingPhotoUploads = Math.max(0, (window._fwPendingPhotoUploads || 1) - 1);
             if (res && res.success) {
               item._onlinePhotoUrls.push(res.url);
               chip.innerHTML = `<img src="${dataUrl}" class="fw-online-photo-thumb">` +
@@ -1132,6 +1145,7 @@
     google.script.run
       .withSuccessHandler(function (res) {
         if (res.success && res.logs.length > 0) {
+          fwDrivingLogs = res.logs; // 供編輯彈窗取用
           // 過濾出有加油金額或加油公升的紀錄
           const fuelLogs = res.logs.filter(log => (parseFloat(log.fuelAmt) > 0 || parseFloat(log.fuelLiters) > 0));
           if (fuelLogs.length > 0) {
@@ -1149,6 +1163,9 @@
                 </div>
                 <div style="font-size:16px; color:#fff; font-weight:700; margin-bottom:5px;">${litersAndAmt}</div>
                 ${log.note ? `<div style="font-size:12px; opacity:0.7; line-height:1.4; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1);">📝 ${log.note}</div>` : ''}
+                <div style="display:flex; gap:10px; margin-top:12px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.12);">
+                  <button style="flex:1; padding:8px 0; border:none; border-radius:8px; background:rgba(56,189,248,0.15); color:#38bdf8; font-size:13px; font-weight:700; cursor:pointer;" onclick="openEditDriving(${log.row})">✏️ 編輯</button>
+                </div>
               </div>
             `;
             });
@@ -1347,6 +1364,7 @@
     google.script.run
       .withSuccessHandler(function (res) {
         if (res.success && res.logs.length > 0) {
+          fwDrivingLogs = res.logs; // 供編輯彈窗取用
           let html = '';
           res.logs.forEach(log => {
             html += `
@@ -1358,6 +1376,9 @@
               <div style="font-size:13px; color:#4ade80; margin-bottom:5px; font-weight:700;">${log.dist} km (${log.start} → ${log.end})</div>
               <div style="font-size:12px; opacity:0.7; line-height:1.4;">${log.route || '無詳細行程'}</div>
               ${log.fuelAmt ? `<div style="font-size:11px; color:#fbbf24; margin-top:5px;">⛽ 加油金額: $${log.fuelAmt}</div>` : ''}
+              <div style="display:flex; gap:10px; margin-top:12px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.12);">
+                <button style="flex:1; padding:8px 0; border:none; border-radius:8px; background:rgba(56,189,248,0.15); color:#38bdf8; font-size:13px; font-weight:700; cursor:pointer;" onclick="openEditDriving(${log.row})">✏️ 編輯</button>
+              </div>
             </div>
           `;
           });
@@ -1367,6 +1388,99 @@
         }
       })
       .getDrivingHistory(state.currentSales);
+  };
+
+  /**
+   * ✏️ 開啟編輯行駛/加油紀錄彈窗 (2026-08)
+   */
+  window.openEditDriving = function (row) {
+    const log = (fwDrivingLogs || []).find(x => Number(x.row) === Number(row));
+    if (!log) {
+      if (typeof showToast === 'function') showToast("找不到該筆紀錄", "error");
+      return;
+    }
+    document.getElementById('edit-drv-row').value = log.row;
+    const dateInput = document.getElementById('edit-drv-date');
+    const dateStr = (log.date || '').split(' ')[0];
+    if (dateInput) dateInput.value = dateStr || '';
+    const plateEl = document.getElementById('edit-drv-plate');
+    if (plateEl) plateEl.value = log.plate || '';
+    const startEl = document.getElementById('edit-drv-start');
+    if (startEl) startEl.value = (parseFloat(log.start) || 0) || '';
+    const endEl = document.getElementById('edit-drv-end');
+    if (endEl) endEl.value = (parseFloat(log.end) || 0) || '';
+    const litEl = document.getElementById('edit-drv-lit');
+    if (litEl) litEl.value = (parseFloat(log.fuelLiters) || 0) || '';
+    const amtEl = document.getElementById('edit-drv-amt');
+    if (amtEl) amtEl.value = (parseFloat(log.fuelAmt) || 0) || '';
+    const routeEl = document.getElementById('edit-drv-route');
+    if (routeEl) routeEl.value = log.route || '';
+    const noteEl = document.getElementById('edit-drv-note');
+    if (noteEl) noteEl.value = log.note || '';
+    document.getElementById('modal-edit-driving').style.display = 'flex';
+  };
+
+  /**
+   * ✅ 儲存編輯後的行駛/加油紀錄 (2026-08)
+   */
+  window.saveEditDrivingRecord = function () {
+    const row = document.getElementById('edit-drv-row').value;
+    if (!row) {
+      if (typeof showToast === 'function') showToast("缺少紀錄列號", "error");
+      return;
+    }
+    const payload = {
+      row: parseInt(row, 10),
+      date: document.getElementById('edit-drv-date').value,
+      plate: document.getElementById('edit-drv-plate').value,
+      start: document.getElementById('edit-drv-start').value,
+      end: document.getElementById('edit-drv-end').value,
+      route: document.getElementById('edit-drv-route').value,
+      fuelLiters: document.getElementById('edit-drv-lit').value,
+      fuelAmount: document.getElementById('edit-drv-amt').value,
+      note: document.getElementById('edit-drv-note').value
+    };
+    if (typeof showLoading === 'function') showLoading(true, true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (typeof showLoading === 'function') showLoading(false);
+        if (typeof showToast === 'function') showToast(res.msg, res.success ? "success" : "error");
+        document.getElementById('modal-edit-driving').style.display = 'none';
+        // 重新整理兩個歷史彈窗
+        if (typeof openDrivingHistory === 'function') openDrivingHistory();
+        if (typeof openFuelHistory === 'function') openFuelHistory();
+      })
+      .withFailureHandler(function (err) {
+        if (typeof showLoading === 'function') showLoading(false);
+        if (typeof showToast === 'function') showToast("儲存失敗: " + err.message, "error");
+      })
+      .updateDrivingRecord(payload);
+  };
+
+  /**
+   * 🗑️ 刪除單筆行駛/加油紀錄 (2026-08)
+   */
+  window.deleteDrivingRecord = function () {
+    const row = document.getElementById('edit-drv-row').value;
+    if (!row) {
+      if (typeof showToast === 'function') showToast("缺少紀錄列號", "error");
+      return;
+    }
+    if (!confirm("確定要刪除這筆行駛/加油紀錄嗎？此操作無法復原。")) return;
+    if (typeof showLoading === 'function') showLoading(true, true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (typeof showLoading === 'function') showLoading(false);
+        if (typeof showToast === 'function') showToast(res.msg, res.success ? "success" : "error");
+        document.getElementById('modal-edit-driving').style.display = 'none';
+        if (typeof openDrivingHistory === 'function') openDrivingHistory();
+        if (typeof openFuelHistory === 'function') openFuelHistory();
+      })
+      .withFailureHandler(function (err) {
+        if (typeof showLoading === 'function') showLoading(false);
+        if (typeof showToast === 'function') showToast("刪除失敗: " + err.message, "error");
+      })
+      .deleteDrivingRecord(row);
   };
 
   window.shareDailyReport = function () {
@@ -1606,6 +1720,9 @@
   let adminVisitCurrentBiz = '';
   let adminVisitData = null;
   let adminVisitRenderedList = null; // 目前畫面上實際渲染(已排序)的清單，供下探時對應正確 index
+  let adminVisitSubTab = 'ranking'; // 'ranking' | 'yoy_matrix'
+  let adminYoyMatrixClientCache = {}; // 業務名 → YoY 矩陣資料
+  let adminYoyFilterCategory = 'ALL'; // 'ALL' | 'A' | 'B' | 'C' | 'D' | 'NEW'
 
   function initAdminVisitRankingTab() {
     const chipsBox = document.getElementById('admin-visit-biz-chips');
@@ -1614,12 +1731,47 @@
     chipsBox.dataset.inited = '1';
     // 客戶到訪紀錄固定只看謝博皓／潘右森／陳勁多三人，高弘治不在此列
     const list = ['謝博皓', '潘右森', '陳勁多'];
-    chipsBox.innerHTML = list.map(name => `
+    
+    let html = '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; width:100%; margin-bottom:12px;">';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap;">' + list.map(name => `
       <button class="admin-visit-biz-chip" data-name="${name}" onclick="adminVisitSelectBiz('${name}')"
               style="border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.65);
                      border-radius:18px; padding:8px 18px; font-size:14px; font-weight:800; cursor:pointer;">${name}</button>
-    `).join('');
+    `).join('') + '</div>';
+
+    // 🔀 視角切換：到訪排行 ↔ YoY 交叉分析
+    html += `
+      <div style="display:flex; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.12); border-radius:20px; padding:3px;">
+        <button id="btn-subtab-ranking" onclick="adminVisitSetSubTab('ranking')"
+                style="border:none; background:rgba(250,204,21,0.18); color:#facc15; border-radius:16px; padding:6px 14px; font-size:12.5px; font-weight:800; cursor:pointer;">📊 到訪排行</button>
+        <button id="btn-subtab-yoy" onclick="adminVisitSetSubTab('yoy_matrix')"
+                style="border:none; background:transparent; color:rgba(255,255,255,0.5); border-radius:16px; padding:6px 14px; font-size:12.5px; font-weight:800; cursor:pointer;">📈 YoY 交叉分析</button>
+      </div>
+    </div>`;
+
+    chipsBox.innerHTML = html;
   }
+
+  window.adminVisitSetSubTab = function(subTab) {
+    adminVisitSubTab = subTab;
+    const btnRanking = document.getElementById('btn-subtab-ranking');
+    const btnYoy = document.getElementById('btn-subtab-yoy');
+    if (btnRanking) {
+      btnRanking.style.background = (subTab === 'ranking') ? 'rgba(250,204,21,0.18)' : 'transparent';
+      btnRanking.style.color = (subTab === 'ranking') ? '#facc15' : 'rgba(255,255,255,0.5)';
+    }
+    if (btnYoy) {
+      btnYoy.style.background = (subTab === 'yoy_matrix') ? 'rgba(250,204,21,0.18)' : 'transparent';
+      btnYoy.style.color = (subTab === 'yoy_matrix') ? '#facc15' : 'rgba(255,255,255,0.5)';
+    }
+    if (adminVisitCurrentBiz) {
+      if (subTab === 'ranking') {
+        adminVisitSelectBiz(adminVisitCurrentBiz);
+      } else {
+        loadAdminYoyMatrix(adminVisitCurrentBiz);
+      }
+    }
+  };
 
   const adminVisitClientCache = {}; // 業務名 → 已抓取過的 customers 陣列，切回去不用再打後端
   window.adminVisitSelectBiz = function (name, forceRefresh) {
@@ -1630,6 +1782,11 @@
       el.style.borderColor = on ? '#facc15' : 'rgba(255,255,255,0.25)';
       el.style.color = on ? '#facc15' : 'rgba(255,255,255,0.65)';
     });
+
+    if (adminVisitSubTab === 'yoy_matrix') {
+      loadAdminYoyMatrix(name, forceRefresh);
+      return;
+    }
 
     const box = document.getElementById('admin-visit-ranking-content');
 
@@ -1657,6 +1814,157 @@
       })
       .getCustomerVisitRanking(name);
   };
+
+  // 📈 YoY 交叉分析載入與渲染
+  function loadAdminYoyMatrix(name, forceRefresh) {
+    const box = document.getElementById('admin-visit-ranking-content');
+    if (!forceRefresh && adminYoyMatrixClientCache[name]) {
+      renderAdminYoyMatrix(adminYoyMatrixClientCache[name]);
+      return;
+    }
+
+    box.innerHTML = '<div style="text-align:center; opacity:0.4; padding:40px 0; font-size:13px;">分析 YoY 矩陣中（整合業績與到訪資料）…</div>';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success) {
+          box.innerHTML = `<div style="text-align:center; color:#fca5a5; padding:40px 0; font-size:13px;">矩陣載入失敗：${res ? res.msg : '無回應'}</div>`;
+          return;
+        }
+        adminYoyMatrixClientCache[name] = res.data;
+        renderAdminYoyMatrix(res.data);
+      })
+      .withFailureHandler(function(err) {
+        box.innerHTML = `<div style="text-align:center; color:#fca5a5; padding:40px 0; font-size:13px;">錯誤：${err}</div>`;
+      })
+      .getCustomerYoyVisitMatrix(name);
+  }
+
+  window.adminSetYoyFilterCategory = function(cat) {
+    adminYoyFilterCategory = cat;
+    if (adminVisitCurrentBiz && adminYoyMatrixClientCache[adminVisitCurrentBiz]) {
+      renderAdminYoyMatrix(adminYoyMatrixClientCache[adminVisitCurrentBiz]);
+    }
+  };
+
+  function renderAdminYoyMatrix(data) {
+    const box = document.getElementById('admin-visit-ranking-content');
+    if (!data || !data.customers) {
+      box.innerHTML = '<div style="text-align:center; opacity:0.35; padding:40px 0; font-size:13px;">無資料</div>';
+      return;
+    }
+
+    const summary = data.summary || { A: 0, B: 0, C: 0, D: 0, NEW: 0 };
+    const threshold = data.threshold || -10;
+    const avgVisits = data.avgVisitsBenchmark || 5;
+
+    // 頂部 4 象限卡片
+    const cardsHtml = `
+      <div style="font-size:11.5px; opacity:0.6; margin-bottom:8px;">💡 到訪頻率基準：此業務平均到訪 <b style="color:#facc15;">${avgVisits} 次/家</b>（≥${avgVisits}次為勤跑，<${avgVisits}次為少訪）</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:14px;">
+        <div onclick="adminSetYoyFilterCategory('A')" style="background:rgba(248,113,113,0.12); border:1px solid ${adminYoyFilterCategory === 'A' ? '#f87171' : 'rgba(248,113,113,0.3)'}; border-radius:12px; padding:10px; cursor:pointer; text-align:center;">
+          <div style="font-size:12px; color:#f87171; font-weight:800;">🔴 雙警報 (A)</div>
+          <div style="font-size:20px; font-weight:900; color:#fff; margin-top:2px;">${summary.A || 0} 家</div>
+          <div style="font-size:10px; opacity:0.6; color:#fca5a5;">業績↓ 到訪少(&lt;${avgVisits}次)</div>
+        </div>
+        <div onclick="adminSetYoyFilterCategory('B')" style="background:rgba(251,146,60,0.12); border:1px solid ${adminYoyFilterCategory === 'B' ? '#fb923c' : 'rgba(251,146,60,0.3)'}; border-radius:12px; padding:10px; cursor:pointer; text-align:center;">
+          <div style="font-size:12px; color:#fb923c; font-weight:800;">🟠 效率低 (B)</div>
+          <div style="font-size:20px; font-weight:900; color:#fff; margin-top:2px;">${summary.B || 0} 家</div>
+          <div style="font-size:10px; opacity:0.6; color:#fdba74;">業績↓ 到訪多(≥${avgVisits}次)</div>
+        </div>
+        <div onclick="adminSetYoyFilterCategory('C')" style="background:rgba(74,222,128,0.12); border:1px solid ${adminYoyFilterCategory === 'C' ? '#4ade80' : 'rgba(74,222,128,0.3)'}; border-radius:12px; padding:10px; cursor:pointer; text-align:center;">
+          <div style="font-size:12px; color:#4ade80; font-weight:800;">🟢 驚喜 (C)</div>
+          <div style="font-size:20px; font-weight:900; color:#fff; margin-top:2px;">${summary.C || 0} 家</div>
+          <div style="font-size:10px; opacity:0.6; color:#86efac;">業績↑ 到訪少(&lt;${avgVisits}次)</div>
+        </div>
+        <div onclick="adminSetYoyFilterCategory('D')" style="background:rgba(96,165,250,0.12); border:1px solid ${adminYoyFilterCategory === 'D' ? '#60a5fa' : 'rgba(96,165,250,0.3)'}; border-radius:12px; padding:10px; cursor:pointer; text-align:center;">
+          <div style="font-size:12px; color:#60a5fa; font-weight:800;">🔵 正常 (D)</div>
+          <div style="font-size:20px; font-weight:900; color:#fff; margin-top:2px;">${summary.D || 0} 家</div>
+          <div style="font-size:10px; opacity:0.6; color:#93c5fd;">業績↑ 到訪多(≥${avgVisits}次)</div>
+        </div>
+      </div>
+    `;
+
+    // 篩選按鈕列
+    const filterBtn = (cat, label) => {
+      const active = adminYoyFilterCategory === cat;
+      return `<button onclick="adminSetYoyFilterCategory('${cat}')"
+                style="border:1px solid ${active ? '#facc15' : 'rgba(255,255,255,0.2)'}; background:${active ? 'rgba(250,204,21,0.15)' : 'rgba(255,255,255,0.05)'};
+                       color:${active ? '#facc15' : 'rgba(255,255,255,0.6)'}; border-radius:14px; padding:5px 12px; font-size:12px; font-weight:800; cursor:pointer;">${label}</button>`;
+    };
+    const filterBar = `
+      <div style="display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
+        <span style="font-size:11px; opacity:0.5; margin-right:4px;">篩選：</span>
+        ${filterBtn('ALL', '全部 (' + data.customers.length + ')')}
+        ${filterBtn('A', '🔴 雙警報 (' + (summary.A || 0) + ')')}
+        ${filterBtn('B', '🟠 效率低 (' + (summary.B || 0) + ')')}
+        ${filterBtn('C', '🟢 驚喜 (' + (summary.C || 0) + ')')}
+        ${filterBtn('D', '🔵 正常 (' + (summary.D || 0) + ')')}
+        ${filterBtn('NEW', '⚪ 零交易/潛在 (' + (summary.NEW || 0) + ')')}
+      </div>
+    `;
+
+    // 過濾列表
+    let filtered = data.customers;
+    if (adminYoyFilterCategory !== 'ALL') {
+      filtered = data.customers.filter(c => c.category === adminYoyFilterCategory);
+    }
+
+    const catBadgeConfig = {
+      A: { label: '🔴 雙警報', bg: 'rgba(248,113,113,0.15)', color: '#f87171', border: 'rgba(248,113,113,0.4)' },
+      B: { label: '🟠 效率低', bg: 'rgba(251,146,60,0.15)', color: '#fb923c', border: 'rgba(251,146,60,0.4)' },
+      C: { label: '🟢 驚喜', bg: 'rgba(74,222,128,0.15)', color: '#4ade80', border: 'rgba(74,222,128,0.4)' },
+      D: { label: '🔵 正常', bg: 'rgba(96,165,250,0.15)', color: '#60a5fa', border: 'rgba(96,165,250,0.4)' },
+      NEW: { label: '⚪ 零交易客戶', bg: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)', border: 'rgba(255,255,255,0.2)' }
+    };
+
+    const fmtYoy = (val) => {
+      if (val === 999) return '<span style="color:#4ade80; font-weight:800;">+100% (新起單)</span>';
+      if (val > 0) return `<span style="color:#4ade80; font-weight:800;">+${val}%</span>`;
+      if (val < 0) return `<span style="color:#f87171; font-weight:800;">${val}%</span>`;
+      return '<span style="opacity:0.5;">0%</span>';
+    };
+
+    const fmtAmt = (amt) => {
+      if (!amt) return '$0';
+      return '$' + (Math.round(amt / 10000 * 10) / 10) + '萬';
+    };
+
+    const listHtml = filtered.length === 0
+      ? '<div style="text-align:center; opacity:0.35; padding:30px 0; font-size:13px;">此類別尚無客戶</div>'
+      : filtered.map((c, i) => {
+          const cfg = catBadgeConfig[c.category] || catBadgeConfig.D;
+          const stale = c.daysSince !== null && c.daysSince > 30;
+          return `
+          <div style="background:rgba(255,255,255,0.04); border:1px solid ${cfg.border}; border-radius:14px; padding:12px 14px; margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:15px; font-weight:800; color:#fff;">${c.name}</span>
+                <span style="font-size:11px; font-weight:800; background:${cfg.bg}; color:${cfg.color}; border:1px solid ${cfg.border}; border-radius:8px; padding:2px 8px;">${cfg.label}</span>
+              </div>
+              ${stale ? `<span style="font-size:11px; color:#f87171; background:rgba(248,113,113,0.1); border-radius:6px; padding:2px 6px;">${c.daysSince}天未訪</span>` : ''}
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:12.5px; background:rgba(0,0,0,0.2); padding:10px; border-radius:10px;">
+              <div>
+                <div style="opacity:0.5; font-size:11px;">業績 YoY</div>
+                <div style="font-weight:700; margin-top:2px;">今年: ${fmtAmt(c.salesThisYear)}</div>
+                <div style="opacity:0.6; font-size:11.5px;">去年同期: ${fmtAmt(c.salesLastYear)}</div>
+                <div style="margin-top:2px;">成長: ${fmtYoy(c.salesYoy)}</div>
+              </div>
+              <div>
+                <div style="opacity:0.5; font-size:11px;">今年到訪狀況</div>
+                <div style="font-weight:700; margin-top:2px; color:#facc15;">今年已訪: ${c.visitsThisYear}次</div>
+                <div style="opacity:0.6; font-size:11.5px;">勤快度: ${c.isHighVisit ? '高 (≥' + avgVisits + '次)' : '低 (<' + avgVisits + '次)'}</div>
+                <div style="margin-top:2px; opacity:0.7;">最近到訪: ${c.lastVisit || '無紀錄'}</div>
+              </div>
+            </div>
+          </div>
+        `;
+        }).join('');
+
+    box.innerHTML = cardsHtml + filterBar + listHtml;
+  }
 
   const FW_TAG_LABELS_ = { '送貨': '送貨', '樣': '送樣', '帳': '對帳', '上': '上架', '下': '下架', '巡': '巡視', '版': '版面更新', '退': '退貨', '聊': '聊天' };
   const FW_TAG_COLORS_FRONT_ = { '送貨': '#facc15', '樣': '#f87171', '帳': '#60a5fa', '上': '#4ade80', '下': '#4ade80', '巡': '#2dd4bf', '版': '#a78bfa', '退': '#facc15', '聊': '#c084fc' };
@@ -1867,14 +2175,16 @@
     }
 
     // 📐 響應式排版：畫面夠寬（平板/桌機）時三欄並排一次看三人，手機窄螢幕自動退回單欄堆疊
+    // 📐 響應式排版：畫面夠寬（平板/桌機）時三欄並排一次看三人，手機窄螢幕自動退回單欄堆疊
     let html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:15px; padding:10px 15px 15px;">';
     reports.forEach(r => {
-      // 🚀 極簡化介面：僅保留業務名稱與當日到訪記錄列表
+      // 🚀 極簡化介面：同客戶連續版面更換/異動自動歸戶合併，避免洗版
       let visitsHtml = '';
       if (r.visits && r.visits.length > 0) {
-        visitsHtml = r.visits.map(v => `
+        const groupedVisits = groupVisitsForDisplay(r.visits);
+        visitsHtml = groupedVisits.map(v => `
         <div style="display:flex; gap:12px; margin-bottom:8px; background:rgba(0,0,0,0.15); padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,0.03);">
-          <div style="color:#facc15; font-family:monospace; font-weight:900; font-size:15px; min-width:45px;">${v.time}</div>
+          <div style="color:#facc15; font-family:monospace; font-weight:900; font-size:14px; min-width:45px;">${v.time}</div>
           <div style="flex:1;">
             <div style="color:#fff; font-weight:700; font-size:15px; margin-bottom:2px;">${v.customer}</div>
             <div style="color:rgba(255,255,255,0.7); font-size:13px;">${v.summary}</div>
@@ -1886,22 +2196,63 @@
         visitsHtml = '<div style="text-align:center; padding:25px; opacity:0.25; font-size:13px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">尚無拜訪紀錄</div>';
       }
 
-      // 🖥️ 下半部：今日電腦指派的行程（業務配送清單，不論業務是否已手動記錄拜訪）
+      // 🖥️ 下半部：電腦指派行程（按日期分組：今天 8/5 排最上面，昨天 8/4 排下面）
       const fwTaskColors = { '送貨': '#4ade80', '樣品': '#facc15', '入店': '#60a5fa', '退貨': '#f87171' };
       let assignedHtml = '';
       if (r.assignedTasks && r.assignedTasks.length > 0) {
-        assignedHtml = r.assignedTasks.map(t => {
-          const tColor = fwTaskColors[t.shippingType] || '#c084fc';
+        const nowObj = new Date();
+        const todaySlash = nowObj.getFullYear() + '/' + String(nowObj.getMonth() + 1).padStart(2, '0') + '/' + String(nowObj.getDate()).padStart(2, '0');
+        const yestObj = new Date(nowObj.getTime() - 86400000);
+        const yestSlash = yestObj.getFullYear() + '/' + String(yestObj.getMonth() + 1).padStart(2, '0') + '/' + String(yestObj.getDate()).padStart(2, '0');
+
+        const dateGroups = {};
+        r.assignedTasks.forEach(t => {
+          const dKey = t.taskDate || todaySlash;
+          if (!dateGroups[dKey]) dateGroups[dKey] = [];
+          dateGroups[dKey].push(t);
+        });
+
+        // 排序：今天 (todaySlash) 優先放在最頂部，其餘日期按降冪排序
+        const sortedDates = Object.keys(dateGroups).sort((a, b) => {
+          if (a === todaySlash) return -1;
+          if (b === todaySlash) return 1;
+          return b.localeCompare(a);
+        });
+
+        assignedHtml = sortedDates.map(dKey => {
+          const parts = dKey.split('/');
+          const mmdd = parts.length >= 3 ? `${parts[1]}/${parts[2]}` : dKey;
+          let headerTitle = `🖥 行程（${mmdd} 電腦指派）`;
+          let headerColor = '#c084fc';
+
+          if (dKey === todaySlash) {
+            headerTitle = `🖥 今日行程（${mmdd} 電腦指派）`;
+            headerColor = '#4ade80';
+          } else if (dKey === yestSlash) {
+            headerTitle = `🖥 昨天行程（${mmdd} 電腦指派）`;
+            headerColor = '#38bdf8';
+          }
+
+          const itemsHtml = dateGroups[dKey].map(t => {
+            const tColor = fwTaskColors[t.shippingType] || '#c084fc';
+            return `
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:6px; background:rgba(0,0,0,0.15); padding:9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.03);">
+              <span style="font-size:11px; font-weight:800; color:${tColor}; min-width:34px;">${t.shippingType}</span>
+              <span style="flex:1; color:#fff; font-size:13px;">${t.customer}${t.address ? `<span style="color:rgba(255,255,255,0.35); font-size:11px;"> ${t.address}</span>` : ''}</span>
+              <span style="font-size:11px; font-weight:700; color:${t.isFinished ? '#4ade80' : 'rgba(255,255,255,0.4)'};">${t.status}</span>
+            </div>
+          `;
+          }).join('');
+
           return `
-          <div style="display:flex; gap:10px; align-items:center; margin-bottom:6px; background:rgba(0,0,0,0.15); padding:9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.03);">
-            <span style="font-size:11px; font-weight:800; color:${tColor}; min-width:34px;">${t.shippingType}</span>
-            <span style="flex:1; color:#fff; font-size:13px;">${t.customer}${t.address ? `<span style="color:rgba(255,255,255,0.35); font-size:11px;"> ${t.address}</span>` : ''}</span>
-            <span style="font-size:11px; font-weight:700; color:${t.isFinished ? '#4ade80' : 'rgba(255,255,255,0.4)'};">${t.status}</span>
-          </div>
-        `;
+            <div style="margin-top:6px;">
+              <div style="font-size:11px; font-weight:800; color:${headerColor}; margin-bottom:6px; opacity:0.9;">${headerTitle}</div>
+              <div>${itemsHtml}</div>
+            </div>
+          `;
         }).join('');
       } else {
-        assignedHtml = '<div style="text-align:center; padding:14px; opacity:0.2; font-size:12px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">今日無電腦指派任務</div>';
+        assignedHtml = '<div style="margin-top:6px;"><div style="font-size:11px; font-weight:800; color:#c084fc; margin-bottom:6px; opacity:0.8;">🖥 今日行程（電腦指派）</div><div style="text-align:center; padding:14px; opacity:0.2; font-size:12px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">無電腦指派任務</div></div>';
       }
 
       html += `
@@ -1914,8 +2265,7 @@
           ${visitsHtml}
         </div>
         <div style="margin-top:14px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.08);">
-          <div style="font-size:11px; font-weight:800; color:#c084fc; margin-bottom:8px; opacity:0.8;">🖥 今日行程（電腦指派）</div>
-          <div>${assignedHtml}</div>
+          ${assignedHtml}
         </div>
       </div>
     `;
@@ -1923,6 +2273,57 @@
     html += '</div>';
 
     container.innerHTML = html;
+  }
+
+  // 🚀 幫同客戶連續多筆版面更新/照片異動進行聚合歸戶
+  function groupVisitsForDisplay(visits) {
+    if (!visits || !visits.length) return [];
+    const grouped = [];
+
+    visits.forEach(v => {
+      const cust = String(v.customer || '').trim();
+      const prev = grouped[grouped.length - 1];
+
+      if (prev && prev.customer === cust) {
+        if (v.time && v.time !== '--:--') {
+          const startTime = prev.time.split(' ~ ')[0];
+          if (startTime !== v.time) {
+            prev.time = `${startTime} ~ ${v.time}`;
+          }
+        }
+        if (v.summary && !prev.summaryList.includes(v.summary)) {
+          prev.summaryList.push(v.summary);
+        }
+        if (v.detail) {
+          prev.detailList.push(v.detail);
+        }
+        prev.count++;
+      } else {
+        grouped.push({
+          time: v.time || '--:--',
+          customer: cust,
+          summaryList: v.summary ? [v.summary] : [],
+          detailList: v.detail ? [v.detail] : [],
+          count: 1
+        });
+      }
+    });
+
+    return grouped.map(g => {
+      let summaryText = g.summaryList.join(' / ');
+      if (g.count > 1 && summaryText.includes('業務更新')) {
+        summaryText += ` (共 ${g.count} 個版面異動)`;
+      }
+
+      let detailText = g.detailList.join('\n');
+
+      return {
+        time: g.time,
+        customer: g.customer,
+        summary: summaryText,
+        detail: detailText
+      };
+    });
   }
 
   /**
@@ -1958,7 +2359,8 @@
           <div class="admin-history-date">${day.date}</div>
           <div class="fw-timeline">
       `;
-        day.logs.forEach(log => {
+        const groupedLogs = groupVisitsForDisplay(day.logs);
+        groupedLogs.forEach(log => {
           html += `
           <div class="fw-timeline-item" style="padding-bottom:15px;">
             <div class="fw-timeline-dot"></div>
@@ -1966,7 +2368,7 @@
             <div class="fw-timeline-card">
               <div class="fw-timeline-customer">${log.customer}</div>
               <div class="fw-timeline-summary" style="color:#4ade80;">任務: ${log.summary}</div>
-              <div class="fw-timeline-detail" style="opacity:0.6; font-size:11px;">${log.detail || '(無詳細內容)'}</div>
+              <div class="fw-timeline-detail" style="opacity:0.6; font-size:11px;">${log.detail ? log.detail.replace(/\n/g, '<br>') : '(無詳細內容)'}</div>
             </div>
           </div>
         `;

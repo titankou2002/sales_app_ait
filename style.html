@@ -63,6 +63,10 @@
   .customer-name { font-size: 19px; font-weight: 900; line-height: 1.1; letter-spacing: -0.5px; }
 
   .album-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding: 20px 16px 120px; }
+  /* 💻 電腦版：寬螢幕一次顯示 4~6 個版面，避免卡片過大 */
+  @media (min-width: 992px) { .album-grid { grid-template-columns: repeat(4, 1fr); } }
+  @media (min-width: 1400px) { .album-grid { grid-template-columns: repeat(5, 1fr); } }
+  @media (min-width: 1800px) { .album-grid { grid-template-columns: repeat(6, 1fr); } }
   .album-item {
     position: relative; border-radius: 24px; background: rgba(255,255,255,0.05);
     overflow: hidden; aspect-ratio: 1 / 1.4; transition: all 0.3s; border: 1px solid var(--card-border);

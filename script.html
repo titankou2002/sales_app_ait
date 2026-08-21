@@ -15,6 +15,8 @@
     isClientView: false,
     isInventoryLoaded: false,
     inventoryData: [],
+    inventoryLoadFailed: false,    // 🐛 庫存查詢逾時/失敗保護用
+    inventoryLoadTimeoutTimer: null,
     salesOverviewData: null,    // ✅ 新增業績快取
     salesOverviewLoaded: false  // ✅ 新增載入狀態
   };
@@ -752,27 +754,45 @@
 
     google.script.run
       .withSuccessHandler(function(res) {
+        clearTimeout(state.inventoryLoadTimeoutTimer);
         if (res && res.success) {
           state.inventoryData = res.data;
           state.isInventoryLoaded = true;
-          
+          state.inventoryLoadFailed = false;
+
           // 🚀 將最新資料同步回寫至 LocalStorage
           try {
             localStorage.setItem('ag_inventory_cache', JSON.stringify(res.data));
           } catch(e) {}
-          
+
           // 🚀 關鍵修正：若已開啟客戶陳列牆，在背景載入完成時自動重新渲染，以套用正確的缺貨框顏色
           if (document.getElementById('page-album') && document.getElementById('page-album').classList.contains('active')) {
             renderAlbum();
             renderHistory();
           }
-          
+
           // 若在客制庫存查詢頁，自動執行查詢
           if (document.getElementById('page-inventory') && document.getElementById('page-inventory').classList.contains('active')) {
-            handleInventorySearch(); 
+            handleInventorySearch();
           }
         } else {
+          state.inventoryLoadFailed = true;
           showToast('資料載入失敗: ' + (res.msg || '未知原因'));
+          if (document.getElementById('page-inventory') && document.getElementById('page-inventory').classList.contains('active')) {
+            handleInventorySearch();
+          }
+        }
+      })
+      .withFailureHandler(function(err) {
+        // 🐛 [修正] 原本完全沒有失敗處理：伺服器端一出錯或逾時就整個沒反應，
+        //    isInventoryLoaded 永遠是 false，畫面卡死在「資料載入中」看不出發生什麼事。
+        clearTimeout(state.inventoryLoadTimeoutTimer);
+        state.inventoryLoadFailed = true;
+        console.error('庫存資料載入失敗:', err);
+        if (document.getElementById('page-inventory') && document.getElementById('page-inventory').classList.contains('active')) {
+          handleInventorySearch();
+        } else {
+          showToast('庫存資料載入失敗，請稍後再試');
         }
       })
       .getAggregatedInventory();
@@ -1589,7 +1609,7 @@
             // 到貨提示
             (invItem && invItem.hasArrival ?
               '<div style="margin-top:6px; background:rgba(0,122,255,0.15); border:1px solid #007aff;' +
-              'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#007aff;">🔵 預計 ' + (invItem.eta || '近期') + ' 到貨' + (invItem.etaQty > 0 ? ' ' + Math.floor(invItem.etaQty) + ' 片' : '') + '</div>'
+              'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#007aff;">✨ 新批 ' + (invItem.etaShort || invItem.eta || '近期') + ' 到' + (invItem.etaQty > 0 ? ' ' + Math.floor(invItem.etaQty) + '片' : '') + (invItem.etaPing > 0 ? '/' + invItem.etaPing + '坪' : '') + '</div>'
             : '') +
 
           '</div>' +
@@ -2237,7 +2257,28 @@
     }
 
     if (!state.isInventoryLoaded) {
-      list.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:50px; color:#fff;">資料載入中，請稍候...</div>`;
+      if (state.inventoryLoadFailed) {
+        list.innerHTML = `
+          <div style="grid-column:1/-1; text-align:center; padding:60px 20px;">
+            <div style="font-size:32px; margin-bottom:10px; opacity:0.6;">⚠️</div>
+            <div style="color:#ff6b6b; font-size:14px; font-weight:700; margin-bottom:16px;">資料載入失敗或逾時，請重試</div>
+            <button onclick="state.inventoryLoadFailed=false; loadInventoryData();" style="background:rgba(194,157,102,0.15); border:1px solid var(--staff-gold); color:var(--staff-gold); padding:8px 22px; border-radius:20px; font-size:13px; font-weight:700; cursor:pointer;">重新載入</button>
+          </div>`;
+        return;
+      }
+      list.innerHTML = `
+        <div style="grid-column:1/-1; text-align:center; padding:60px 20px;">
+          <div style="width:32px; height:32px; margin:0 auto 14px; border:3px solid rgba(194,157,102,0.2); border-top-color:var(--staff-gold); border-radius:50%; animation: aiSpinnerRotate 0.8s linear infinite;"></div>
+          <div style="color:var(--staff-gold); font-size:13px; font-weight:600;">資料載入中，請稍候...</div>
+        </div>`;
+      // ⏱️ 逾時保護：15 秒還沒載入完成就顯示「重新載入」按鈕，避免無限期卡在讀取畫面沒有任何反應
+      clearTimeout(state.inventoryLoadTimeoutTimer);
+      state.inventoryLoadTimeoutTimer = setTimeout(function() {
+        if (!state.isInventoryLoaded) {
+          state.inventoryLoadFailed = true;
+          handleInventorySearch();
+        }
+      }, 15000);
       return;
     }
 
@@ -2384,7 +2425,7 @@
 
             ${p.hasArrival ? `
             <div style="margin-top:8px; background:rgba(0,122,255,0.12); border:1px solid rgba(0,122,255,0.35); border-radius:8px; padding:5px 10px; font-size:11px; font-weight:800; color:#007aff; text-align:center;">
-              🔵 預計 ${p.eta || '近期'} 到貨${p.etaQty > 0 ? ' ' + Math.floor(p.etaQty) + ' 片' : ''}
+              ✨ 新批 ${p.etaShort || p.eta || '近期'} 到${p.etaQty > 0 ? ' ' + Math.floor(p.etaQty) + '片' : ''}${p.etaPing > 0 ? '/' + p.etaPing + '坪' : ''}
             </div>` : ''}
           </div>
         </div>
@@ -3299,4 +3340,274 @@
       next();
     }
   };
+
+  // ============================================
+  // 🤖 AI 智慧查詢助理
+  // ============================================
+  var AI_HISTORY_KEY = 'ai_query_history_v1';
+  var AI_HISTORY_MAX_DAYS = 30;
+  var _aiHistory = []; // 新的在陣列前面 (index 0)，畫面渲染時新的自然排在最上面
+
+  function _aiLoadHistory() {
+    try {
+      var raw = localStorage.getItem(AI_HISTORY_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      var cutoff = Date.now() - AI_HISTORY_MAX_DAYS * 86400000;
+      _aiHistory = arr.filter(function(e) { return e && e.timestamp >= cutoff; });
+    } catch (e) {
+      _aiHistory = [];
+    }
+  }
+
+  function _aiSaveHistory() {
+    var cutoff = Date.now() - AI_HISTORY_MAX_DAYS * 86400000;
+    var pruned = _aiHistory.filter(function(e) { return e && e.timestamp >= cutoff; });
+    try {
+      localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(pruned));
+    } catch (e) {
+      // 儲存空間爆了（常見是 QuotaExceededError）：先試著只留最近 20 筆再存一次，救不回來才提示使用者
+      try {
+        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(pruned.slice(0, 20)));
+        showToast('查詢歷史空間快滿了，已自動清掉較舊的紀錄');
+      } catch (e2) {
+        showToast('查詢歷史儲存失敗（瀏覽器儲存空間已滿），本次結果暫時不會被記住');
+      }
+    }
+  }
+
+  function openAiQueryModal() {
+    var modal = document.getElementById('ai-query-modal');
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+    _aiLoadHistory();
+    _aiRenderHistory();
+    setTimeout(function() {
+      var input = document.getElementById('ai-query-input');
+      if (input) input.focus();
+    }, 200);
+  }
+
+  function closeAiQueryModal() {
+    var modal = document.getElementById('ai-query-modal');
+    modal.style.display = 'none';
+    modal.classList.remove('active');
+  }
+
+  var _aiQueryRunning = false;
+
+  // 🚦 每個瀏覽器一組隨機裝置代號，存 localStorage，後端用它做「每分鐘幾次」的頻率限制
+  function _aiGetDeviceId() {
+    try {
+      var id = localStorage.getItem('ai_device_id');
+      if (!id) {
+        id = 'dev_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem('ai_device_id', id);
+      }
+      return id;
+    } catch (e) {
+      return 'nolocalstorage';
+    }
+  }
+
+  function runAiQuery() {
+    if (_aiQueryRunning) return;
+    var input = document.getElementById('ai-query-input');
+    var question = (input.value || '').trim();
+    if (!question) return;
+
+    input.value = ''; // 🚀 送出後立刻清空輸入框
+
+    var entry = {
+      id: 'q_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      question: question,
+      timestamp: Date.now(),
+      pending: true,
+      res: null
+    };
+    _aiHistory.unshift(entry); // 新的放最前面 → 畫面上自然顯示在最上面
+    _aiSendQuery(entry, '');
+  }
+
+  // 送出一筆查詢（供正常送出與「超額後輸入密碼重試」共用）
+  function _aiSendQuery(entry, password) {
+    entry.pending = true;
+    _aiRenderHistory(); // 立刻換成轉圈動畫，不要讓密碼輸入框停留到回應回來
+    _aiQueryRunning = true;
+    google.script.run
+      .withSuccessHandler(function(res) {
+        _aiQueryRunning = false;
+        entry.pending = false;
+        entry.res = res;
+        _aiSaveHistory();
+        _aiRenderHistory();
+      })
+      .withFailureHandler(function(err) {
+        _aiQueryRunning = false;
+        entry.pending = false;
+        entry.res = { success: false, msg: (err && err.message) ? err.message : String(err) };
+        _aiSaveHistory();
+        _aiRenderHistory();
+      })
+      .aiAssistantAsk(entry.question, _aiGetDeviceId(), password || '');
+  }
+
+  // 「超過每分鐘限額」畫面上輸入密碼後按下重試
+  window._aiRetryWithPassword = function(entryId) {
+    var entry = _aiHistory.find(function(e) { return e.id === entryId; });
+    if (!entry) return;
+    var input = document.getElementById('ai-pw-' + entryId);
+    var password = input ? input.value.trim() : '';
+    if (!password) return;
+    _aiSendQuery(entry, password);
+  };
+
+  // ============================================
+  // 🎤 AI 查詢：語音輸入 (Web Speech API)
+  // ============================================
+  var _aiVoiceRecognition = null;
+  var _aiVoiceListening = false;
+
+  function toggleAiVoiceInput() {
+    var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      showToast('此瀏覽器不支援語音輸入，請直接打字');
+      return;
+    }
+
+    if (_aiVoiceListening) {
+      if (_aiVoiceRecognition) _aiVoiceRecognition.stop();
+      return;
+    }
+
+    var micBtn = document.getElementById('ai-query-mic-btn');
+    var input = document.getElementById('ai-query-input');
+
+    _aiVoiceRecognition = new SpeechRecognitionCtor();
+    _aiVoiceRecognition.lang = 'zh-TW';
+    _aiVoiceRecognition.interimResults = false;
+    _aiVoiceRecognition.maxAlternatives = 1;
+
+    _aiVoiceRecognition.onstart = function() {
+      _aiVoiceListening = true;
+      if (micBtn) { micBtn.classList.add('listening'); micBtn.textContent = '⏺️'; }
+      if (input) input.placeholder = '🎙️ 聽你說話中…';
+    };
+
+    _aiVoiceRecognition.onresult = function(event) {
+      var transcript = event.results[0][0].transcript || '';
+      if (input) input.value = transcript;
+    };
+
+    _aiVoiceRecognition.onerror = function() {
+      showToast('語音辨識失敗，請再試一次');
+    };
+
+    _aiVoiceRecognition.onend = function() {
+      _aiVoiceListening = false;
+      if (micBtn) { micBtn.classList.remove('listening'); micBtn.textContent = '🎤'; }
+      if (input) input.placeholder = '輸入你想查的東西，或點🎤說話…';
+    };
+
+    _aiVoiceRecognition.start();
+  }
+
+  function _aiEsc(v) {
+    return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function(c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  var AI_CARD_DISPLAY_LIMIT = 40;
+
+  function _aiFormatTime(ts) {
+    var d = new Date(ts);
+    var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  // 🃏 卡片渲染：客戶名(或編號)最大最醒目，其次是重點數字(保留天數/金額/坪數)，其餘是輔助小字
+  function _aiRenderCards(cards) {
+    var shown = cards.slice(0, AI_CARD_DISPLAY_LIMIT);
+    var html = '<div style="display:flex; flex-direction:column; gap:8px;">' +
+      shown.map(function(c) {
+        return (
+          '<div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:12px 14px;">' +
+            '<div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px;">' +
+              '<div style="flex:1; min-width:0; font-size:16px; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + _aiEsc(c.headline) + '</div>' +
+              (c.highlight ? '<div style="flex-shrink:0; font-size:13px; font-weight:800; color:#6ee7a0;">' + _aiEsc(c.highlight) + '</div>' : '') +
+            '</div>' +
+            (c.sub ? '<div style="font-size:12px; opacity:0.6; margin-top:3px;">' + _aiEsc(c.sub) + '</div>' : '') +
+            (c.meta ? '<div style="font-size:11.5px; opacity:0.45; margin-top:4px;">' + _aiEsc(c.meta) + '</div>' : '') +
+            (c.extra ? '<div style="font-size:11px; opacity:0.35; margin-top:2px;">' + _aiEsc(c.extra) + '</div>' : '') +
+          '</div>'
+        );
+      }).join('') +
+    '</div>';
+    if (cards.length > AI_CARD_DISPLAY_LIMIT) {
+      html += '<div style="text-align:center; font-size:11px; opacity:0.4; margin-top:8px;">還有 ' + (cards.length - AI_CARD_DISPLAY_LIMIT) + ' 筆未顯示，請縮小查詢範圍看更精確的結果</div>';
+    }
+    return html;
+  }
+
+  function _aiRenderSection(sec) {
+    var html = '<div style="margin-bottom:16px; border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:14px; background:rgba(255,255,255,0.03);">';
+    html += '<div style="font-size:14px; font-weight:800; color:#38bdf8; margin-bottom:8px;">🔎 ' + _aiEsc(sec.title || '') + '</div>';
+
+    if (sec.error) {
+      html += '<div style="color:#f87171; font-size:12px;">⚠️ ' + _aiEsc(sec.error) + '</div>';
+    } else {
+      if (sec.summary) html += '<div style="font-size:12px; opacity:0.6; margin-bottom:10px;">' + _aiEsc(sec.summary) + '</div>';
+      if (sec.cards && sec.cards.length) {
+        html += _aiRenderCards(sec.cards);
+      } else {
+        html += '<div style="font-size:12px; opacity:0.4;">沒有符合條件的資料</div>';
+      }
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // 一筆歷史紀錄（一次問答）的完整渲染，含問題文字/時間戳/狀態
+  function _aiRenderEntry(entry) {
+    var head = '<div style="font-size:11px; opacity:0.35; margin-bottom:4px;">' + _aiFormatTime(entry.timestamp) + '</div>' +
+      '<div style="font-size:13px; font-weight:700; color:rgba(255,255,255,0.85); margin-bottom:10px;">你問了：「' + _aiEsc(entry.question) + '」</div>';
+
+    var body;
+    if (entry.pending) {
+      body = '<div style="text-align:center; opacity:0.6; padding:24px 0; font-size:13px;">' +
+        '<div class="ai-query-spinner"></div>' +
+        '<div style="margin-top:12px;">🤔 AI 查詢中，請稍候…</div>' +
+      '</div>';
+    } else if (entry.res && entry.res.needsPassword) {
+      body =
+        '<div style="color:#fbbf24; padding:4px 0 10px; font-size:13px;">⏱️ ' + _aiEsc(entry.res.msg || '查詢太頻繁了') + '</div>' +
+        '<div style="display:flex; gap:8px;">' +
+          '<input id="ai-pw-' + entry.id + '" type="password" inputmode="numeric" placeholder="輸入密碼繼續查詢"' +
+            ' style="flex:1; min-width:0; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:10px; color:#fff; padding:9px 12px; font-size:13px; outline:none;"' +
+            ' onkeydown="if(event.key===\'Enter\'){ window._aiRetryWithPassword(\'' + entry.id + '\'); }">' +
+          '<button onclick="window._aiRetryWithPassword(\'' + entry.id + '\')"' +
+            ' style="background:#fbbf24; color:#000; font-weight:900; border:none; border-radius:10px; padding:0 16px; font-size:13px; cursor:pointer; flex-shrink:0;">繼續</button>' +
+        '</div>';
+    } else if (!entry.res || !entry.res.success) {
+      var msg = (entry.res && entry.res.msg) ? entry.res.msg : '查詢失敗，請再試一次';
+      var extra = (entry.res && entry.res.needsApiKey)
+        ? '<div style="margin-top:8px; font-size:11px; opacity:0.5;">（管理者設定路徑：Apps Script 專案 → 專案設定 → 指令碼屬性 → 新增 GEMINI_API_KEY 或 ANTHROPIC_API_KEY）</div>'
+        : '';
+      body = '<div style="color:#f87171; padding:4px 0 8px; font-size:13px;">❌ ' + _aiEsc(msg) + '</div>' + extra;
+    } else {
+      body = (entry.res.sections || []).map(_aiRenderSection).join('');
+    }
+
+    return '<div style="padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.06);">' + head + body + '</div>';
+  }
+
+  // 渲染整份歷史（陣列本身已是新→舊排序，直接照順序渲染即可，最新自然在最上面）
+  function _aiRenderHistory() {
+    var box = document.getElementById('ai-query-results');
+    if (!_aiHistory.length) {
+      box.innerHTML = '<div style="text-align:center; opacity:0.3; padding:40px 0; font-size:13px;">在下方輸入問題，按送出開始查詢</div>';
+      return;
+    }
+    box.innerHTML = _aiHistory.map(_aiRenderEntry).join('');
+  }
 </script>

@@ -9,8 +9,9 @@
     const isClient = currentQuery.includes("view=client") || currentQuery.includes("customer") || currentQuery.includes("clientName");
     document.title = isClient ? "高雅瓷庫存查詢系統" : "高雅瓷業務APP";
     const appTitle = isClient ? "高雅瓷庫存查詢系統" : "高雅瓷業務APP";
-    document.write(`<link rel="icon" type="image/svg+xml" href="favicon.svg">`);
-    document.write(`<link rel="apple-touch-icon" href="favicon.svg">`);
+    // 主選單 & 查庫存連結 皆使用 icon-silver.png
+    document.write(`<link rel="icon" type="image/png" href="icon-silver.png">`);
+    document.write(`<link rel="apple-touch-icon" sizes="180x180" href="icon-silver.png">`);
     document.write(`<meta name="apple-mobile-web-app-title" content="${appTitle}">`);
   </script>
 

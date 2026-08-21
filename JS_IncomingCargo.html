@@ -1,0 +1,207 @@
+<style>
+  /* 🚢 到貨明細樣式 */
+  .cargo-branch-chip {
+    flex-shrink: 0; border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.6); border-radius: 18px; padding: 7px 16px; font-size: 13.5px;
+    font-weight: 800; cursor: pointer; white-space: nowrap;
+  }
+  .cargo-branch-chip.on { background: rgba(56,189,248,0.15); border-color: #38bdf8; color: #38bdf8; }
+
+  details.cargo-container {
+    margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.12); border-radius: 16px;
+    background: rgba(255,255,255,0.04); overflow: hidden;
+  }
+  details.cargo-container summary {
+    list-style: none; cursor: pointer; padding: 14px 16px; -webkit-tap-highlight-color: transparent;
+  }
+  details.cargo-container summary::-webkit-details-marker { display: none; }
+  details.cargo-container[open] summary { border-bottom: 1px solid rgba(255,255,255,0.08); }
+
+  .cargo-sum-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .cargo-brand { font-size: 16px; font-weight: 900; color: #fff; }
+  .cargo-eta-badge {
+    flex-shrink: 0; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.35);
+    border-radius: 8px; padding: 4px 10px; font-size: 12px; font-weight: 800; white-space: nowrap;
+  }
+  .cargo-sum-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 12px; }
+  .cargo-meta-chip { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 4px 9px; color: rgba(255,255,255,0.75); }
+  .cargo-meta-chip b { color: #facc15; }
+  /* 🏷 分公司色標：安帝嘉綠／高雅瓷粉／喜悅納藍／漢樺黃，放在品牌名稱右邊 */
+  .cargo-branch-tag { font-size: 10.5px; font-weight: 800; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+  .cargo-branch-tag.b-andyga  { background: rgba(74,222,128,0.15);  color: #4ade80; border: 1px solid rgba(74,222,128,0.35); }
+  .cargo-branch-tag.b-gaoya   { background: rgba(236,72,153,0.15);  color: #f472b6; border: 1px solid rgba(236,72,153,0.35); }
+  .cargo-branch-tag.b-xiyena  { background: rgba(56,189,248,0.15);  color: #38bdf8; border: 1px solid rgba(56,189,248,0.35); }
+  .cargo-branch-tag.b-hanhua  { background: rgba(250,204,21,0.15);  color: #facc15; border: 1px solid rgba(250,204,21,0.35); }
+  .cargo-branch-tag.b-other   { background: rgba(168,85,247,0.15);  color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+  .cargo-remark { font-size: 11px; opacity: 0.4; margin-top: 6px; }
+
+  .cargo-item-row { display: flex; gap: 10px; padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .cargo-item-row:last-child { border-bottom: none; }
+  .cargo-item-img { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; border: 1px solid rgba(255,255,255,0.15); flex-shrink: 0; background: rgba(255,255,255,0.05); }
+  .cargo-item-img-ph { width: 52px; height: 52px; border-radius: 8px; border: 1px dashed rgba(255,255,255,0.2); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; opacity: 0.35; text-align: center; }
+  .cargo-item-name { font-size: 15px; font-weight: 900; color: #fff; }
+  .cargo-item-sub { font-size: 11px; opacity: 0.45; margin-top: 2px; }
+  .cargo-item-nums { font-size: 11.5px; opacity: 0.75; margin-top: 4px; }
+  .cargo-item-nums b { color: #6ee7a0; font-weight: 800; }
+  .cargo-item-project { display: inline-block; font-size: 10px; font-weight: 800; color: #fdba74; background: rgba(249,115,22,0.15); border: 1px solid rgba(249,115,22,0.35); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+  .cargo-item-nomatch { font-size: 10.5px; opacity: 0.4; margin-top: 4px; }
+</style>
+
+<script>
+(function() {
+  let cargoData = null;
+  let cargoCurrentBranch = '高雅瓷';
+
+  window.openIncomingCargoModule = function() {
+    showPage('page-incoming-cargo');
+    loadIncomingCargo(false);
+  };
+
+  var _cargoSlowHintTimer = null;
+
+  window.loadIncomingCargo = function(force) {
+    const listEl = document.getElementById('cargo-container-list');
+    listEl.innerHTML =
+      '<div style="text-align:center; opacity:0.6; padding:50px 0; font-size:13px;">' +
+        '<div class="ai-query-spinner"></div>' +
+        '<div id="cargo-loading-hint" style="margin-top:14px;">載入中…</div>' +
+      '</div>';
+
+    // 分公司資料是獨立試算表，第一次讀（沒快取命中）常常明顯慢一點，超過 4 秒補一句提示，不要讓使用者以為卡住了
+    clearTimeout(_cargoSlowHintTimer);
+    _cargoSlowHintTimer = setTimeout(() => {
+      const hint = document.getElementById('cargo-loading-hint');
+      if (hint) hint.textContent = '這家分公司資料第一次讀取比較久，請再稍候…';
+    }, 4000);
+
+    google.script.run
+      .withSuccessHandler(res => {
+        clearTimeout(_cargoSlowHintTimer);
+        if (!res || !res.success) {
+          listEl.innerHTML = '<div style="text-align:center; color:#fca5a5; padding:40px 0;">載入失敗：' + (res ? res.msg : '無回應') + '</div>';
+          return;
+        }
+        cargoData = res;
+        renderCargoBranchTabs();
+        renderCargoContainerList();
+      })
+      .withFailureHandler(err => {
+        clearTimeout(_cargoSlowHintTimer);
+        listEl.innerHTML = '<div style="text-align:center; color:#fca5a5; padding:40px 0;">錯誤：' + err + '</div>';
+      })
+      .getIncomingCargoContainers(cargoCurrentBranch, !!force);
+  };
+
+  function renderCargoBranchTabs() {
+    const tabsEl = document.getElementById('cargo-branch-tabs');
+    const branches = (cargoData && cargoData.availableBranches) || ['高雅瓷', '安帝嘉', '喜悅納', '漢樺'];
+    const all = branches.concat(['全部']);
+    tabsEl.innerHTML = all.map(b =>
+      '<div class="cargo-branch-chip' + (b === cargoCurrentBranch ? ' on' : '') + '" onclick="window._cargoSwitchBranch(\'' + b + '\')">' + _cargoEsc(b) + '</div>'
+    ).join('');
+  }
+
+  window._cargoSwitchBranch = function(branch) {
+    if (branch === cargoCurrentBranch) return;
+    cargoCurrentBranch = branch;
+    renderCargoBranchTabs(); // 🚀 按下去當下就換色，不等資料讀完
+    loadIncomingCargo(false);
+  };
+
+  function _cargoBranchClass_(b) {
+    if (b === '安帝嘉') return 'b-andyga';
+    if (b === '高雅瓷') return 'b-gaoya';
+    if (b === '喜悅納') return 'b-xiyena';
+    if (b === '漢樺') return 'b-hanhua';
+    return 'b-other';
+  }
+
+  function _cargoEsc(v) {
+    return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+    );
+  }
+
+  function _cargoNumsLine(it) {
+    const parts = [];
+    if (it.pieces !== null && it.pieces !== undefined) parts.push('<b>' + it.pieces + '</b> 片');
+    parts.push((it.pyeong || 0) + ' 坪');
+    if (it.pallets !== null && it.pallets !== undefined) parts.push('<b>' + it.pallets + '</b> 棧板');
+    return parts.join(' ・ ');
+  }
+
+  function renderCargoContainerList() {
+    const listEl = document.getElementById('cargo-container-list');
+    const containers = (cargoData && cargoData.containers) || [];
+    if (!containers.length) {
+      listEl.innerHTML = '<div style="text-align:center; opacity:0.4; padding:40px 0;">「' + _cargoEsc(cargoCurrentBranch) + '」目前沒有在途貨櫃</div>';
+      return;
+    }
+
+    listEl.innerHTML = containers.map((c, ci) => {
+      const itemsHtml = c.items.map(it => {
+        const imgHtml = it.image
+          ? '<img class="cargo-item-img" src="' + _cargoEsc(it.image) + '" loading="lazy" onerror="this.style.display=\'none\'">'
+          : '<div class="cargo-item-img-ph">無圖</div>';
+        const projectTag = it.isProject ? '<span class="cargo-item-project">專案</span>' : '';
+        const noMatch = (!it.matched && !it.isSpecial && !it.isNewLike) ? '<div class="cargo-item-nomatch">⚠️ 編號價目表查無此編號，無法換算</div>' : '';
+
+        // 第一行(大字)：中文系列/新品期貨標籤 + 編號 + 尺寸；第二行(小字)：原廠品名(原本的系列/色號)
+        let headlineParts;
+        if (it.matched) {
+          headlineParts = [it.series, it.mainCode, it.size];
+        } else if (it.isNewLike) {
+          headlineParts = [it.newTag, it.size];
+        } else {
+          headlineParts = [it.mainCode || it.productName || '未命名'];
+        }
+        const headline = headlineParts.filter(Boolean).join(' · ');
+
+        return (
+          '<div class="cargo-item-row">' +
+            imgHtml +
+            '<div style="flex:1; min-width:0;">' +
+              '<div class="cargo-item-name">' + _cargoEsc(headline) + projectTag + '</div>' +
+              (it.productName ? '<div class="cargo-item-sub">' + _cargoEsc(it.productName) + '</div>' : '') +
+              (it.isSpecial
+                ? '<div class="cargo-item-nums">附加項目 ・ 數量 ' + (it.qtyM2 || 0) + '</div>'
+                : '<div class="cargo-item-nums">' + _cargoNumsLine(it) + '</div>') +
+              noMatch +
+            '</div>' +
+          '</div>'
+        );
+      }).join('');
+
+      const branchTags = (c.branches || []).map(b =>
+        '<span class="cargo-branch-tag ' + _cargoBranchClass_(b) + '">' + _cargoEsc(b) + '</span>'
+      ).join('');
+
+      const daysLine = !Number.isFinite(c.daysUntilEta) ? ''
+        : (c.daysUntilEta > 0 ? '還剩 ' + c.daysUntilEta + ' 天到貨'
+          : (c.daysUntilEta === 0 ? '今天到港' : '已逾期 ' + Math.abs(c.daysUntilEta) + ' 天'));
+
+      return (
+        '<details class="cargo-container"' + (ci === 0 ? ' open' : '') + '>' +
+          '<summary>' +
+            '<div class="cargo-sum-top">' +
+              '<div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">' +
+                '<div class="cargo-brand">' + _cargoEsc(c.brand || '未標示品牌') + '</div>' +
+                branchTags +
+              '</div>' +
+              '<div class="cargo-eta-badge">到港日 ' + _cargoEsc(c.etaFormatted || '未定') + '</div>' +
+            '</div>' +
+            '<div class="cargo-sum-meta">' +
+              (daysLine ? '<div class="cargo-meta-chip">' + daysLine + '</div>' : '') +
+              (c.warehouseInFormatted ? '<div class="cargo-meta-chip">入庫 ' + _cargoEsc(c.warehouseInFormatted) + '</div>' : '') +
+              (c.portName ? '<div class="cargo-meta-chip">' + _cargoEsc(c.portName) + '</div>' : '') +
+              '<div class="cargo-meta-chip"><b>' + c.totalPyeong + '</b> 坪</div>' +
+            '</div>' +
+            (c.remark ? '<div class="cargo-remark">' + _cargoEsc(c.remark) + '</div>' : '') +
+          '</summary>' +
+          itemsHtml +
+        '</details>'
+      );
+    }).join('');
+  }
+})();
+</script>

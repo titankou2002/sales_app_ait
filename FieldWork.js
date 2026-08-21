@@ -461,6 +461,9 @@ function clearWorkLogCache_(employeeName, dateStr) {
     const searchName = String(employeeName || "").trim().replace(/\s/g, '');
     cache.remove("WLH_" + searchName + "_" + dateStr);
     cache.remove("OMNI_" + dateStr);
+    // 🚀 [2026-08] 一併清除每日報表快取，避免里程/油資顯示舊值
+    const dStr = String(dateStr || "").split(' ')[0].replace(/\//g, '-');
+    cache.remove("FW_DAILY_" + searchName + "_" + dStr);
   } catch (e) {}
 }
 
@@ -681,6 +684,211 @@ function getCustomerVisitRanking(employeeName) {
     const result = { success: true, customers: customers };
     try { cache.put(cacheKey, JSON.stringify(result), 1800); } catch (e) {} // 30 分鐘快取（全歷史掃描較重）
     return result;
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 📊 客戶 YoY 分析矩陣
+ * 整合「業績 YoY」與「今年到訪勤快度」，輸出四象限分類
+ * (由於到訪紀錄自今年起算無去年基期，到訪高低以全業務平均到訪次數為基準)
+ * 象限：A=雙警報(業績↓ 到訪少)  B=效率低(業績↓ 到訪多)  C=驚喜(業績↑ 到訪少)  D=正常(業績↑ 到訪多)  NEW=無交易/潛在
+ * @param {string} employeeName  業務姓名
+ * @param {number} [declineThreshold=-10]  判斷「下滑」的 YoY % 門檻，預設 -10%
+ */
+function getCustomerYoyVisitMatrix(employeeName, declineThreshold) {
+  const name = String(employeeName || '').trim();
+  if (!name) return { success: false, msg: '缺少業務姓名' };
+  const threshold = (typeof declineThreshold === 'number') ? declineThreshold : -10;
+
+  const cacheKey = 'CUST_YOY_MATRIX_v5_' + name.replace(/\s/g, '') + '_' + threshold;
+  try {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return { success: true, data: cached };
+  } catch (e) {}
+
+  try {
+    // ── 1. 取業績 YoY（呼叫現有函數，有自己的 30 分鐘快取）
+    const yoyRes = getCustomerYtdCompareByBiz(name);
+    const salesMap = (yoyRes && yoyRes.success) ? (yoyRes.data || {}) : {};
+
+    // 🚀 快取/雙保險備援：從系統權威的 getSalesOverview() 補強今年 YTD 業績
+    try {
+      const ovRes = getSalesOverview();
+      if (ovRes && ovRes.success && ovRes.data && ovRes.data.people) {
+        const person = ovRes.data.people.find(p => p.name === name || p.alias === name);
+        if (person && person.customers) {
+          person.customers.forEach(c => {
+            const amtNTD = Math.round((c.ytd || 0) * 10000); // c.ytd 是以「萬」為單位
+            const cName = c.name;
+            if (!salesMap[cName]) {
+              salesMap[cName] = { thisYear: amtNTD, lastYear: 0 };
+            } else if ((salesMap[cName].thisYear === 0 || !salesMap[cName].thisYear) && amtNTD > 0) {
+              salesMap[cName].thisYear = amtNTD;
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("getSalesOverview 備援讀取跳過: " + e);
+    }
+
+    // ── 2. 取到訪資料（呼叫現有函數，有自己的 30 分鐘快取）
+    const visitRes = getCustomerVisitRanking(name);
+    if (!visitRes.success) return { success: false, msg: '到訪資料失敗: ' + visitRes.msg };
+    const customers = visitRes.customers || [];
+
+    // ── 3. 計算今年到訪次數與平均勤快度門檻
+    const thisYearStr = String(new Date().getFullYear());
+    const visitMap = {};
+    let totalVisitsThisYear = 0;
+    let activeCustomerCount = 0;
+
+    customers.forEach(c => {
+      let ty = 0;
+      (c.dates || []).forEach(d => {
+        if (d.date.startsWith(thisYearStr)) { ty++; }
+      });
+      // 兼顧舊版 c.visitCount 如果 dates 為空
+      if (ty === 0 && c.visitCount > 0) ty = c.visitCount;
+
+      visitMap[c.name] = { visitsThisYear: ty, daysSince: c.daysSince, lastVisit: c.lastVisit };
+      if (ty > 0) {
+        totalVisitsThisYear += ty;
+        activeCustomerCount++;
+      }
+    });
+
+    // 平均拜訪次數門檻 (若無平均則預設 5 次)
+    const avgVisits = activeCustomerCount > 0
+      ? Math.max(3, Math.round(totalVisitsThisYear / activeCustomerCount))
+      : 5;
+
+    // ── 4. 正規化歸戶與二次前綴去重（消除所有「禾昇與禾昇綜合」、「三羽與三羽建材」重複卡片）
+    const normSalesMap = {};
+    Object.keys(salesMap).forEach(rawK => {
+      const canonical = getCustomerShortName(rawK) || rawK;
+      if (!normSalesMap[canonical]) normSalesMap[canonical] = { thisYear: 0, lastYear: 0 };
+      normSalesMap[canonical].thisYear += (salesMap[rawK].thisYear || 0);
+      normSalesMap[canonical].lastYear += (salesMap[rawK].lastYear || 0);
+    });
+
+    const normVisitMap = {};
+    Object.keys(visitMap).forEach(rawK => {
+      const canonical = getCustomerShortName(rawK) || rawK;
+      const v = visitMap[rawK];
+      if (!normVisitMap[canonical]) {
+        normVisitMap[canonical] = { visitsThisYear: 0, daysSince: null, lastVisit: '' };
+      }
+      normVisitMap[canonical].visitsThisYear += (v.visitsThisYear || 0);
+      if (v.lastVisit && (!normVisitMap[canonical].lastVisit || v.lastVisit > normVisitMap[canonical].lastVisit)) {
+        normVisitMap[canonical].lastVisit = v.lastVisit;
+      }
+      if (v.daysSince !== null && (normVisitMap[canonical].daysSince === null || v.daysSince < normVisitMap[canonical].daysSince)) {
+        normVisitMap[canonical].daysSince = v.daysSince;
+      }
+    });
+
+    const rawCanonicalSet = new Set([...Object.keys(normSalesMap), ...Object.keys(normVisitMap)]);
+    // 🚀 二次前綴歸戶聚類：如果「禾昇綜合」與「禾昇」同時存在（或字首前綴完全命中），併入較短的標準名稱「禾昇」
+    const sortedKeys = Array.from(rawCanonicalSet).sort((a, b) => a.length - b.length);
+    const finalCanonicalMap = {};
+
+    sortedKeys.forEach(k => {
+      let parentKey = Object.keys(finalCanonicalMap).find(p => p.length >= 2 && k.indexOf(p) === 0);
+      if (!parentKey) {
+        parentKey = k;
+        finalCanonicalMap[parentKey] = { thisYear: 0, lastYear: 0, visitsThisYear: 0, daysSince: null, lastVisit: '' };
+      }
+      const s = normSalesMap[k] || { thisYear: 0, lastYear: 0 };
+      const v = normVisitMap[k] || { visitsThisYear: 0, daysSince: null, lastVisit: '' };
+
+      finalCanonicalMap[parentKey].thisYear += (s.thisYear || 0);
+      finalCanonicalMap[parentKey].lastYear += (s.lastYear || 0);
+      finalCanonicalMap[parentKey].visitsThisYear += (v.visitsThisYear || 0);
+      if (v.lastVisit && (!finalCanonicalMap[parentKey].lastVisit || v.lastVisit > finalCanonicalMap[parentKey].lastVisit)) {
+        finalCanonicalMap[parentKey].lastVisit = v.lastVisit;
+      }
+      if (v.daysSince !== null && (finalCanonicalMap[parentKey].daysSince === null || v.daysSince < finalCanonicalMap[parentKey].daysSince)) {
+        finalCanonicalMap[parentKey].daysSince = v.daysSince;
+      }
+    });
+
+    const result = [];
+
+    Object.keys(finalCanonicalMap).forEach(custName => {
+      const item = finalCanonicalMap[custName];
+      const salesThisYear = Math.round(item.thisYear);
+      const salesLastYear = Math.round(item.lastYear);
+      const visitsThisYear = item.visitsThisYear || 0;
+
+      // 零交易客戶 (今年與去年皆無交易)
+      const isZeroSales = (salesThisYear === 0 && salesLastYear === 0);
+
+      // 計算業績 YoY %
+      let salesYoy = 0;
+      let salesDown = false;
+      if (salesLastYear > 0) {
+        salesYoy = Math.round((salesThisYear - salesLastYear) / salesLastYear * 100);
+        salesDown = salesYoy < threshold;
+      } else if (salesThisYear > 0) {
+        salesYoy = 999; // 新起單 / 成長
+        salesDown = false;
+      } else {
+        salesYoy = 0;
+        salesDown = false;
+      }
+
+      // 到訪勤快度：高於或等於平均到訪次數算「高/勤跑」，否則算「低/少訪」
+      const isHighVisit = visitsThisYear >= avgVisits;
+
+      let category;
+      if (isZeroSales) {
+        category = 'NEW'; // 無交易金額/潛在
+      } else if (salesDown) {
+        // 業績下滑
+        category = !isHighVisit ? 'A' : 'B'; // A=雙警報(少去且跌) B=效率低(常去但跌)
+      } else {
+        // 業績成長或持平
+        category = !isHighVisit ? 'C' : 'D'; // C=驚喜(少去但漲) D=正常(常去且漲)
+      }
+
+      result.push({
+        name: custName,
+        salesThisYear: salesThisYear,
+        salesLastYear: salesLastYear,
+        salesYoy: salesYoy,
+        visitsThisYear: visitsThisYear,
+        isHighVisit: isHighVisit,
+        daysSince: item.daysSince,
+        lastVisit: item.lastVisit,
+        category: category,
+        isNewCustomer: isZeroSales
+      });
+    });
+
+    // 排序：A > B > C > D > NEW，同象限內業績跌幅大或交易量大的排前面
+    const catOrder = { A: 0, B: 1, C: 2, D: 3, NEW: 4 };
+    result.sort((a, b) => {
+      const co = catOrder[a.category] - catOrder[b.category];
+      if (co !== 0) return co;
+      return (b.salesLastYear - b.salesThisYear) - (a.salesLastYear - a.salesThisYear);
+    });
+
+    // 摘要統計
+    const summary = { A: 0, B: 0, C: 0, D: 0, NEW: 0 };
+    result.forEach(r => { summary[r.category] = (summary[r.category] || 0) + 1; });
+
+    const output = {
+      customers: result,
+      summary: summary,
+      threshold: threshold,
+      avgVisitsBenchmark: avgVisits,
+      generatedAt: new Date().getTime()
+    };
+    try { CacheManager.putLarge(cacheKey, output, 1800); } catch (e) {}
+    return { success: true, data: output };
   } catch (e) {
     return { success: false, msg: e.toString() };
   }
@@ -1025,6 +1233,14 @@ function getDailyReportData(employeeName) {
     const now = new Date();
     const dateStr = Utilities.formatDate(now, "GMT+8", "yyyy-MM-dd");
 
+    // 🚀 [2026-08] Script Cache（今日 2 分鐘），供定時預熱命中
+    try {
+      const cache0 = CacheService.getScriptCache();
+      const dk = "FW_DAILY_" + String(employeeName || "").trim().replace(/\s/g, '') + "_" + dateStr;
+      const c0 = cache0.get(dk);
+      if (c0) return JSON.parse(c0);
+    } catch (e) {}
+
     // 1. 考勤狀態
     const status = getTodayStatus(employeeName);
     console.log("考勤狀態:", JSON.stringify(status));
@@ -1066,11 +1282,11 @@ function getDailyReportData(employeeName) {
       console.error("業績串接失敗:", err);
     }
 
-    return {
+    const result = {
       success: true,
       date: dateStr,
       attendance: status,
-      punchIn: !!(status.checkin),             // ✅ 前端需要
+      punchIn: !!(status.checkin),             // ✅ 前端需要**
       punchInTime: status.checkin || null,      // ✅ 前端需要
       checkin: status.checkin || null,           // ✅ 備用
       checkout: status.checkout || null,
@@ -1082,14 +1298,61 @@ function getDailyReportData(employeeName) {
       yearSales: yearSales,
       employeeName: employeeName
     };
+
+    // 🚀 [2026-08] 寫入 Script Cache（2 分鐘）
+    try {
+      const cacheEnd = CacheService.getScriptCache();
+      cacheEnd.put("FW_DAILY_" + String(employeeName || "").trim().replace(/\s/g, '') + "_" + dateStr, JSON.stringify(result), 120);
+    } catch (e) {}
+
+    return result;
   } catch (e) {
     return { success: false, msg: e.toString() };
   }
 }
 
 /**
- * 👁️ 管理者專用：取得全體業務員今日報表 (全知視角)
+ * 🌡️ [2026-08] 定時預熱版面記錄（工作日誌）快取：Daily 報表 + 工作日誌歷史
+ * 遍歷所有業務，預先填充 getDailyReportData 與 getWorkLogHistory 的 Script Cache。
  */
+function prewarmFieldWorkCache() {
+  try {
+    var salesRes = getSalesList(true);
+    var sales = (salesRes && salesRes.success && salesRes.data) ? salesRes.data : [];
+
+    var now = new Date();
+    var dateStrs = [];
+    for (var i = 0; i < 3; i++) {
+      var d = new Date(now); d.setDate(d.getDate() - i);
+      dateStrs.push(Utilities.formatDate(d, "GMT+8", "yyyy-MM-dd"));
+    }
+
+    var done = 0, failed = 0;
+    sales.forEach(function (name) {
+      if (!name || !String(name).trim()) return;
+      // Daily 報表：僅預熱今天
+      try {
+        var daily = getDailyReportData(String(name).trim());
+        if (daily && daily.success) done++; else failed++;
+      } catch (e) { failed++; }
+
+      // 工作日誌歷史：今天 + 前兩天
+      dateStrs.forEach(function (ds) {
+        try {
+          var wl = getWorkLogHistory(String(name).trim(), ds);
+          if (wl && wl.success) done++; else failed++;
+        } catch (e) { failed++; }
+      });
+    });
+
+    var summary = "版面記錄預熱完成: " + done + " 組快取, 失敗 " + failed + " 組 (" + sales.length + " 業務)";
+    console.log(summary);
+    return { success: true, msg: summary, total: sales.length };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
 /**
  * 🖥️ 每日總覽用：一次讀取「業務配送清單」(LOGISTICS_SS_ID)，依派遣司機分組出指定日期的電腦指派任務。
  * 過濾規則與 Code_SalesDelivery.js 的 getSalesDeliveryTasks 一致（含「今日結案的任務即使不是當天派送也顯示」規則），
@@ -1157,9 +1420,7 @@ function fwGetAssignedTasksForDate_(dateStrHyphen) {
       }
 
       let shouldShow = false;
-      if (rowDateSlash === dateStrSlash) {
-        shouldShow = true;
-      } else if (fDateSlash === todayStrSlash && dateStrSlash === todayStrSlash) {
+      if (rowDateSlash === dateStrSlash || rowDateSlash === todayStrSlash || fDateSlash === todayStrSlash) {
         shouldShow = true;
       }
       if (!shouldShow) continue;
@@ -1181,7 +1442,8 @@ function fwGetAssignedTasksForDate_(dateStrHyphen) {
         address: idx.address !== -1 ? String(data[i][idx.address] || '') : '',
         shippingType: finalType,
         status: status || "待指派",
-        isFinished: isFinished
+        isFinished: isFinished,
+        taskDate: rowDateSlash
       });
     }
   } catch (e) {
@@ -1194,7 +1456,7 @@ function getAllSalesDailyReports(targetDate) {
   try {
     // 快取：同一天內不重複讀表（今天短、過去日期長，比照全知視角口徑）
     const cache = CacheService.getScriptCache();
-    const cacheKey = "ALL_SALES_v5_" + (targetDate || "AUTO"); // v5: 新增 assignedTasks(電腦指派)
+    const cacheKey = "ALL_SALES_v6_" + (targetDate || "AUTO"); // v6: 新增 taskDate 配送日期標籤
     const cached = cache.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
@@ -2000,14 +2262,15 @@ function getDrivingHistory(employeeName) {
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     oneWeekAgo.setHours(0, 0, 0, 0);
 
-    const logs = data.slice(1)
-      .filter(row => {
-        const rowName = String(row[1]).trim();
-        if (rowName !== searchName) return false;
-        const rowDate = (row[0] instanceof Date) ? row[0] : new Date(row[0]);
-        return rowDate >= oneWeekAgo;
-      })
-      .map(row => ({
+    let logs = [];
+    for (let ri = 1; ri < data.length; ri++) {
+      const row = data[ri];
+      const rowName = String(row[1]).trim();
+      if (rowName !== searchName) continue;
+      const rowDate = (row[0] instanceof Date) ? row[0] : new Date(row[0]);
+      if (!(rowDate >= oneWeekAgo)) continue;
+      logs.push({
+        row: ri + 1, // 工作表實際列號
         date: formatDateWithDay(row[0]),
         plate: String(row[2]),
         start: row[3],
@@ -2017,12 +2280,13 @@ function getDrivingHistory(employeeName) {
         fuelLiters: row[7],
         fuelAmt: row[8],
         note: row[9]
-      }))
-      .sort((a, b) => {
-        const dateA = new Date(a.date.split(' ')[0]).getTime();
-        const dateB = new Date(b.date.split(' ')[0]).getTime();
-        return dateB - dateA;
       });
+    }
+    logs.sort((a, b) => {
+      const dateA = new Date(a.date.split(' ')[0]).getTime();
+      const dateB = new Date(b.date.split(' ')[0]).getTime();
+      return dateB - dateA;
+    });
 
     return { success: true, logs: logs };
   } catch (e) {
@@ -2167,6 +2431,102 @@ function saveDrivingFuelRecord(payload) {
       }
       return { success: true, id: id, distance: dist, route: route, updated: false };
     }
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * ✏️ 更新單筆行駛/加油紀錄（整列覆寫，2026-08 新增）
+ * payload: { row, date, plate, start, end, route, fuelLiters, fuelAmount, note }
+ * @param {Object} payload.row 工作表列號
+ */
+function updateDrivingRecord(payload) {
+  try {
+    const rowIdx = parseInt(payload.row, 10);
+    if (!rowIdx || rowIdx < 2) return { success: false, msg: "缺少有效的列號" };
+
+    const sheet = getFwSheet(FW_CONFIG.SHEETS.DRIVING_LOG);
+    if (rowIdx > sheet.getLastRow()) return { success: false, msg: "列號超出範圍" };
+
+    const start = parseFloat(payload.start) || 0;
+    const end = parseFloat(payload.end) || 0;
+    const dist = Math.max(0, end - start);
+    const fuelLit = parseFloat(payload.fuelLiters) || 0;
+    const fuelAmt = parseFloat(payload.fuelAmount) || 0;
+    const dateStr = payload.date || Utilities.formatDate(new Date(), "GMT+8", "yyyy-MM-dd");
+
+    const existing = sheet.getRange(rowIdx, 1, 1, 11).getValues()[0];
+
+    const row = [
+      dateStr,
+      existing[1],                             // 姓名保留
+      String(payload.plate !== undefined && payload.plate !== "" ? payload.plate : (existing[2] || "")), // 車牌
+      start,
+      end,
+      dist,
+      String(payload.route !== undefined ? payload.route : (existing[6] || "")), // 行程
+      fuelLit,
+      fuelAmt,
+      String(payload.note !== undefined ? payload.note : (existing[9] || "")),   // 備註
+      existing[10]                             // 記錄 ID 保留
+    ];
+
+    sheet.getRange(rowIdx, 1, 1, 11).setValues([row]);
+
+    // 🚀 [2026-08] 清除該業務當日報表快取，避免顯示舊里程/油資
+    clearWorkLogCache_(String(existing[1] || ""), dateStr);
+
+    // 重新排序：依姓名(2) 升冪、日期(1) 降冪
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort([
+        { column: 2, ascending: true },
+        { column: 1, ascending: false }
+      ]);
+    }
+
+    return { success: true, msg: "✅ 行駛/加油紀錄已更新" };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 🗑️ 刪除單筆行駛/加油紀錄 (2026-08 新增)
+ * @param {number} row 工作表列號
+ */
+function deleteDrivingRecord(row) {
+  try {
+    const rowIdx = parseInt(row, 10);
+    if (!rowIdx || rowIdx < 2) return { success: false, msg: "缺少有效的列號" };
+
+    const sheet = getFwSheet(FW_CONFIG.SHEETS.DRIVING_LOG);
+    if (rowIdx > sheet.getLastRow()) return { success: false, msg: "列號超出範圍" };
+
+    const rmEmp = String(sheet.getRange(rowIdx, 2).getValue() || "");
+    const rmDateRaw = sheet.getRange(rowIdx, 1).getValue();
+    let rmDateStr = "";
+    if (rmDateRaw instanceof Date) {
+      rmDateStr = Utilities.formatDate(rmDateRaw, "GMT+8", "yyyy-MM-dd");
+    } else {
+      rmDateStr = String(rmDateRaw).split(' ')[0];
+    }
+    sheet.deleteRow(rowIdx);
+
+    // 🚀 [2026-08] 清除該業務當日報表快取
+    if (rmEmp && rmDateStr) clearWorkLogCache_(rmEmp, rmDateStr);
+
+    // 重新排序：依姓名(2) 升冪、日期(1) 降冪
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort([
+        { column: 2, ascending: true },
+        { column: 1, ascending: false }
+      ]);
+    }
+
+    return { success: true, msg: "✅ 行駛/加油紀錄已刪除" };
   } catch (e) {
     return { success: false, msg: e.toString() };
   }
@@ -2338,13 +2698,15 @@ function uploadFile(photoData, namePrefix) {
  * ⚙️ 系統設定：一鍵啟動自動化通知觸發器 (管理者手動執行一次即可)
  * 1. 每日 18:00 - 19:00 發送全體行程報表給 高弘治
  * 2. 每日 19:00 - 20:00 偵測未下班人員並發送通知
+ * 3. [2026-08] 每日 08:00 / 12:00 預熱配送 + 版面記錄快取
  */
 function setupFieldWorkTriggers() {
   // 先清除舊的觸發器避免重複
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => {
     if (t.getHandlerFunction() === "sendDailyAdminSummary" ||
-      t.getHandlerFunction() === "sendMissingCheckoutReminders") {
+      t.getHandlerFunction() === "sendMissingCheckoutReminders" ||
+      t.getHandlerFunction() === "runAllPreWarm") {
       ScriptApp.deleteTrigger(t);
     }
   });
@@ -2365,7 +2727,42 @@ function setupFieldWorkTriggers() {
     .inTimezone("GMT+8")
     .create();
 
-  console.log("✅ 自動化觸發器已設定完成：\n1. 每日 18:00 行程彙報\n2. 每日 19:00 未下班提醒");
+  // 3. [2026-08] 預熱觸發器：08:00 與 12:00
+  ScriptApp.newTrigger("runAllPreWarm")
+    .timeBased()
+    .atHour(8)
+    .everyDays(1)
+    .inTimezone("GMT+8")
+    .create();
+  ScriptApp.newTrigger("runAllPreWarm")
+    .timeBased()
+    .atHour(12)
+    .everyDays(1)
+    .inTimezone("GMT+8")
+    .create();
+
+  console.log("✅ 自動化觸發器已設定完成：\n1. 每日 18:00 行程彙報\n2. 每日 19:00 未下班提醒\n3. 每日 08:00/12:00 快取預熱");
+}
+
+/**
+ * 🌡️ [2026-08] 統一預熱入口（由觸發器呼叫）：
+ * 預熱「業務配送清單」與「版面記錄（工作日誌）」的 Script Cache。
+ * 若無業務名單可取得，仍會嘗試常見清單以避免完全空轉。
+ */
+function runAllPreWarm() {
+  const results = {};
+  try {
+    results.delivery = prewarmDeliveryCache();
+  } catch (e) {
+    results.delivery = { success: false, msg: e.toString() };
+  }
+  try {
+    results.fieldWork = prewarmFieldWorkCache();
+  } catch (e) {
+    results.fieldWork = { success: false, msg: e.toString() };
+  }
+  console.log("runAllPreWarm 完成: " + JSON.stringify(results));
+  return { success: true, results: results };
 }
 
 /**

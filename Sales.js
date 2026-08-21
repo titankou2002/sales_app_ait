@@ -86,6 +86,53 @@ const DEFAULT_BONUS_CONFIG = {
 //    這裡原本的重複定義是過時版本（漏掉大永/新大永、琮達/琮威等 10 組合併規則），已刪除避免蓋掉正確版本。
 //    詳見 MD讀取/客戶合併原則.md。
 
+/**
+ * 📇 客戶 → 負責業務對照（讀「業務分區」）。同一次執行內只讀一次（模組層快取），
+ * 供業績/獎金計算的歸戶判斷優先查詢，取代直接信任「經銷銷售報表」逐列的「負責業務」欄原文。
+ * key 用 getCustomerShortName 正規化，跟「經銷銷售報表」客戶欄比對時要用同一套正規化才會對上。
+ */
+let _customerOwnerMapCache_ = null;
+function getCustomerOwnerMap_(ss) {
+  if (_customerOwnerMapCache_) return _customerOwnerMapCache_;
+  const map = {};
+  try {
+    const sheet = ss.getSheetByName("業務分區");
+    if (sheet) {
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      const custColIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
+      const salesColIdx = findHeaderIndex(headers, ["負責業務", "業務", "負責人", "業務員"]);
+      if (custColIdx !== -1 && salesColIdx !== -1) {
+        for (let i = 1; i < data.length; i++) {
+          const raw = String(data[i][custColIdx] || '').trim();
+          if (!raw) continue;
+          const short = getCustomerShortName(raw);
+          if (!short) continue;
+          const owner = String(data[i][salesColIdx] || '').trim();
+          if (owner) map[short] = owner;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("getCustomerOwnerMap_ 讀取「業務分區」失敗: " + e);
+  }
+  _customerOwnerMapCache_ = map;
+  return map;
+}
+
+/**
+ * 🎯 決定某筆交易實際要拿去比對「是誰的業績」的字串：
+ *   優先查「業務分區」該客戶目前指派的負責業務；查不到（該客戶不在業務分區表裡）才退回
+ *   「經銷銷售報表」那一列自己的「負責業務」欄原文。
+ * @param {string} custRaw 該列客戶名稱原文（未正規化亦可，內部會正規化查表）
+ * @param {string} rawSalesColStr 該列「負責業務」欄原文（查無業務分區指派時的備援值）
+ */
+function resolveRowOwnerStr_(ss, custRaw, rawSalesColStr) {
+  const ownerMap = getCustomerOwnerMap_(ss);
+  const owner = ownerMap[getCustomerShortName(custRaw)];
+  return owner || rawSalesColStr;
+}
+
 function getSharedSalesWeight(name) {
   const s = String(name || '').trim();
   return (s.includes('漢樺') || s.includes('波爾泰')) ? 1 / 3 : 1;
@@ -139,7 +186,9 @@ function saveActiveBonusConfig(config) {
   try {
     PropertiesService.getScriptProperties().setProperty("BONUS_CONFIG", JSON.stringify(config));
     // 清除概況的快取，讓調整後即時重新計算
-    CacheManager.removeLarge("sales_overview_v3.3_monthly");
+    CacheManager.removeLarge("sales_overview_v3.4_monthly");
+    // 🐛 [2026-08-14 修正] 一併清除後台獎金精算報表快取，否則改門檻後 1 小時內報表仍顯示舊數據
+    clearAdminBonusReportCacheWindow_();
     return { success: true, msg: "獎金參數設定儲存成功並已即時生效！" };
   } catch(e) {
     return { success: false, msg: "儲存設定失敗: " + e.toString() };
@@ -147,16 +196,33 @@ function saveActiveBonusConfig(config) {
 }
 
 /**
+ * 🧹 清除最近一年（當月前後各 6 個月，涵蓋跨年）的後台獎金報表快取
+ */
+function clearAdminBonusReportCacheWindow_() {
+  const now = new Date();
+  for (let offset = -6; offset <= 6; offset++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    try { CacheManager.removeLarge("admin_bonus_report_v5_" + y + "_" + m); } catch(e) {}
+  }
+}
+
+/**
  * 📊 產生後台業績獎金精算與低於六折折半明細報表 (供小姐查看)
  */
-function getAdminBonusReport(year, monthIdx) {
-  const cacheKey = "admin_bonus_report_v4_" + year + "_" + monthIdx;
-  const cached = CacheManager.getLarge(cacheKey);
-  if (cached) return cached;
+function getAdminBonusReport(year, monthIdx, forceRefresh) {
+  const cacheKey = "admin_bonus_report_v5_" + year + "_" + monthIdx;
+  // 🐛 [2026-08-15 修正] 「計算」按鈕原本會先吃 1 小時快取，改門檻後按計算/重新整理都可能還是舊資料。
+  //    forceRefresh 為 true 時（前端「計算」按鈕永遠帶 true）直接略過快取讀取，強制重新算最新結果。
+  if (!forceRefresh) {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return cached;
+  }
 
   const result = _computeAdminBonusReport(year, monthIdx);
   if (result.success) {
-    CacheManager.putLarge(cacheKey, result, 3600); // 快取 1 小時
+    CacheManager.putLarge(cacheKey, result, 3600); // 快取 1 小時（供其他非強制重整的讀取共用）
   }
   return result;
 }
@@ -165,7 +231,7 @@ function getAdminBonusReport(year, monthIdx) {
  * 🔄 強制清除指定月份的後台精算快取（編輯/儲存時呼叫）
  */
 function clearAdminBonusReportCache(year, monthIdx) {
-  CacheManager.removeLarge("admin_bonus_report_v4_" + year + "_" + monthIdx);
+  CacheManager.removeLarge("admin_bonus_report_v5_" + year + "_" + monthIdx);
 }
 
 function _computeAdminBonusReport(year, monthIdx) {
@@ -246,7 +312,9 @@ function _computeAdminBonusReport(year, monthIdx) {
         const custName = String(r[sIdx.cust] || "").trim();
         const isSharedCust3 = (custName.includes('漢樺') || custName.includes('波爾泰'));
         const sharedMembers3 = ['謝博皓', '潘右森', '陳勁多'];
-        const shouldCount3 = isSharedCust3 ? sharedMembers3.includes(name) : String(r[sIdx.sales] || "").includes(name);
+        // 🎯 歸戶優先查「業務分區」該客戶目前指派的負責業務，查無指派才退回本列「經銷銷售報表」原文
+        const ownerStr = resolveRowOwnerStr_(ss, custName, String(r[sIdx.sales] || ""));
+        const shouldCount3 = isSharedCust3 ? sharedMembers3.includes(name) : ownerStr.includes(name);
         if (!shouldCount3) return;
 
         const note = String(r[sIdx.note] || "");
@@ -903,7 +971,7 @@ function setSleeperAnnualTarget(value) {
     const v = parseFloat(value);
     if (isNaN(v) || v <= 0) return { success: false, msg: "目標金額不正確" };
     PropertiesService.getScriptProperties().setProperty("SLEEPER_ANNUAL_TARGET", String(v));
-    CacheManager.removeLarge('sales_overview_v3.3_monthly');
+    CacheManager.removeLarge('sales_overview_v3.4_monthly');
     return { success: true };
   } catch (e) {
     return { success: false, msg: e.toString() };
@@ -918,7 +986,12 @@ function getCustomerYtdCompareByBiz(employeeName) {
   const name = String(employeeName || '').trim();
   if (!name) return { success: false, msg: "缺少業務姓名" };
 
-  const cacheKey = 'CUST_YTD_v3_' + name;
+  // 找業務員設定（支援名字與別名，例：陳勁多 ↔ 多多）
+  const personObj = (SALES_CONFIG.SALES_PEOPLE || []).find(p => p.name === name || (p.alias && p.alias === name));
+  const targetName = personObj ? personObj.name : name;
+  const targetAlias = personObj ? personObj.alias : '';
+
+  const cacheKey = 'CUST_YTD_v6_' + targetName;
   const cached = CacheManager.getLarge(cacheKey);
   if (cached) return { success: true, data: cached };
 
@@ -927,8 +1000,21 @@ function getCustomerYtdCompareByBiz(employeeName) {
     const salesSheet = ss.getSheetByName(SALES_CONFIG.SHEET_SALES);
     if (!salesSheet) return { success: false, msg: "找不到經銷銷售報表" };
 
-    const salesData = salesSheet.getDataRange().getValues();
-    const sh = salesData[0] || [];
+    const salesRaw = salesSheet.getDataRange().getValues();
+    if (salesRaw.length === 0) return { success: true, data: {} };
+
+    // 🚀 1. 偵測報表標題行 (戰情室與全站自動掃描邏輯)
+    let headerRowIdx = -1;
+    for (let i = 0; i < Math.min(25, salesRaw.length); i++) {
+       const rowStr = salesRaw[i].join("");
+       if (rowStr.includes("日期") && (rowStr.includes("金額") || rowStr.includes("銷額"))) {
+         headerRowIdx = i;
+         break;
+       }
+    }
+    if (headerRowIdx === -1) headerRowIdx = 0;
+
+    const sh = salesRaw[headerRowIdx];
     const sIdx = {
       date: findHeaderIndex(sh, ["單據日期", "銷貨日期", "日期"]),
       sales: findHeaderIndex(sh, ["負責業務", "業務", "負責人", "業務員"]),
@@ -950,9 +1036,10 @@ function getCustomerYtdCompareByBiz(employeeName) {
     const map = {}; // custName → { thisYear, lastYear }
     const sharedMembers = ['謝博皓', '潘右森', '陳勁多'];
 
-    salesData.slice(1).forEach(r => {
-      const d = r[sIdx.date];
-      if (!(d instanceof Date)) return;
+    salesRaw.slice(headerRowIdx + 1).forEach(r => {
+      const d = parseDate(r[sIdx.date]);
+      if (!d || isNaN(d.getTime())) return;
+
       const y = d.getFullYear();
       if (y !== thisYear && y !== lastYear) return;
       if (y === lastYear) {
@@ -965,15 +1052,20 @@ function getCustomerYtdCompareByBiz(employeeName) {
       const note = String(r[sIdx.note] || "");
       if (custRaw.includes('樣品') || note.includes('樣品') || note.includes('扣帶') || note.includes('代領') || custRaw.includes('代領')) return;
 
-      const rowSales = String(r[sIdx.sales] || "");
+      // 🎯 歸戶優先查「業務分區」該客戶目前指派的負責業務，查無指派才退回本列「經銷銷售報表」原文
+      const rowSales = resolveRowOwnerStr_(ss, custRaw, String(r[sIdx.sales] || ""));
       const isSharedCust = (custRaw.includes('漢樺') || custRaw.includes('波爾泰'));
-      const shouldCount = isSharedCust ? sharedMembers.includes(name) : rowSales.includes(name);
+      const shouldCount = isSharedCust
+        ? sharedMembers.includes(targetName)
+        : (rowSales.includes(targetName) || (targetAlias && rowSales.includes(targetAlias)));
       if (!shouldCount) return;
+
       const weight = isSharedCust ? 1 / 3 : 1;
 
-      const rawAmt = parseFloat(r[sIdx.amt]) || 0;
+      // 修正：正規表達式加入逗號 [$,\s,] 確保解析 4,599 及 $ 格式正確
+      const rawAmt = parseFloat(String(r[sIdx.amt] || "0").replace(/[$,\s,]/g, "")) || 0;
       if (rawAmt === 0) return;
-      const code = String(r[sIdx.code] || "").toUpperCase().replace(/[\s\-]/g, '');
+      const code = sIdx.code !== -1 ? String(r[sIdx.code] || "").toUpperCase().replace(/[\s\-]/g, '') : "";
       const amt = getAdjustedAmt(rawAmt, code, sIdx.qty !== -1 ? r[sIdx.qty] : 0, sIdx.price !== -1 ? r[sIdx.price] : 0, peerPriceMap) * weight;
 
       const custName = getCustomerShortName(custRaw);
@@ -990,7 +1082,7 @@ function getCustomerYtdCompareByBiz(employeeName) {
 }
 
 function getSalesOverview() {
-  const cacheKey = 'sales_overview_v3.3_monthly'; // 升級快取 Key（新增睡美人明細/目標）
+  const cacheKey = 'sales_overview_v3.4_monthly'; // 升級快取 Key（新增睡美人明細/目標）
   const cached = CacheManager.getLarge(cacheKey);
   if (cached) return { success: true, data: cached };
 
@@ -1119,7 +1211,8 @@ function getSalesOverview() {
       }
 
       // 2. 業務員統計
-      const rowSales = String(r[sIdx.sales] || "");
+      // 🎯 歸戶優先查「業務分區」該客戶目前指派的負責業務，查無指派才退回本列「經銷銷售報表」原文
+      const rowSales = resolveRowOwnerStr_(ss, custName, String(r[sIdx.sales] || ""));
       const isSharedCust = (custName.includes('漢樺') || custName.includes('波爾泰'));
       const weight = isSharedCust ? 1 / 3 : 1;
       const weightedAmt = amt * weight;
@@ -1345,7 +1438,8 @@ function getSalespersonKpi(salesName, monthIdx) {
 
       const custName = String(r[sIdx.cust] || "").trim();
       const isSharedCust2 = (custName.includes('漢樺') || custName.includes('波爾泰'));
-      const rowSalesStr = String(r[sIdx.sales] || "");
+      // 🎯 歸戶優先查「業務分區」該客戶目前指派的負責業務，查無指派才退回本列「經銷銷售報表」原文
+      const rowSalesStr = resolveRowOwnerStr_(ss, custName, String(r[sIdx.sales] || ""));
       const shouldCount2 = isSharedCust2 ? sharedMembers2.includes(person.name) : rowSalesStr.includes(person.name);
       if (!shouldCount2) return;
 
@@ -1450,7 +1544,9 @@ function getSleeperDetails(salesName, monthIdx) {
       const isSharedCust4 = (custName.includes('漢樺') || custName.includes('波爾泰'));
       const sharedMembers4 = ['謝博皓', '潘右森', '陳勁多'];
       if (salesName) {
-        const shouldCount4 = isSharedCust4 ? sharedMembers4.includes(salesName) : String(r[sIdx.sales] || "").includes(salesName);
+        // 🎯 歸戶優先查「業務分區」該客戶目前指派的負責業務，查無指派才退回本列「經銷銷售報表」原文
+        const rowSalesStr4 = resolveRowOwnerStr_(ss, custName, String(r[sIdx.sales] || ""));
+        const shouldCount4 = isSharedCust4 ? sharedMembers4.includes(salesName) : rowSalesStr4.includes(salesName);
         if (!shouldCount4) return;
       }
 
@@ -1939,7 +2035,7 @@ function saveSalesBonusRow(rowIdx, productCode, qty, unitPrice, cost, peerPrice)
     }
     
     // 清除大緩存
-    CacheManager.removeLarge("sales_overview_v3.3_monthly");
+    CacheManager.removeLarge("sales_overview_v3.4_monthly");
     _sleeperConfigMapCache = null;
     
     return { success: true };
@@ -1989,4 +2085,300 @@ function recalcAwardsBySettleAmount(salesName, monthIdx, settleAmount) {
   result.netPayout = result.totalBonus - result.staffShare;
 
   return result;
+}
+
+/**
+ * 🚀 高雅瓷特定業務與客戶銷量分析數據 (與安帝嘉/睡美人戰情室全效能快取對齊)
+ */
+function getSalesPerformanceData(sales, key, targetCustomer, timeRange) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
+    const cacheSheet = ss.getSheetByName("年度銷售快取");
+    if (!cacheSheet) {
+      return { success: false, msg: "找不到年度銷售快取工作表" };
+    }
+
+    const cacheData = cacheSheet.getDataRange().getValues();
+    if (cacheData.length < 2) {
+      return { success: false, msg: "年度銷售快取尚無數據" };
+    }
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1; // 1-12
+
+    const past12Months = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(currentYear, currentMonth - 1 - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      past12Months.push({
+        year: y,
+        month: m,
+        key: `${y}-${String(m).padStart(2, '0')}`,
+        label: `${y}/${String(m).padStart(2, '0')}`,
+        currentAmount: 0,
+        previousAmount: 0,
+        currentPings: 0,
+        previousPings: 0
+      });
+    }
+
+    const monthMap = {};
+    past12Months.forEach(m => { monthMap[m.key] = m; });
+
+    const keys1y = {};
+    const keys6m = {};
+    const keys1m = {};
+    past12Months.forEach((m, idx) => {
+      keys1y[m.key] = true;
+      if (idx >= 6) keys6m[m.key] = true;
+      if (idx === 10) keys1m[m.key] = true;
+    });
+
+    const lastMonthLabel = past12Months[10] ? past12Months[10].label : '上個月';
+
+    const h = cacheData[0];
+    const idx = {
+      year: findHeaderIndex(h, ["年度"]),
+      month: findHeaderIndex(h, ["月份"]),
+      sku: findHeaderIndex(h, ["產品編號"]),
+      cust: findHeaderIndex(h, ["客戶名稱"]),
+      sales: findHeaderIndex(h, ["負責業務", "業務"]),
+      pings: findHeaderIndex(h, ["銷售坪數"]),
+      amt: findHeaderIndex(h, ["銷售金額"]),
+      count: findHeaderIndex(h, ["交易筆數"]),
+      lastDate: findHeaderIndex(h, ["最後交易日"]),
+      prodName: findHeaderIndex(h, ["產品名稱"])
+    };
+
+    const { codeSeriesMap } = getPeerPriceAndSeriesMap(ss);
+    const seriesMap = codeSeriesMap || {};
+    const targetSales = sales ? String(sales).trim() : '';
+
+    let curYearAmount = 0, prevYearAmount = 0, curYearPings = 0;
+    let curMonthAmount = 0, prevMonthAmount = 0, curMonthPings = 0;
+    const customerListSet = {};
+
+    const normTargetCustomer = targetCustomer ? String(targetCustomer).trim() : '';
+
+    const customerMonthlyMap = {};
+    past12Months.forEach(m => {
+      customerMonthlyMap[m.key] = {
+        year: m.year,
+        month: m.month,
+        label: m.label,
+        currentAmount: 0,
+        previousAmount: 0,
+        currentPings: 0,
+        previousPings: 0
+      };
+    });
+
+    const customerItemsMap = {};
+
+    for (let i = 1; i < cacheData.length; i++) {
+      const row = cacheData[i];
+      const rowSales = String(row[idx.sales] || '').trim();
+
+      if (targetSales && rowSales !== targetSales) continue;
+
+      const rowYear = Number(row[idx.year]);
+      const rowMonth = Number(row[idx.month]);
+      const sku = String(row[idx.sku] || '').trim();
+      const cust = String(row[idx.cust] || '').trim();
+      if (!cust) continue;
+
+      const amount = Number(row[idx.amt]) || 0;
+      const pings = Number(row[idx.pings]) || 0;
+      const txCount = Number(row[idx.count]) || 0;
+      const rawLastDate = String(row[idx.lastDate] || '').trim();
+      const prodName = String(row[idx.prodName] || '').trim();
+
+      if (cust) {
+        customerListSet[cust] = (customerListSet[cust] || 0) + amount;
+      }
+
+      if (rowYear === currentYear) {
+        curYearAmount += amount;
+        curYearPings += pings;
+        if (rowMonth === currentMonth) {
+          curMonthAmount += amount;
+          curMonthPings += pings;
+        }
+      } else if (rowYear === (currentYear - 1)) {
+        prevYearAmount += amount;
+        if (rowMonth === currentMonth) {
+          prevMonthAmount += amount;
+        }
+      }
+
+      const mKey = `${rowYear}-${String(rowMonth).padStart(2, '0')}`;
+      if (monthMap[mKey]) {
+        monthMap[mKey].currentAmount += amount;
+        monthMap[mKey].currentPings += pings;
+      }
+      const prevMKey = `${rowYear + 1}-${String(rowMonth).padStart(2, '0')}`;
+      if (monthMap[prevMKey]) {
+        monthMap[prevMKey].previousAmount += amount;
+        monthMap[prevMKey].previousPings += pings;
+      }
+
+      if (normTargetCustomer && cust === normTargetCustomer) {
+        if (customerMonthlyMap[mKey]) {
+          customerMonthlyMap[mKey].currentAmount += amount;
+          customerMonthlyMap[mKey].currentPings += pings;
+        }
+        if (customerMonthlyMap[prevMKey]) {
+          customerMonthlyMap[prevMKey].previousAmount += amount;
+          customerMonthlyMap[prevMKey].previousPings += pings;
+        }
+
+        if (monthMap[mKey] || monthMap[prevMKey]) {
+          const seriesName = seriesMap[sku] || '一般系列';
+
+          if (!customerItemsMap[sku]) {
+            customerItemsMap[sku] = {
+              sku: sku,
+              series: seriesName,
+              productName: prodName || sku,
+              monthlySales: {},
+              lastTxDate: ''
+            };
+          }
+
+          if (!customerItemsMap[sku].monthlySales[mKey]) {
+            customerItemsMap[sku].monthlySales[mKey] = { amount: 0, pings: 0, txCount: 0 };
+          }
+          customerItemsMap[sku].monthlySales[mKey].amount += amount;
+          customerItemsMap[sku].monthlySales[mKey].pings += pings;
+          customerItemsMap[sku].monthlySales[mKey].txCount += txCount;
+
+          if (rawLastDate) {
+            if (!customerItemsMap[sku].lastTxDate || rawLastDate > customerItemsMap[sku].lastTxDate) {
+              customerItemsMap[sku].lastTxDate = rawLastDate.substring(0, 10);
+            }
+          }
+        }
+      }
+    }
+
+    const customerList = Object.keys(customerListSet).sort((a, b) => customerListSet[b] - customerListSet[a]);
+
+    const ytdYoY = prevYearAmount > 0 ? ((curYearAmount - prevYearAmount) / prevYearAmount) * 100 : 0;
+    const monthYoY = prevMonthAmount > 0 ? ((curMonthAmount - prevMonthAmount) / prevMonthAmount) * 100 : 0;
+
+    const personalMonthlyTrendDesc = past12Months.slice().reverse().map(m => ({
+      label: m.label,
+      currentAmount: m.currentAmount,
+      previousAmount: m.previousAmount,
+      currentPings: m.currentPings,
+      previousPings: m.previousPings
+    }));
+
+    let customerAnalysis = null;
+    if (normTargetCustomer) {
+      const buildWindow = (keysFilter, windowLabel) => {
+        let curAmt = 0, prevAmt = 0, curPings = 0, prevPings = 0;
+        const monthlyList = [];
+        past12Months.forEach(m => {
+          if (keysFilter[m.key]) {
+            const data = customerMonthlyMap[m.key] || {};
+            curAmt += (data.currentAmount || 0);
+            prevAmt += (data.previousAmount || 0);
+            curPings += (data.currentPings || 0);
+            prevPings += (data.previousPings || 0);
+            monthlyList.push({
+              label: m.label,
+              currentAmount: data.currentAmount || 0,
+              previousAmount: data.previousAmount || 0,
+              currentPings: data.currentPings || 0,
+              previousPings: data.previousPings || 0
+            });
+          }
+        });
+
+        monthlyList.reverse();
+        const yoy = prevAmt > 0 ? ((curAmt - prevAmt) / prevAmt) * 100 : 0;
+
+        let windowTotalAmt = 0;
+        const itemList = [];
+
+        Object.keys(customerItemsMap).forEach(sku => {
+          const item = customerItemsMap[sku];
+          let amt = 0, pings = 0, tx = 0;
+          Object.keys(item.monthlySales).forEach(mk => {
+            if (keysFilter[mk]) {
+              amt += item.monthlySales[mk].amount;
+              pings += item.monthlySales[mk].pings;
+              tx += item.monthlySales[mk].txCount;
+            }
+          });
+          if (amt > 0 || pings > 0) {
+            windowTotalAmt += amt;
+            itemList.push({
+              sku: item.sku,
+              series: item.series,
+              productName: item.productName,
+              totalPings: pings,
+              totalAmount: amt,
+              txCount: tx,
+              lastTxDate: item.lastTxDate
+            });
+          }
+        });
+
+        itemList.sort((a, b) => b.totalAmount - a.totalAmount);
+        itemList.forEach((it, idx) => {
+          it.rank = idx + 1;
+          it.sharePercent = windowTotalAmt > 0 ? Math.round((it.totalAmount / windowTotalAmt) * 100) : 0;
+        });
+
+        return {
+          label: windowLabel,
+          curAmount: curAmt,
+          prevAmount: prevAmt,
+          curPings: curPings,
+          prevPings: prevPings,
+          yoyPercent: yoy,
+          monthlyTrend: monthlyList,
+          items: itemList
+        };
+      };
+
+      customerAnalysis = {
+        customerName: normTargetCustomer,
+        lastMonthLabel: lastMonthLabel,
+        timeWindows: {
+          '1y': buildWindow(keys1y, '最近一年'),
+          '6m': buildWindow(keys6m, '最近半年'),
+          '1m': buildWindow(keys1m, lastMonthLabel)
+        }
+      };
+    }
+
+    return {
+      success: true,
+      salesName: targetSales,
+      lastMonthLabel: lastMonthLabel,
+      overview: {
+        currentYear: currentYear,
+        currentMonth: currentMonth,
+        curYearAmount: curYearAmount,
+        prevYearAmount: prevYearAmount,
+        ytdYoYPercent: ytdYoY,
+        curYearPings: curYearPings,
+        curMonthAmount: curMonthAmount,
+        prevMonthAmount: prevMonthAmount,
+        monthYoYPercent: monthYoY,
+        curMonthPings: curMonthPings,
+        customerCount: customerList.length,
+        monthlyTrend: personalMonthlyTrendDesc
+      },
+      customerList: customerList,
+      customerAnalysis: customerAnalysis
+    };
+  } catch (e) {
+    return { success: false, msg: "讀取業績數據錯誤: " + e.toString() };
+  }
 }

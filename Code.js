@@ -1,5 +1,6 @@
 /**
  * 版面記錄神器 - 後端核心 (戰情室旗艦版)
+ * (2026-07-28: 清除 Drive 同步衝突誤推的重複檔案，強制觸發一次真正的整批覆蓋)
  */
 
 function getScriptProp_(key) {
@@ -1595,6 +1596,52 @@ function doGet(e) {
           text-align: right;
         }
 
+        #bonus-report-container .bonus-sheet-name-input {
+          text-align: left !important;
+          font-weight: 700 !important;
+        }
+
+        #bonus-report-container .bonus-row-actions {
+          white-space: nowrap;
+          text-align: center;
+          width: 56px;
+        }
+
+        #bonus-report-container .bonus-row-btn {
+          width: 22px;
+          height: 22px;
+          line-height: 20px;
+          border-radius: 50%;
+          border: 1px solid #c9b99a;
+          background: rgba(0,0,0,0.04);
+          color: #4a3d20;
+          font-size: 14px;
+          font-weight: 900;
+          cursor: pointer;
+          padding: 0;
+          margin: 0 2px;
+        }
+
+        #bonus-report-container .bonus-row-btn:active {
+          transform: scale(0.9);
+        }
+
+        #bonus-report-container .bonus-row-btn-del {
+          border-color: #e0a0a0;
+          color: #c0392b;
+        }
+
+        .dark-mode #bonus-report-container .bonus-row-btn {
+          background: rgba(255,255,255,0.08);
+          color: #fff;
+          border-color: rgba(255,255,255,0.25);
+        }
+
+        .dark-mode #bonus-report-container .bonus-row-btn-del {
+          border-color: rgba(255,107,107,0.5);
+          color: #ff6b6b;
+        }
+
         #bonus-report-container .bonus-sheet-table th:nth-child(1) { width: 16%; }
         #bonus-report-container .bonus-sheet-table th:nth-child(2) { width: 12%; }
         #bonus-report-container .bonus-sheet-table th:nth-child(3) { width: 12%; }
@@ -2864,7 +2911,32 @@ function doGet(e) {
               clearInterval(stageTimer);
               container.innerHTML = '<p style="color: var(--neon-pink);">載入失敗：' + (err && err.message ? err.message : err) + '</p>';
             })
-            .getAdminBonusReport(year, month);
+            .getAdminBonusReport(year, month, true);
+        }
+
+        /**
+         * 🧮 手動改「業績獎金小計」或「內勤提撥」時，即時重算「業務業績實領」與「實領」
+         */
+        function recalcMainBonusRow(el) {
+          const row = el.closest('tr');
+          if (!row) return;
+          const bonusInput = row.querySelector('.main-combined-bonus-input');
+          const shareInput = row.querySelector('.main-staff-share-input');
+          const netPayoutInput = row.querySelector('.main-net-payout-input');
+          const totalCell = row.querySelector('.main-total-actual');
+          const bonus = parseFloat(bonusInput?.value) || 0;
+
+          if (el === bonusInput) {
+            // 改「業績獎金小計」：內勤提撥自動抓 10%（可再手動覆蓋）
+            const rate = (window.adminBonusReportData && window.adminBonusReportData.globalConfig && window.adminBonusReportData.globalConfig.STAFF_SHARE_RATE) || 0.1;
+            if (shareInput) shareInput.value = Math.round(bonus * rate);
+          }
+          const staffShare = parseFloat(shareInput?.value) || 0;
+          const netPayout = bonus - staffShare;
+          if (netPayoutInput) netPayoutInput.value = netPayout;
+
+          const deliveryBonus = parseFloat(row.dataset.deliverybonus) || 0;
+          if (totalCell) totalCell.innerText = '$ ' + Math.round(netPayout + deliveryBonus).toLocaleString();
         }
 
         function renderAdminBonusReport(data) {
@@ -2883,15 +2955,15 @@ function doGet(e) {
               '<table>' +
                 '<thead>' +
                   '<tr>' +
-                    '<th style="padding: 14px 12px;">業務姓名</th>' +
-                    '<th style="padding: 14px 12px;">當月實銷金額</th>' +
-                    '<th style="padding: 14px 12px;">運費扣除</th>' +
-                    '<th style="padding: 14px 12px;">業績獎金小計</th>' +
-                    '<th style="padding: 14px 12px;">內勤提撥 (' + Math.round(data.globalConfig.STAFF_SHARE_RATE * 100) + '%)</th>' +
-                    '<th style="padding: 14px 12px;">業務業績實領</th>' +
-                    '<th style="padding: 14px 12px;">配送獎金</th>' +
-                    '<th style="padding: 14px 12px;">合計總實領</th>' +
-                    '<th style="padding: 14px 12px;">操作</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap; min-width: 110px;">業務姓名</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">當月實銷金額</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">運費扣除</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">業績獎金小計</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">內勤提撥 (' + Math.round(data.globalConfig.STAFF_SHARE_RATE * 100) + '%)</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">業務業績實領</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">配送</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">實領</th>' +
+                    '<th style="padding: 14px 12px; white-space: nowrap;">操作</th>' +
                   '</tr>' +
                 '</thead>' +
                 '<tbody>';
@@ -2901,12 +2973,12 @@ function doGet(e) {
             const totalActualPayout = p.netPayout + (p.deliveryBonus || 0);
             const freightDeduction = p.freightDeductionAmount || 0;
             html += 
-              '<tr data-salesrow="' + p.name + '">' +
-                '<td style="font-weight: 700; color: var(--neon-cyan); padding: 14px 12px;">' + p.name + '</td>' +
+              '<tr data-salesrow="' + p.name + '" data-deliverybonus="' + (p.deliveryBonus || 0) + '">' +
+                '<td style="font-weight: 700; color: var(--neon-cyan); padding: 14px 12px; white-space: nowrap;">' + p.name + '</td>' +
                 '<td class="main-monthly-sales" style="font-weight: bold; padding: 8px 12px;"><input type="number" class="main-monthly-sales-input" value="' + p.monthlySales + '" style="width:100%;padding:4px 6px;border:1px solid var(--neon-cyan);background:var(--inline-bg);color:var(--pixel-white);font-weight:bold;text-align:right;" /></td>' +
                 '<td class="main-freight-deduction" style="color: #f59e0b; font-weight: bold; padding: 8px 12px;"><input type="number" class="main-freight-deduction-input" value="' + freightDeduction + '" style="width:100%;padding:4px 6px;border:1px solid #f59e0b;background:var(--inline-bg);color:#f59e0b;font-weight:bold;text-align:right;" /></td>' +
-                '<td class="main-combined-bonus" style="padding: 8px 12px;"><input type="number" class="main-combined-bonus-input" value="' + combinedSalesBonus + '" style="width:100%;padding:4px 6px;border:1px solid var(--neon-cyan);background:var(--inline-bg);color:var(--pixel-white);text-align:right;" /></td>' +
-                '<td class="main-staff-share" style="color: var(--pixel-gray); padding: 8px 12px;"><input type="number" class="main-staff-share-input" value="' + p.staffShare + '" style="width:100%;padding:4px 6px;border:1px solid var(--pixel-gray);background:var(--inline-bg);color:var(--pixel-gray);text-align:right;" /></td>' +
+                '<td class="main-combined-bonus" style="padding: 8px 12px;"><input type="number" class="main-combined-bonus-input" value="' + combinedSalesBonus + '" oninput="recalcMainBonusRow(this)" style="width:100%;padding:4px 6px;border:1px solid var(--neon-cyan);background:var(--inline-bg);color:var(--pixel-white);text-align:right;" /></td>' +
+                '<td class="main-staff-share" style="color: var(--pixel-gray); padding: 8px 12px;"><input type="number" class="main-staff-share-input" value="' + p.staffShare + '" oninput="recalcMainBonusRow(this)" style="width:100%;padding:4px 6px;border:1px solid var(--pixel-gray);background:var(--inline-bg);color:var(--pixel-gray);text-align:right;" /></td>' +
                 '<td class="main-net-payout" style="padding: 8px 12px;"><input type="number" class="main-net-payout-input" value="' + p.netPayout + '" style="width:100%;padding:4px 6px;border:1px solid var(--neon-cyan);background:var(--inline-bg);color:var(--pixel-white);text-align:right;" /></td>' +
                 '<td style="color: var(--neon-pink); font-weight: bold; padding: 14px 12px;">$ ' + (p.deliveryBonus || 0).toLocaleString() + '</td>' +
                 '<td class="main-total-actual" style="color: var(--neon-green); font-weight: bold; padding: 14px 12px;">$ ' + totalActualPayout.toLocaleString() + '</td>' +
@@ -2993,6 +3065,8 @@ function doGet(e) {
               .replace(/'/g, '&#39;');
             const editableInput = (value, cls, type = 'number', isDeduct = false) =>
               '<input type="' + type + '" class="bonus-sheet-input ' + cls + (isDeduct ? ' bonus-deduct-input' : '') + '" value="' + esc(value) + '" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))">';
+            const editableTextInput = (value, cls) =>
+              '<input type="text" class="bonus-sheet-input bonus-sheet-name-input ' + cls + '" value="' + esc(value) + '" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))">';
             const groups = [];
             const groupMap = new Map();
             const totals = {
@@ -3069,8 +3143,8 @@ function doGet(e) {
             let rowsHtml = '';
             groups.forEach(r => {
               rowsHtml +=
-                '<tr data-custcode="' + esc(r.customerCode || '') + '" data-custname="' + esc(r.customerName || '') + '">' +
-                  '<td>' + esc(r.customerName || '&nbsp;') + '</td>' +
+                '<tr data-custcode="' + esc(r.customerCode || '') + '">' +
+                  '<td>' + editableTextInput(r.customerName || '', 'cust-name-input') + '</td>' +
                   '<td>' + editableInput(r.salesAmt, 'sales-input') + '</td>' +
                   '<td>' + editableInput(r.sleeperAmt, 'sleeper-input') + '</td>' +
                   '<td class="bonus-deduct-text">' + editableInput(r.freightAmt, 'freight-input', 'number', true) + '</td>' +
@@ -3079,6 +3153,10 @@ function doGet(e) {
                   '<td class="bonus-deduct-text">' + editableInput(r.halfDeduct, 'half-input', 'number', true) + '</td>' +
                   '<td class="bonus-deduct-text">' + editableInput(r.noCalcDeduct, 'nocalc-input', 'number', true) + '</td>' +
                   '<td class="bonus-settle-cell"><span class="bonus-settle-text">' + moneyText(r.settle) + '</span></td>' +
+                  '<td class="bonus-row-actions">' +
+                    '<button type="button" class="bonus-row-btn" title="在下方插入新列" onclick="insertBonusSheetRow(this)">＋</button>' +
+                    '<button type="button" class="bonus-row-btn bonus-row-btn-del" title="刪除此列" onclick="deleteBonusSheetRow(this)">×</button>' +
+                  '</td>' +
                 '</tr>';
             });
 
@@ -3099,6 +3177,7 @@ function doGet(e) {
                   '<button type="button" class="copy-btn" onclick="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))">計算</button>' +
                   '<button type="button" class="copy-btn" onclick="sortBonusSheet(this,&apos;code&apos;)">按編號排序</button>' +
                   '<button type="button" class="copy-btn" onclick="sortBonusSheet(this,&apos;settle&apos;)">按金額排序</button>' +
+                  '<button type="button" class="copy-btn" onclick="addBonusSheetRow(this)">＋ 新增列</button>' +
                   '<button type="button" class="copy-btn" onclick="exportBonusSheetJpg(this)">匯出 JPG</button>' +
                 '</div>' +
                 '<div class="table-container">' +
@@ -3110,6 +3189,7 @@ function doGet(e) {
                         '<th class="group-head" rowspan="2" style="width: 12%;">睡美人</th>' +
                         '<th class="group-head" colspan="5" style="width: 40%;">不可列入部分(應扣除)</th>' +
                         '<th class="group-head" rowspan="2" style="width: 12%;">結算可計業績</th>' +
+                        '<th class="group-head" rowspan="2" style="width: 6%;">操作</th>' +
                       '</tr>' +
                       '<tr>' +
                         '<th class="sub-head bonus-deduct-head">運費</th>' +
@@ -3133,6 +3213,7 @@ function doGet(e) {
                         '<td class="bonus-footer-half bonus-deduct-text">' + moneyText(totals.halfDeduct) + '</td>' +
                         '<td class="bonus-footer-nocalc bonus-deduct-text">' + moneyText(totals.noCalcDeduct) + '</td>' +
                         '<td class="bonus-footer-settle">' + moneyText(totals.settle) + '</td>' +
+                        '<td></td>' +
                       '</tr>' +
                     '</tfoot>' +
                   '</table>' +
@@ -3187,7 +3268,8 @@ function doGet(e) {
             if (salesName && window._bonusExportData) {
               const custData = [];
               rows.forEach(row => {
-                const name = row.dataset.custname || '';
+                const nameEl = row.querySelector('.cust-name-input');
+                const name = nameEl ? nameEl.value.trim() : '';
                 if (!name) return;
                 const getVal = sel => {
                   const el = row.querySelector(sel);
@@ -3207,6 +3289,171 @@ function doGet(e) {
 
               // 重新載入獎金報表，自動根據新結算業績重新計算獎金
               google.script.run.loadAdminBonusReport();
+            }
+          }
+
+          /**
+           * 🆕 產生一列空白可編輯列（給新增/插入共用）
+           */
+          function buildBlankBonusSheetRow() {
+            const tr = document.createElement('tr');
+            tr.setAttribute('data-custcode', '');
+            tr.innerHTML =
+              '<td><input type="text" class="bonus-sheet-input bonus-sheet-name-input cust-name-input" value="" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td><input type="number" class="bonus-sheet-input sales-input" value="0" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td><input type="number" class="bonus-sheet-input sleeper-input" value="0" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td class="bonus-deduct-text"><input type="number" class="bonus-sheet-input freight-input bonus-deduct-input" value="0" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td class="bonus-deduct-text"><input type="number" class="bonus-sheet-input return-input bonus-deduct-input" value="0" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td class="bonus-deduct-text"><input type="number" class="bonus-sheet-input discount-input bonus-deduct-input" value="0" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td class="bonus-deduct-text"><input type="number" class="bonus-sheet-input half-input bonus-deduct-input" value="0" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td class="bonus-deduct-text"><input type="number" class="bonus-sheet-input nocalc-input bonus-deduct-input" value="0" oninput="recalcBonusWorksheet(this.closest(&apos;.bonus-sheet-wrap&apos;))"></td>' +
+              '<td class="bonus-settle-cell"><span class="bonus-settle-text">0</span></td>' +
+              '<td class="bonus-row-actions">' +
+                '<button type="button" class="bonus-row-btn" title="在下方插入新列" onclick="insertBonusSheetRow(this)">＋</button>' +
+                '<button type="button" class="bonus-row-btn bonus-row-btn-del" title="刪除此列" onclick="deleteBonusSheetRow(this)">×</button>' +
+              '</td>';
+            return tr;
+          }
+
+          /**
+           * ➕ 新增列：加到表格最後一列
+           */
+          function addBonusSheetRow(btn) {
+            const sheet = btn.closest('.bonus-sheet-wrap');
+            if (!sheet) return;
+            const tbody = sheet.querySelector('tbody');
+            if (!tbody) return;
+            const tr = buildBlankBonusSheetRow();
+            tbody.appendChild(tr);
+            const nameInput = tr.querySelector('.cust-name-input');
+            if (nameInput) nameInput.focus();
+            recalcBonusWorksheet(sheet);
+          }
+
+          /**
+           * ⤵️ 插入列：在按鈕所在那一列的下方插入一列新的空白列
+           */
+          function insertBonusSheetRow(btn) {
+            const sheet = btn.closest('.bonus-sheet-wrap');
+            const currentRow = btn.closest('tr');
+            if (!sheet || !currentRow) return;
+            const tr = buildBlankBonusSheetRow();
+            currentRow.parentNode.insertBefore(tr, currentRow.nextSibling);
+            const nameInput = tr.querySelector('.cust-name-input');
+            if (nameInput) nameInput.focus();
+            recalcBonusWorksheet(sheet);
+          }
+
+          /**
+           * 🗑️ 刪除列：至少保留一列，避免整張表清空後找不到 tbody 可操作
+           */
+          function deleteBonusSheetRow(btn) {
+            const sheet = btn.closest('.bonus-sheet-wrap');
+            const currentRow = btn.closest('tr');
+            if (!sheet || !currentRow) return;
+            const tbody = sheet.querySelector('tbody');
+            if (tbody && tbody.querySelectorAll('tr').length <= 1) {
+              currentRow.remove();
+              tbody.appendChild(buildBlankBonusSheetRow());
+            } else {
+              currentRow.remove();
+            }
+            recalcBonusWorksheet(sheet);
+          }
+
+          /**
+           * 🏆 睡美人詳細算式：即時重算「加成採計」= 數量 × 成交單價 × 倍數，並更新小計列
+           */
+          function recalcSleeperDetailTable(el) {
+            const wrap = el.closest('.sleeper-detail-wrap');
+            if (!wrap) return;
+            const rows = wrap.querySelectorAll('tbody tr');
+            let subtotal = 0;
+            rows.forEach(row => {
+              const getVal = sel => {
+                const input = row.querySelector(sel);
+                return input ? (parseFloat(input.value) || 0) : 0;
+              };
+              const qty = getVal('.sd-qty');
+              const price = getVal('.sd-price');
+              const multiplier = getVal('.sd-multiplier') || 1;
+              const total = qty * price * multiplier;
+              const totalCell = row.querySelector('.sd-total-cell');
+              if (totalCell) totalCell.innerText = '$ ' + Math.round(total).toLocaleString();
+              subtotal += total;
+            });
+            const footerCell = wrap.querySelector('.sd-footer-total');
+            if (footerCell) footerCell.innerText = '$ ' + Math.round(subtotal).toLocaleString();
+          }
+
+          /**
+           * 🆕 產生一列空白可編輯睡美人明細列（給新增/插入共用）
+           */
+          function buildBlankSleeperDetailRow() {
+            const tr = document.createElement('tr');
+            const in_ = (cls, type) => '<input type="' + (type || 'text') + '" class="sleeper-detail-input ' + cls + '" value="' + (type === 'number' ? '0' : '') + '" oninput="recalcSleeperDetailTable(this)">';
+            tr.innerHTML =
+              '<td>' + in_('sd-cust') + '</td>' +
+              '<td>' + in_('sd-project') + '</td>' +
+              '<td>' + in_('sd-code') + '</td>' +
+              '<td>' + in_('sd-qty', 'number') + '</td>' +
+              '<td>' + in_('sd-price', 'number') + '</td>' +
+              '<td>' + in_('sd-grade') + '</td>' +
+              '<td>' + in_('sd-cost', 'number') + '</td>' +
+              '<td class="sd-margin-text" style="opacity:0.6;">—</td>' +
+              '<td>' + in_('sd-multiplier', 'number').replace('value="0"', 'value="1"') + '</td>' +
+              '<td class="sd-total-cell" style="color:#c084fc;font-weight:bold;">$ 0</td>' +
+              '<td class="bonus-row-actions">' +
+                '<button type="button" class="bonus-row-btn" title="在下方插入新列" onclick="insertSleeperDetailRow(this)">＋</button>' +
+                '<button type="button" class="bonus-row-btn bonus-row-btn-del" title="刪除此列" onclick="deleteSleeperDetailRow(this)">×</button>' +
+              '</td>';
+            return tr;
+          }
+
+          /**
+           * ➕ 睡美人明細新增列：加到表格最後
+           */
+          function addSleeperDetailRow(btn) {
+            const wrap = btn.closest('.sleeper-detail-wrap');
+            if (!wrap) return;
+            const tbody = wrap.querySelector('tbody');
+            if (!tbody) return;
+            const tr = buildBlankSleeperDetailRow();
+            tbody.appendChild(tr);
+            const custInput = tr.querySelector('.sd-cust');
+            if (custInput) custInput.focus();
+            recalcSleeperDetailTable(tr);
+          }
+
+          /**
+           * ⤵️ 睡美人明細插入列：在按鈕所在那一列下方插入一列新的空白列
+           */
+          function insertSleeperDetailRow(btn) {
+            const currentRow = btn.closest('tr');
+            if (!currentRow) return;
+            const tr = buildBlankSleeperDetailRow();
+            currentRow.parentNode.insertBefore(tr, currentRow.nextSibling);
+            const custInput = tr.querySelector('.sd-cust');
+            if (custInput) custInput.focus();
+            recalcSleeperDetailTable(tr);
+          }
+
+          /**
+           * 🗑️ 睡美人明細刪除列：至少保留一列
+           */
+          function deleteSleeperDetailRow(btn) {
+            const wrap = btn.closest('.sleeper-detail-wrap');
+            const currentRow = btn.closest('tr');
+            if (!wrap || !currentRow) return;
+            const tbody = wrap.querySelector('tbody');
+            if (tbody && tbody.querySelectorAll('tr').length <= 1) {
+              currentRow.remove();
+              const tr = buildBlankSleeperDetailRow();
+              tbody.appendChild(tr);
+              recalcSleeperDetailTable(tr);
+            } else {
+              currentRow.remove();
+              recalcSleeperDetailTable(wrap.querySelector('tbody tr') || wrap);
             }
           }
 
@@ -3348,6 +3595,13 @@ function doGet(e) {
           window.recalcBonusWorksheet = recalcBonusWorksheet;
           window.sortBonusSheet = sortBonusSheet;
           window.exportBonusSheetJpg = exportBonusSheetJpg;
+          window.addBonusSheetRow = addBonusSheetRow;
+          window.insertBonusSheetRow = insertBonusSheetRow;
+          window.deleteBonusSheetRow = deleteBonusSheetRow;
+          window.recalcSleeperDetailTable = recalcSleeperDetailTable;
+          window.addSleeperDetailRow = addSleeperDetailRow;
+          window.insertSleeperDetailRow = insertSleeperDetailRow;
+          window.deleteSleeperDetailRow = deleteSleeperDetailRow;
 
           function buildCalcDetailHtml(p) {
             const esc = s => String(s == null ? '' : s)
@@ -3366,12 +3620,40 @@ function doGet(e) {
               parts.push(h);
             }
             if (p.sleeperTransactions && p.sleeperTransactions.length > 0) {
-              let h = '<div style="margin-top:16px;"><h5 style="color:#c084fc;font-size:16px;margin-bottom:8px;font-weight:bold;">🏆 睡美人詳細算式</h5><div class="table-container"><table class="discount-table"><thead><tr><th>客戶</th><th>案名(備註)</th><th>產品編號</th><th>數量</th><th>成交單價</th><th>等級/成本</th><th>毛利/比值</th><th>倍數</th><th>加成採計</th></tr></thead><tbody>';
+              const sIn = (val, cls, type) =>
+                '<input type="' + (type || 'text') + '" class="sleeper-detail-input ' + cls + '" value="' + esc(val) + '" oninput="recalcSleeperDetailTable(this)">';
+              let h = '<div class="sleeper-detail-wrap" style="margin-top:16px;">' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">' +
+                  '<h5 style="color:#c084fc;font-size:16px;margin:0;font-weight:bold;">🏆 睡美人詳細算式</h5>' +
+                  '<button type="button" class="copy-btn" onclick="addSleeperDetailRow(this)">＋ 新增列</button>' +
+                '</div>' +
+                '<div class="table-container"><table class="discount-table sleeper-detail-table"><thead><tr><th>客戶</th><th>案名(備註)</th><th>產品編號</th><th>數量</th><th>成交單價</th><th>等級</th><th>成本</th><th>毛利/比值</th><th>倍數</th><th>加成採計</th><th>操作</th></tr></thead><tbody>';
+              let sleeperSubtotal = 0;
               p.sleeperTransactions.forEach(tx => {
+                sleeperSubtotal += Math.round(tx.weightedAmt || 0);
                 const marginText = (tx.margin * 100).toFixed(1) + '% / ' + tx.priceCostRatio.toFixed(2);
-                h += '<tr><td>' + esc(getCustomerShortName(tx.customer || '')) + '</td><td>' + esc(tx.projectName || '') + '</td><td><code>' + esc(tx.productCode || '') + '</code></td><td>' + esc(tx.qty || 0) + '</td><td>' + esc(Math.round(tx.unitPrice || 0)) + '</td><td>' + esc(tx.grade || '') + ' / $' + esc(Math.round(tx.cost || 0)) + '</td><td>' + esc(marginText) + '</td><td>x ' + esc(tx.multiplier || 1) + '</td><td style="color:#c084fc;font-weight:bold;">$ ' + Math.round(tx.weightedAmt || 0).toLocaleString() + '</td></tr>';
+                h += '<tr>' +
+                  '<td>' + sIn(getCustomerShortName(tx.customer || ''), 'sd-cust') + '</td>' +
+                  '<td>' + sIn(tx.projectName || '', 'sd-project') + '</td>' +
+                  '<td>' + sIn(tx.productCode || '', 'sd-code') + '</td>' +
+                  '<td>' + sIn(tx.qty || 0, 'sd-qty', 'number') + '</td>' +
+                  '<td>' + sIn(Math.round(tx.unitPrice || 0), 'sd-price', 'number') + '</td>' +
+                  '<td>' + sIn(tx.grade || '', 'sd-grade') + '</td>' +
+                  '<td>' + sIn(Math.round(tx.cost || 0), 'sd-cost', 'number') + '</td>' +
+                  '<td class="sd-margin-text" style="opacity:0.6;">' + esc(marginText) + '</td>' +
+                  '<td>' + sIn(tx.multiplier || 1, 'sd-multiplier', 'number') + '</td>' +
+                  '<td class="sd-total-cell" style="color:#c084fc;font-weight:bold;">$ ' + Math.round(tx.weightedAmt || 0).toLocaleString() + '</td>' +
+                  '<td class="bonus-row-actions">' +
+                    '<button type="button" class="bonus-row-btn" title="在下方插入新列" onclick="insertSleeperDetailRow(this)">＋</button>' +
+                    '<button type="button" class="bonus-row-btn bonus-row-btn-del" title="刪除此列" onclick="deleteSleeperDetailRow(this)">×</button>' +
+                  '</td>' +
+                '</tr>';
               });
-              h += '</tbody></table></div></div>';
+              h += '</tbody><tfoot><tr>' +
+                '<td colspan="9" style="text-align:right; font-weight:900;">睡美人加成業績小計</td>' +
+                '<td class="sd-footer-total" style="color:#c084fc;font-weight:900;">$ ' + sleeperSubtotal.toLocaleString() + '</td>' +
+                '<td></td>' +
+              '</tr></tfoot></table></div></div>';
               parts.push(h);
             }
             if (p.discountedTransactions && p.discountedTransactions.length > 0) {
@@ -4683,8 +4965,11 @@ function getCustomerShortName(name) {
 
   const suffixes = [
     '股份有限公司', '有限公司', '公司', '企業', '實業', '國際',
-    '工程', '建材', '材料', '磁磚', '精品', '商行', '貿易', '行',
-    '建設', '開發', '設計', '裝潢', '裝修', '工業'
+    '工程行', '材料行', '建材行', '磁磚行', '衛浴行', '展示中心', '旗艦店',
+    '工程', '建材', '材料', '磁磚', '精品', '商行', '貿易', '門市',
+    '建設', '開發', '設計', '裝潢', '裝修', '工業', '綜合', '有限', '股份',
+    '五金', '衛浴', '展覽', '展服', '展示', '展場', '全館', '生活', '家居', '居家',
+    '美學', '空間', '工作坊', '工作室', '總店', '分店', '行'
   ];
 
   let changed = true;
@@ -4700,7 +4985,7 @@ function getCustomerShortName(name) {
   }
 
   s = s.replace(/[-_－—–\s]+$/g, '').trim();
-  s = s.replace(/(股份有限公司|有限公司|公司|企業|實業|國際|工程|建材|材料|磁磚|精品|商行|貿易|建設|開發|設計|裝潢|裝修|工業)$/g, '').trim();
+  s = s.replace(/(股份有限公司|有限公司|公司|企業|實業|國際|工程|建材|材料|磁磚|精品|商行|貿易|建設|開發|設計|裝潢|裝修|工業|綜合|有限|股份|五金|衛浴|展覽|展服|展示|展場|全館|生活|家居|居家|美學|空間|工作坊|工作室|總店|分店|行)$/g, '').trim();
   if (s.length > 4) s = s.slice(0, 4);
   return s || String(name || '').trim().slice(0, 4);
 }
@@ -5804,9 +6089,15 @@ const CacheManager = {
  */
 /**
  * 📡 取得最近三筆缺貨新進榜（跑馬燈用）
- * 讀保留系統維護的新版欄位：產品編號 + 入榜日期，排除已結案/出清結案
+ * 讀保留系統維護的新版欄位：品編號 / 產品編號 + 入榜日期/首日進榜日，排除已結案/出清結案
  */
 function getLatestStockoutEntries() {
+  const cacheKey = 'latest_stockout_v2';
+  try {
+    const cached = CacheManager.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (e) {}
+
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
     const sh = ss.getSheetByName('缺貨進榜追蹤');
@@ -5814,40 +6105,95 @@ function getLatestStockoutEntries() {
     const lastRow = sh.getLastRow();
     if (lastRow < 2) return { success: false, msg: "暫無資料" };
 
-    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(v => String(v || '').trim());
-    const idxCode = headers.indexOf('產品編號');
-    const idxDate = headers.indexOf('入榜日期');
-    const idxCat = headers.indexOf('缺貨分類');
-    const idxClosed = headers.indexOf('是否結案');
-    const idxClear = headers.indexOf('出清結案');
-    if (idxCode === -1 || idxDate === -1) return { success: false, msg: "格式不符" };
+    const rawValues = sh.getRange(1, 1, Math.min(5, lastRow), sh.getLastColumn()).getValues();
+    let headerRowIdx = 0;
+    for (let i = 0; i < rawValues.length; i++) {
+      const rowStr = rawValues[i].join("");
+      if (rowStr.includes("編號") || rowStr.includes("產品") || rowStr.includes("日期") || rowStr.includes("品碼")) {
+        headerRowIdx = i;
+        break;
+      }
+    }
 
-    const data = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
+    const headers = rawValues[headerRowIdx].map(v => String(v || '').trim());
+    const idxCode = findHeaderIndex(headers, ['品編號', '產品編號', '編號', '品碼', '料號', '產品', 'SKU']);
+    const idxDate = findHeaderIndex(headers, ['入榜日期', '首日進榜日', '進榜日期', '日期', '最後系統同步時間', '更新日期', '建檔日期', '時間']);
+    const idxCat = findHeaderIndex(headers, ['缺貨分類', '缺貨狀況', '缺貨程度', '分類', '狀態']);
+    const idxClosed = findHeaderIndex(headers, ['是否結案', '結案', '已結案', '啟用中']);
+    const idxClear = findHeaderIndex(headers, ['出清結案', '出清']);
+    const idxStock = findHeaderIndex(headers, ['可用庫存', '現有庫存', '庫存量', '庫存']);
+    const idxReserve = findHeaderIndex(headers, ['保留量', '保留庫存', '保留坪數', '保留']);
+
+    if (idxCode === -1) return { success: false, msg: "缺貨表格式不符" };
+
+    const data = sh.getRange(headerRowIdx + 2, 1, lastRow - (headerRowIdx + 1), sh.getLastColumn()).getValues();
     const entries = [];
-    data.forEach(row => {
+
+    data.forEach((row, rIdx) => {
       const code = String(row[idxCode] || '').trim();
       if (!code) return;
-      if (idxClosed !== -1 && String(row[idxClosed] || '').trim() === '是') return;
-      if (idxClear !== -1 && String(row[idxClear] || '').trim()) return;
+
+      // 🚫 排除結案/出清
+      if (idxClosed !== -1) {
+        const cVal = String(row[idxClosed] || '').trim().toLowerCase();
+        if (cVal === '是' || cVal === '已結案' || cVal === 'true' || cVal === '1') return;
+      }
+      if (idxClear !== -1) {
+        const clVal = String(row[idxClear] || '').trim().toLowerCase();
+        if (clVal === '是' || clVal === '已結案' || clVal === 'true' || clVal === '1' || clVal === '出清') return;
+      }
+
       const cat = idxCat !== -1 ? String(row[idxCat] || '').trim() : '';
-      // 🚫 只有真正的缺貨警示分類才顯示在啟動畫面跑馬燈；「已復原」等已解決狀態不算新警示，跳過。
-      if (cat && !/缺貨|斷貨/.test(cat)) return;
-      const d = parseDate(row[idxDate]);
+      // 🚫 排除已解除或回復狀態
+      if (cat && /已到貨|已解封|解封|恢復|已復原|復原|已結案/.test(cat)) return;
+
+      const rawDate = idxDate !== -1 ? row[idxDate] : null;
+      const d = parseDate(rawDate);
+      
+      let dateStr = "";
+      if (d && !isNaN(d.getTime())) {
+        dateStr = (d.getMonth() + 1) + "/" + d.getDate();
+      } else if (rawDate) {
+        const match = String(rawDate).match(/(\d{1,2})[\/\-\.](\d{1,2})/);
+        dateStr = match ? (parseInt(match[1]) + "/" + parseInt(match[2])) : String(rawDate).trim();
+      }
+      if (!dateStr) dateStr = "最新";
+
+      const rawStock = idxStock !== -1 ? row[idxStock] : null;
+      const rawReserve = idxReserve !== -1 ? row[idxReserve] : null;
+      const stockVal = (rawStock !== null && rawStock !== '') ? parseFloat(rawStock) : NaN;
+      const reserveVal = (rawReserve !== null && rawReserve !== '') ? parseFloat(rawReserve) : NaN;
+
+      let extraInfo = '';
+      if (!isNaN(stockVal) || !isNaN(reserveVal)) {
+        const sText = !isNaN(stockVal) ? `${stockVal}坪` : '-';
+        const rText = !isNaN(reserveVal) ? `${reserveVal}坪` : '-';
+        extraInfo = ` (庫存${sText}/保留${rText})`;
+      }
+
       entries.push({
         code: code,
         cat: cat,
-        ts: d ? d.getTime() : 0,
-        dateStr: d ? ((d.getMonth() + 1) + "/" + d.getDate()) : String(row[idxDate] || '').trim()
+        extraInfo: extraInfo,
+        ts: (d && !isNaN(d.getTime())) ? d.getTime() : 0,
+        rowIdx: rIdx,
+        dateStr: dateStr
       });
     });
+
     if (!entries.length) return { success: false, msg: "暫無進榜資料" };
 
-    entries.sort((a, b) => b.ts - a.ts);
+    // 優先照日期 (ts) 降冪，日期相同或解析不出時照表格列號 (rowIdx) 降冪（最新列在後）
+    entries.sort((a, b) => (b.ts - a.ts) || (b.rowIdx - a.rowIdx));
+
     const top3 = entries.slice(0, 3).map(e => ({
-      text: e.dateStr + " " + (e.cat || "新進榜缺貨") + "：" + e.code,
-      severe: /完全|嚴重/.test(e.cat)
+      text: e.dateStr + " " + (e.cat || "新進榜缺貨") + "：" + e.code + e.extraInfo,
+      severe: /完全|嚴重|預防/.test(e.cat)
     }));
-    return { success: true, msgs: top3 };
+
+    const result = { success: true, msgs: top3 };
+    try { CacheManager.put(cacheKey, JSON.stringify(result), 300); } catch (e) {}
+    return result;
   } catch (e) {
     return { success: false, msg: e.toString() };
   }

@@ -237,6 +237,58 @@
       </div>
     </div>
 
+    <!-- ✏️ 編輯行駛/加油紀錄彈窗 (2026-08) -->
+    <div id="modal-edit-driving" class="fw-modal" style="display:none;">
+      <div class="fw-modal-content">
+        <div class="fw-modal-header">
+          <div class="fw-modal-title" style="color:#38bdf8; font-weight:800;">✏️ 編輯行駛/加油紀錄</div>
+          <button class="fw-modal-close" onclick="document.getElementById('modal-edit-driving').style.display='none'">&times;</button>
+        </div>
+        <div style="padding:20px; max-height:70vh; overflow-y:auto;">
+          <input type="hidden" id="edit-drv-row">
+          <div class="fw-field">
+            <label>日期</label>
+            <input type="date" id="edit-drv-date">
+          </div>
+          <div class="fw-field">
+            <label>車牌</label>
+            <input type="text" id="edit-drv-plate" list="plate-list" placeholder="車牌號碼">
+          </div>
+          <div class="fw-row" style="margin-top:10px;">
+            <div class="fw-field">
+              <label>起始里程</label>
+              <input type="number" id="edit-drv-start" inputmode="numeric" placeholder="起始里程">
+            </div>
+            <div class="fw-field">
+              <label>結束里程</label>
+              <input type="number" id="edit-drv-end" inputmode="numeric" placeholder="結束里程">
+            </div>
+          </div>
+          <div class="fw-field" style="margin-top:10px;">
+            <label>公升數</label>
+            <input type="number" id="edit-drv-lit" inputmode="numeric" placeholder="加油公升數">
+          </div>
+          <div class="fw-field" style="margin-top:10px;">
+            <label>加油金額</label>
+            <input type="number" id="edit-drv-amt" inputmode="numeric" placeholder="加油金額">
+          </div>
+          <div class="fw-field" style="margin-top:10px;">
+            <label>行程</label>
+            <input type="text" id="edit-drv-route" placeholder="行程內容">
+          </div>
+          <div class="fw-field" style="margin-top:10px;">
+            <label>備註</label>
+            <input type="text" id="edit-drv-note" placeholder="備註">
+          </div>
+          <div style="display:flex; gap:10px; margin-top:20px;">
+            <button class="fw-btn-primary" style="flex:1; background:linear-gradient(135deg,#38bdf8,#0284c7);" onclick="saveEditDrivingRecord()">✅ 儲存修改</button>
+            <button class="fw-btn-primary" style="flex:1; background:linear-gradient(135deg,#ef4444,#b91c1c);" onclick="deleteDrivingRecord()">🗑️ 刪除紀錄</button>
+          </div>
+          <button class="fw-btn-primary" style="width:100%; margin-top:10px; background:rgba(255,255,255,0.1);" onclick="document.getElementById('modal-edit-driving').style.display='none'">返回列表</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 🔧 Tab 4: 保養 Maintenance -->
     <div id="fw-maint" class="fw-tab-content">
       <div class="fw-form">

@@ -1,0 +1,16 @@
+**/node_modules/**
+**/.git/**
+
+# Google Drive 同步衝突產生的備份檔（內容與正檔重複，含相同函數名稱，千萬不能一起推上 Apps Script）
+Code 2.js
+Code_Customer 2.js
+Code_SalesDelivery 2.js
+FieldWork 2.js
+FieldWork_UI 2.html
+Inventory 2.js
+JS_Client 2.html
+JS_FieldWork 2.html
+Sales_UI 2.html
+Staff_Portal 2.html
+index 2.html
+PROGRESS_LOG 2.md

@@ -26,6 +26,16 @@ function getSalesDeliveryTasks(salesName, targetDateStr) {
     var now = new Date();
     var todayStr = Utilities.formatDate(now, "GMT+8", "yyyy/MM/dd");
     var filterDateStr = targetDateStr || todayStr;
+
+    // 🚀 [2026-08] Script Cache 快取（TTL 5 分鐘），供定時預熱命中
+    try {
+      var cacheKey = "DELIVERY_" + String(salesName).trim() + "_" + filterDateStr;
+      var cache = CacheService.getScriptCache();
+      var cached = cache.get(cacheKey);
+      if (cached) {
+        return { success: true, data: JSON.parse(cached) };
+      }
+    } catch (e) { /* 快取失效不影響主流程 */ }
     
     var ss = SpreadsheetApp.openById(LOGISTICS_SS_ID);
     var sheet = ss.getSheetByName("業務配送清單");
@@ -175,7 +185,53 @@ function getSalesDeliveryTasks(salesName, targetDateStr) {
       });
     }
     
+    // 🚀 [2026-08] 寫入 Script Cache
+    try {
+      var cache2 = CacheService.getScriptCache();
+      cache2.put("DELIVERY_" + String(salesName).trim() + "_" + filterDateStr, JSON.stringify(results), 300); // 5 分鐘
+    } catch (e) {}
+    
     return { success: true, data: results };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 🌡️ [2026-08] 定時預熱配送清單快取（今日＋明日、全部業務）
+ * 由觸發器每天執行數次，讓業務上線時能直接命中 Script Cache。
+ * 回傳各業務快取命中統計，方便以 Logger/Console 觀察。
+ */
+function prewarmDeliveryCache() {
+  try {
+    var salesList = getSalesList(true);
+    var sales = (salesList && salesList.success && salesList.data) ? salesList.data : [];
+
+    var now = new Date();
+    var fmt = function (d) {
+      return Utilities.formatDate(d, "GMT+8", "yyyy/MM/dd");
+    };
+    var today = fmt(now);
+    var tom = new Date(now); tom.setDate(tom.getDate() + 1);
+    var tomorrow = fmt(tom);
+
+    var done = 0, failed = 0;
+    sales.forEach(function (name) {
+      if (!name || !String(name).trim()) return;
+      [today, tomorrow].forEach(function (d) {
+        try {
+          var res = getSalesDeliveryTasks(String(name).trim(), d);
+          if (res && res.success) done++; else failed++;
+        } catch (e) {
+          failed++;
+          console.error("prewarm 失敗: " + name + " " + d + " " + e);
+        }
+      });
+    });
+
+    var summary = "配送預熱完成: " + done + " 組快取, 失敗 " + failed + " 組 (" + sales.length + " 業務 x 今日/明日)";
+    console.log(summary);
+    return { success: true, msg: summary, total: sales.length };
   } catch (e) {
     return { success: false, msg: e.toString() };
   }

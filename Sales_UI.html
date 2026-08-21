@@ -39,7 +39,7 @@
     const s = data;
     const formatWan = (v) => v === 0 ? '—' : v.toLocaleString();
 
-    // 🎨 整合型佈局：包含分頁導覽
+    // 🎨 整合型佈局：高雅瓷與安帝嘉個人與客戶雙軌分析
     let html = `
       <div class="navbar">
         <button class="nav-back" onclick="showPage('page-dashboard')">←</button>
@@ -47,30 +47,14 @@
         <div style="width:40px;"></div>
       </div>
 
-      <!-- 🔄 子分頁切換列 -->
-      <div style="display: flex; padding: 4px; background: rgba(255,255,255,0.05); border-radius: 12px; margin: 15px 16px 0; border: 1px solid rgba(255,255,255,0.05);">
-        <button id="tab-btn-sales" onclick="window.switchSalesSubTab('sales')" 
-                style="flex: 1; padding: 10px; background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: #fff; font-weight: 900; font-size: 14px; cursor: pointer; transition: all 0.2s;">
-          業績總結
-        </button>
-        <button id="tab-btn-delivery" onclick="window.switchSalesSubTab('delivery')" 
-                style="flex: 1; padding: 10px; background: transparent; border: none; border-radius: 8px; color: rgba(255,255,255,0.5); font-weight: 900; font-size: 14px; cursor: pointer; transition: all 0.2s;">
-          配送獎金
-        </button>
-      </div>
-
       <!-- 📊 業績分頁內容 -->
       <div id="subtab-sales-content" style="display: block; padding: 20px 16px 100px;">
         <!-- 原有全員合計卡 -->
         <div class="dash-card company-total-card" onclick="window.openCompanyDetail()"
-             style="margin-bottom: 24px; padding: 25px 20px; width: 100%; cursor: pointer; backdrop-filter: blur(20px); border: 2px solid rgba(255,255,255,0.2);">
+             style="margin-bottom: 20px; padding: 25px 20px; width: 100%; cursor: pointer; backdrop-filter: blur(20px); border: 2px solid rgba(255,255,255,0.2);">
           <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 20px;">
             <div style="display: flex; align-items: center; gap: 12px;">
               <div style="opacity: 0.6; font-size: 15px; font-weight: 800;">全員合計</div>
-              <div style="background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.2); border-radius: 6px; padding: 2px 8px; display: flex; align-items: center; gap: 4px;">
-                <div style="width: 5px; height: 5px; background: #a855f7; border-radius: 50%;"></div>
-                <span style="font-size: 10px; font-weight: 800; color: #a855f7;">睡美人 ${s.sleeper.month} 萬</span>
-              </div>
             </div>
             <div style="font-size: 11px; opacity: 0.4; font-weight: 800; color:#378ADD;">查看詳情 →</div>
           </div>
@@ -115,66 +99,91 @@
           </div>
         </div>
 
-        <!-- 🟣 睡美人業績區塊 -->
-        <div class="dash-card" style="margin: 0 -8px 24px; padding: 20px 12px; width: calc(100% + 16px); border: 1px solid rgba(168,85,247,0.25); background: rgba(168,85,247,0.04);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <div style="width: 8px; height: 8px; background: #a855f7; border-radius: 50%;"></div>
-              <div style="font-size: 15px; font-weight: 900; color: #a855f7;">睡美人業績</div>
+        <!-- 🚀 客戶數據查詢面板 -->
+        <div class="dash-card" style="margin-bottom: 24px; padding: 20px 16px;">
+          <div style="font-size: 15px; font-weight: 900; color: #a855f7; margin-bottom: 14px;">👤 客戶數據查詢與分析</div>
+          
+          <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+            <div>
+              <label style="font-size: 11px; opacity: 0.6; display: block; margin-bottom: 4px;">選擇客戶 (熱門優先)</label>
+              <select id="cust-select-salesui" onchange="window.onSalesUiCustSelectChange()" style="width: 100%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; color: #fff; padding: 8px; font-size: 13px; font-weight: 700;">
+                <option value="">-- 請選擇客戶 --</option>
+              </select>
             </div>
-            <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; opacity: 0.6;">
-              目標
-              <input id="sleeper-target-input" type="number" value="${s.sleeper.target}"
-                     style="width: 60px; background: rgba(255,255,255,0.08); border: 1px solid rgba(168,85,247,0.3); border-radius: 6px; color: #fff; padding: 3px 6px; font-size: 12px; font-weight: 800; text-align: center;">
-              萬
-              <button onclick="window.saveSleeperTarget()"
-                      style="background: #a855f7; border: none; border-radius: 6px; color: #fff; padding: 4px 10px; font-size: 11px; font-weight: 800; cursor: pointer;">存</button>
+            <div style="display: flex; gap: 8px;">
+              <input id="cust-input-salesui" type="text" placeholder="搜尋客戶名稱" style="flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; color: #fff; padding: 8px; font-size: 13px; font-weight: 700;" onkeypress="if(event.key==='Enter') window.searchSalesUiCustSales()">
+              <button onclick="window.searchSalesUiCustSales()" style="background: #a855f7; border: none; border-radius: 8px; color: #fff; padding: 8px 16px; font-size: 13px; font-weight: 800; cursor: pointer;">🔍 查詢</button>
             </div>
           </div>
 
-          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;">
-            <div style="font-size: 22px; font-weight: 900; color: #a855f7;">${s.sleeper.year} <span style="font-size: 12px; opacity: 0.5;">萬</span></div>
-            <div style="font-size: 13px; font-weight: 800; opacity: 0.6;">達成率 <span style="color: #a855f7;">${s.sleeper.achieveRate}%</span></div>
-          </div>
-          <div style="height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; margin-bottom: 16px;">
-            <div style="width: ${Math.min(100, s.sleeper.achieveRate)}%; height: 100%; background: #a855f7;"></div>
+          <!-- 局部非阻塞載入動畫 -->
+          <div id="cust-inline-loader-salesui" style="display: none; text-align: center; padding: 20px;">
+            <div style="width: 24px; height: 24px; border: 2px solid rgba(168,85,247,0.3); border-top-color: #a855f7; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 10px;"></div>
+            <div style="font-size: 12px; color: #a855f7; font-weight: 700;">讀取客戶分析數據中...</div>
           </div>
 
-          ${(() => {
-            const three = s.people.filter(p => ['謝博皓','潘右森','陳勁多'].includes(p.name));
-            // 業績最好的排中間，其餘排左右（第2名放左、第3名放右）
-            const sorted = [...three].sort((a, b) => b.sleeper.month - a.sleeper.month);
-            const ordered = sorted.length === 3 ? [sorted[1], sorted[0], sorted[2]] : sorted;
-            return `
-          <div style="display: grid; grid-template-columns: 0.92fr 1.16fr 0.92fr; gap: 8px; margin: 0 -4px;">
-            ${ordered.map((p, i) => {
-              const isCenter = (i === 1 && ordered.length === 3);
-              return `
-              <div class="sleeper-person-card" data-person="${p.name}"
-                   style="background: ${isCenter ? 'rgba(168,85,247,0.1)' : 'rgba(255,255,255,0.05)'};
-                          border: 1px solid ${isCenter ? 'rgba(168,85,247,0.45)' : 'rgba(255,255,255,0.1)'};
-                          border-radius: 14px; padding: ${isCenter ? '16px 8px' : '12px 6px'}; text-align: center; cursor: pointer;
-                          transform: ${isCenter ? 'scale(1.04)' : 'none'};">
-                <div style="font-size: 12px; font-weight: 800; margin-bottom: 8px;">${p.name}${isCenter ? ' 👑' : ''}</div>
-                <div class="sleeper-breath" style="font-size: ${isCenter ? '22px' : '18px'}; font-weight: 900; color: #a855f7;">${p.sleeper.month}</div>
-                <div style="font-size: 9px; opacity: 0.4; margin-bottom: 8px;">萬 / 本月</div>
-                <div style="font-size: 10px; opacity: 0.45;">年度 ${p.sleeper.year} 萬</div>
-                <div style="font-size: 10px; font-weight: 800; color: #a855f7; margin-top: 2px;">佔比 ${p.sleeper.contribRate}%</div>
-              </div>`;
-            }).join('')}
-          </div>`;
-          })()}
+          <!-- 客戶結果區 -->
+          <div id="cust-result-container-salesui" style="display: none; margin-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+              <div id="cust-header-title-salesui" style="font-size: 14px; font-weight: 900; color: #fff;">客戶分析</div>
+              <div style="display: flex; gap: 4px;">
+                <button id="tf-1y-salesui" onclick="window.switchSalesUiCustTimeFilter('1y')" style="background: rgba(168,85,247,0.2); border: 1px solid #a855f7; border-radius: 6px; color: #fff; padding: 4px 8px; font-size: 11px; font-weight: 800; cursor: pointer;">最近一年</button>
+                <button id="tf-6m-salesui" onclick="window.switchSalesUiCustTimeFilter('6m')" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: rgba(255,255,255,0.6); padding: 4px 8px; font-size: 11px; font-weight: 800; cursor: pointer;">最近半年</button>
+                <button id="tf-1m-salesui" onclick="window.switchSalesUiCustTimeFilter('1m')" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: rgba(255,255,255,0.6); padding: 4px 8px; font-size: 11px; font-weight: 800; cursor: pointer;">上個月</button>
+              </div>
+            </div>
 
-          <div id="sleeper-detail-panel" style="display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);"></div>
+            <!-- 卡片三連發 (純數值不折行) -->
+            <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px;">
+              <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 8px; text-align: center;">
+                <div style="font-size: 10px; opacity: 0.5; font-weight: 700;" id="cust-card-t1-salesui">今年 (萬)</div>
+                <div style="font-size: 18px; font-weight: 900; color: #a855f7; margin-top: 4px;" id="cust-amt1-salesui">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 8px; text-align: center;">
+                <div style="font-size: 10px; opacity: 0.5; font-weight: 700;" id="cust-card-t2-salesui">去年 (萬)</div>
+                <div style="font-size: 18px; font-weight: 900; color: #60a5fa; margin-top: 4px;" id="cust-amt2-salesui">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 8px; text-align: center;">
+                <div style="font-size: 10px; opacity: 0.5; font-weight: 700;">YoY</div>
+                <div style="font-size: 18px; font-weight: 900; margin-top: 4px;" id="cust-yoy-salesui">--</div>
+              </div>
+            </div>
+
+            <!-- 月度對照表 (最新月份置頂) -->
+            <div style="background: rgba(0,0,0,0.2); border-radius: 10px; padding: 12px; margin-bottom: 14px; overflow-x: auto;">
+              <div style="font-size: 12px; font-weight: 800; color: #a855f7; margin-bottom: 8px;" id="cust-monthly-t-salesui">🗓️ 月度對照表</div>
+              <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+                <thead>
+                  <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.5); text-align: left;">
+                    <th style="padding: 6px;">月份</th>
+                    <th style="padding: 6px;">今年 (萬)</th>
+                    <th style="padding: 6px;">去年 (萬)</th>
+                    <th style="padding: 6px;">YoY</th>
+                  </tr>
+                </thead>
+                <tbody id="cust-monthly-tbody-salesui"></tbody>
+              </table>
+            </div>
+
+            <!-- 購買明細表 (拿掉排名與品名) -->
+            <div style="background: rgba(0,0,0,0.2); border-radius: 10px; padding: 12px; overflow-x: auto;">
+              <div style="font-size: 12px; font-weight: 800; color: #a855f7; margin-bottom: 8px;" id="cust-items-t-salesui">📦 購買產品系列明細</div>
+              <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+                <thead>
+                  <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.5); text-align: left;">
+                    <th style="padding: 6px;">系列</th>
+                    <th style="padding: 6px;">編號</th>
+                    <th style="padding: 6px;">坪數</th>
+                    <th style="padding: 6px;">金額 (萬)</th>
+                    <th style="padding: 6px;">佔比</th>
+                    <th style="padding: 6px;">最後交易</th>
+                  </tr>
+                </thead>
+                <tbody id="cust-items-tbody-salesui"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
-
-        <style>
-          @keyframes sleeperBreath {
-            0%, 100% { opacity: 1; text-shadow: 0 0 0 rgba(168,85,247,0); }
-            50% { opacity: 0.55; text-shadow: 0 0 14px rgba(168,85,247,0.7); }
-          }
-          .sleeper-breath { animation: sleeperBreath 2.2s ease-in-out infinite; }
-        </style>
 
         <!-- 個人業績卡片區 -->
         <div id="sales-people-list" style="display: flex; flex-direction: column; gap: 16px;">
@@ -604,6 +613,155 @@
       </div>
     `;
     container.innerHTML = html;
+    
+    // 自動載入客戶下拉選單
+    if (window.loadSalesUiCustPerformance) {
+      window.loadSalesUiCustPerformance('');
+    }
+  };
+
+  window.onSalesUiCustSelectChange = function() {
+    var val = document.getElementById('cust-select-salesui').value;
+    document.getElementById('cust-input-salesui').value = val;
+    if (val) {
+      window.searchSalesUiCustSales(val);
+    }
+  };
+
+  window.searchSalesUiCustSales = function(custName) {
+    var target = custName || document.getElementById('cust-input-salesui').value || document.getElementById('cust-select-salesui').value;
+    target = (target || '').trim();
+    if (!target) {
+      showToast('請輸入或選擇客戶名稱');
+      return;
+    }
+    window.loadSalesUiCustPerformance(target);
+  };
+
+  window.activeSalesUiTimeRange = '1y';
+
+  window.switchSalesUiCustTimeFilter = function(range) {
+    window.activeSalesUiTimeRange = range;
+    var btn1y = document.getElementById('tf-1y-salesui');
+    var btn6m = document.getElementById('tf-6m-salesui');
+    var btn1m = document.getElementById('tf-1m-salesui');
+    if (btn1y) btn1y.style.background = range === '1y' ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.05)';
+    if (btn6m) btn6m.style.background = range === '6m' ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.05)';
+    if (btn1m) btn1m.style.background = range === '1m' ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.05)';
+
+    if (window.currentSalesUiPerfData && window.currentSalesUiPerfData.customerAnalysis) {
+      window.renderSalesUiCustomerAnalysis(window.currentSalesUiPerfData.customerAnalysis);
+    }
+  };
+
+  window.loadSalesUiCustPerformance = function(targetCust) {
+    var loader = document.getElementById('cust-inline-loader-salesui');
+    var resBox = document.getElementById('cust-result-container-salesui');
+    if (loader) loader.style.display = 'block';
+    if (resBox) resBox.style.display = 'none';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (loader) loader.style.display = 'none';
+        if (!res || !res.success) {
+          showToast(res && res.msg ? res.msg : '無法讀取數據');
+          return;
+        }
+        window.currentSalesUiPerfData = res;
+        window.renderSalesUiCustomerDropdown(res.customerList, targetCust);
+        if (res.customerAnalysis) {
+          window.renderSalesUiCustomerAnalysis(res.customerAnalysis);
+        }
+      })
+      .withFailureHandler(function(err) {
+        if (loader) loader.style.display = 'none';
+        showToast('連線失敗: ' + err);
+      })
+      .getSalesPerformanceData('', '', targetCust, window.activeSalesUiTimeRange || '1y');
+  };
+
+  window.renderSalesUiCustomerDropdown = function(list, selectedCust) {
+    var sel = document.getElementById('cust-select-salesui');
+    if (!sel) return;
+    if (!list || list.length === 0) {
+      sel.innerHTML = '<option value="">(尚無客戶記錄)</option>';
+      return;
+    }
+    var html = '<option value="">-- 請選擇客戶 (' + list.length + ' 位) --</option>';
+    list.forEach(function(c) {
+      var selAttr = (selectedCust && selectedCust === c) ? ' selected' : '';
+      html += '<option value="' + c + '"' + selAttr + '>' + c + '</option>';
+    });
+    sel.innerHTML = html;
+  };
+
+  window.renderSalesUiCustomerAnalysis = function(ca) {
+    var container = document.getElementById('cust-result-container-salesui');
+    if (!ca || !ca.timeWindows) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = 'block';
+
+    var range = window.activeSalesUiTimeRange || '1y';
+    var win = ca.timeWindows[range] || ca.timeWindows['1y'];
+
+    if (ca.lastMonthLabel) {
+      var btn1m = document.getElementById('tf-1m-salesui');
+      if (btn1m) btn1m.innerText = ca.lastMonthLabel;
+    }
+
+    const fmtWanNum = function(v) {
+      var num = Number(v || 0);
+      if (!isFinite(num) || num === 0) return '0';
+      var wan = num / 10000;
+      var absWan = Math.abs(wan);
+      if (absWan < 1) return (Math.round(wan * 10) / 10).toFixed(1);
+      var rounded = Math.round(wan * 10) / 10;
+      return (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1));
+    };
+
+    document.getElementById('cust-header-title-salesui').innerText = ca.customerName + ' (' + win.label + ')';
+    document.getElementById('cust-amt1-salesui').innerText = fmtWanNum(win.curAmount || 0);
+    document.getElementById('cust-amt2-salesui').innerText = fmtWanNum(win.prevAmount || 0);
+
+    var yoy = Math.round(Number(win.yoyPercent || 0));
+    var yoyText = yoy >= 0 ? ('+'+yoy+'%') : (yoy+'%');
+    document.getElementById('cust-yoy-salesui').innerHTML = yoy >= 0
+      ? '<span style="color:#34C759;font-weight:900;">↑ ' + yoyText + '</span>'
+      : '<span style="color:#ef4444;font-weight:900;">↓ ' + yoyText + '</span>';
+
+    // 月度對照
+    var mBody = document.getElementById('cust-monthly-tbody-salesui');
+    var mTrend = win.monthlyTrend || [];
+    mBody.innerHTML = mTrend.map(function(m) {
+      var curAmt = m.currentAmount || 0;
+      var prevAmt = m.previousAmount || 0;
+      var yoyVal = prevAmt > 0 ? Math.round(((curAmt - prevAmt) / prevAmt) * 100) : 0;
+      var yoyBadge = yoyVal >= 0
+        ? '<span style="color:#34C759;font-weight:700;">↑ ' + (yoyVal > 0 ? '+'+yoyVal : yoyVal) + '%</span>'
+        : '<span style="color:#ef4444;font-weight:700;">↓ ' + yoyVal + '%</span>';
+      return '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+        '<td style="padding:6px;"><b>' + m.label + '</b></td>' +
+        '<td style="padding:6px;">' + fmtWanNum(curAmt) + ' 萬</td>' +
+        '<td style="padding:6px;opacity:0.5;">' + (prevAmt ? fmtWanNum(prevAmt) + ' 萬' : '-') + '</td>' +
+        '<td style="padding:6px;">' + yoyBadge + '</td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="4" style="text-align:center;">此區間無紀錄</td></tr>';
+
+    // 品項明細 (拿掉排名與品名)
+    var iBody = document.getElementById('cust-items-tbody-salesui');
+    var items = win.items || [];
+    iBody.innerHTML = items.map(function(it) {
+      return '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+        '<td style="padding:6px;"><span style="background:rgba(168,85,247,0.15);color:#a855f7;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;">' + (it.series || '-') + '</span></td>' +
+        '<td style="padding:6px;"><b style="color:#a855f7;">' + it.sku + '</b></td>' +
+        '<td style="padding:6px;">' + (Math.round((it.totalPings || 0) * 10) / 10) + ' 坪</td>' +
+        '<td style="padding:6px;">' + fmtWanNum(it.totalAmount || 0) + ' 萬</td>' +
+        '<td style="padding:6px;"><span style="color:#facc15;font-weight:800;">' + it.sharePercent + '%</span></td>' +
+        '<td style="padding:6px;opacity:0.5;">' + (it.lastTxDate || '-') + '</td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="6" style="text-align:center;">在「' + win.label + '」區間無銷售紀錄</td></tr>';
   };
 
   window.loadSalespersonKpi = function(name, monthIdx) {

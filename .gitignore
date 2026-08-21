@@ -1,1 +1,6 @@
 .claude
+
+# Google Drive 同步衝突產生的備份檔（內容與正檔重複，見 .claspignore 註解）
+*[ ]2.js
+*[ ]2.html
+*[ ]2.md

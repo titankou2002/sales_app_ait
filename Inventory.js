@@ -15,18 +15,26 @@ function getScriptPropOrDefault_(key, fallback) {
   return val || fallback;
 }
 
+/** 保留單 入倉日期1/2 備援用：把日期（Date 或字串）縮成 M/D，不補零 */
+function _shortenArrivalDate_(dVal) {
+  if (!dVal) return '';
+  const d = (typeof parseDate === 'function') ? parseDate(dVal) : new Date(String(dVal));
+  if (!d || isNaN(d.getTime())) return String(dVal).trim();
+  return (d.getMonth() + 1) + '/' + d.getDate();
+}
+
 function getAggregatedInventory() {
   try {
-    const cacheKey = "inv_full_v7"; // v7: 到貨日期/數量修正為讀「保留單」分頁每列欄位(入倉日期1/2,數量1/2)，非編號價目表
+    const cacheKey = "inv_full_v11"; // v11: 移除外部「到貨明細」試算表相依，避免拖慢/卡住庫存查詢，改回只讀「保留單」分頁每列欄位(入倉日期1/2,數量1/2)
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return { success: true, data: cached };
 
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
     let data = _buildInventoryData(ss);
 
-    // 🚀 新增：今友利庫存整合 (採用獨立的長效快取 inv_jinyouli_v2，避免頻繁的外部 openById 延遲)
+    // 🚀 新增：今友利庫存整合 (採用獨立的長效快取 inv_jinyouli_v3，避免頻繁的外部 openById 延遲)
     let extData = [];
-    const jylCacheKey = "inv_jinyouli_v2";
+    const jylCacheKey = "inv_jinyouli_v3";
     const jylCached = CacheManager.getLarge(jylCacheKey);
     if (jylCached) {
       extData = jylCached;
@@ -199,8 +207,9 @@ function _buildInventoryData(ss) {
       let level = 3; 
 
       // 1. 解析尺寸判定類別 (30x60=1800)
+      // 🚀 用 \d+(?:\.\d+)? 而非 \d+，避免「59.4」被切成 59 與 4 兩個整數（放大誤判倍數）
       let isLarge = false;
-      const dims = sizeStr.match(/(\d+)/g);
+      const dims = sizeStr.match(/\d+(?:\.\d+)?/g);
       if (dims && dims.length >= 2) {
         if (parseFloat(dims[0]) * parseFloat(dims[1]) >= 1800) isLarge = true;
       } else if (/6[0-9]|8[0-9]|120/.test(sizeStr)) {
@@ -222,12 +231,14 @@ function _buildInventoryData(ss) {
         else                       level = 4; // 綠燈
       }
 
-      // 🚀 到貨資訊：實際來源是「保留單」分頁每列的入倉日期1/數量1（或2），已在上方 incomingMap 彙整
+      // 🚀 到貨資訊：改回只讀保留單 入倉日期1/2（incomingMap），拿掉外部到貨明細試算表相依，避免拖慢/卡住庫存查詢
       const incoming = incomingMap[key] || null;
       const etaRaw = incoming
         ? (incoming.date instanceof Date ? Utilities.formatDate(incoming.date, "GMT+8", "yyyy/MM/dd") : String(incoming.date || '').trim())
         : '';
       const etaQty = incoming ? (parseFloat(incoming.qty) || 0) : 0;
+      const etaShort = etaRaw ? _shortenArrivalDate_(etaRaw) : '';
+      const etaPing = etaQty > 0 && ratio > 0 ? Math.round((etaQty / ratio) * 10) / 10 : 0;
       const hasArrival = !!etaRaw;
 
       const rawImg = String(pd[i][pi.img] || '').trim();
@@ -274,7 +285,9 @@ function _buildInventoryData(ss) {
         level:    level,
         hasArrival: hasArrival,
         eta:      etaRaw,
+        etaShort: etaShort,
         etaQty:   etaQty,
+        etaPing:  etaPing,
         img:      imgUrl,
         folderId: folderId,
         scenes:   scenes,
@@ -320,9 +333,11 @@ function _buildJinYouLiData(ss) {
     const availQty = parseFloat(data[i][idx.stock])   || 0;
     
     // 🚀 自動計算坪數：根據尺寸 (1坪 = 32400 cm2)
+    // 🐛 修正：原本 /(\d+)/g 只抓整數，「59.4*59.4」會被切成 59 與 4，算出的比例暴增 15 倍，
+    //    導致 567 片被誤算成 4 坪（正確應為 62 坪左右）。改用能抓小數點的正規表達式。
     const sizeStr = idx.size !== -1 ? String(data[i][idx.size] || '') : '';
     let ratio = 36; // 預設
-    const dims = sizeStr.match(/(\d+)/g);
+    const dims = sizeStr.match(/\d+(?:\.\d+)?/g);
     if (dims && dims.length >= 2) {
       const area = parseFloat(dims[0]) * parseFloat(dims[1]);
       if (area > 0) ratio = 32400 / area;

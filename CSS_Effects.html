@@ -56,6 +56,21 @@
   .logo-persistent.minimized { opacity: 1 !important; pointer-events: auto !important; transform: scale(1); cursor: pointer; }
   .logo-persistent.minimized img { width: 32px; height: auto; }
 
+  /* 🤖 AI 查詢：讀取中轉圈動畫 */
+  .ai-query-spinner {
+    width: 34px; height: 34px; margin: 0 auto;
+    border: 3px solid rgba(56,189,248,0.2); border-top-color: #38bdf8;
+    border-radius: 50%; animation: aiSpinnerRotate 0.8s linear infinite;
+  }
+  @keyframes aiSpinnerRotate { to { transform: rotate(360deg); } }
+
+  /* 🎤 AI 查詢：語音輸入按鈕錄音中狀態 */
+  #ai-query-mic-btn.listening {
+    background: #ef4444 !important; border-color: #ef4444 !important;
+    animation: aiMicPulse 1s ease-in-out infinite;
+  }
+  @keyframes aiMicPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
+
   .dashboard-logo-img {
     width: 90px; height: auto; filter: drop-shadow(0 0 25px rgba(255, 255, 255, 0.4));
     animation: logoFloat 4s ease-in-out infinite;
