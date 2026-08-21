@@ -59,6 +59,45 @@
 
 ---
 
+## 🎯 [2026-08-21] 業績/獎金歸戶邏輯改為「業務分區優先」(版本 511)
+
+**背景**：使用者先前提出「從業務分區抓負責業務，如果業務分區沒有，再到經銷銷售報表抓」的改造需求（helper 函式當時已寫好但未套用，因中途插入獎金明細表可編輯化的需求而擱置），這次補做完成。
+
+**問題**：過去所有業績/獎金相關計算，判斷「這筆交易算誰的業績」都是直接信任「經銷銷售報表」該列自己的「負責業務」欄原文（`String(r[sIdx.sales]).includes(name)`）。但客戶改派業務時，經銷銷售報表裡的舊交易列不會回溯更新負責業務欄，導致舊資料仍歸戶到前一位業務名下，新舊業務的業績/獎金都對不準。
+
+**修正內容**（Sales.js）：
+- 新增 `getCustomerOwnerMap_(ss)`：讀取「業務分區」表建立「客戶簡稱 → 目前負責業務」對照表，同一次執行內只讀一次（模組層快取 `_customerOwnerMapCache_`）。
+- 新增 `resolveRowOwnerStr_(ss, custRaw, rawSalesColStr)`：優先查 `getCustomerOwnerMap_` 该客戶目前指派的負責業務；查無指派（該客戶不在業務分區表裡）才退回經銷銷售報表該列自己的「負責業務」欄原文。
+- 套用到 **5 個計算歸戶的呼叫點**：
+  1. `_computeAdminBonusReport`（後台獎金精算報表）
+  2. `getCustomerYtdCompareByBiz`（客戶 YoY 交叉分析矩陣）
+  3. `getSalesOverview`（業績總覽，最核心的單次掃描統計）
+  4. `getSalespersonKpi`（單人業績/當月客戶佔比）
+  5. `getSleeperDetails`（睡美人產品銷售明細）
+- 快取鍵全面 bump 避免舊歸戶結果殘留：`admin_bonus_report_v4_` → `v5_`、`CUST_YTD_v5_` → `v6_`、`sales_overview_v3.3_monthly` → `v3.4_monthly`。
+- 漢樺/波爾泰等「共享業績」客戶不受影響（仍走 `sharedMembers.includes(name)` 固定三人均分邏輯，不查業務分區）。
+
+**效果**：客戶改派業務後，即使經銷銷售報表裡的舊交易列沒有回溯更新，業績/獎金統計也會立即以「業務分區」目前指派為準；業務分區沒登記的客戶則維持原本讀報表原文的行為，不影響既有資料。
+
+**部署**：`clasp push -f` → 版本 511 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @511`（網址不變）。
+
+---
+
+## 🔒 [2026-08-21] Git 安全網 commit
+
+**背景**：這個專案長期只靠 clasp 部署與 Google Drive 雲端同步存檔，過去已發生過一次同步衝突造成 10+ 個核心檔案變成 0 bytes 的損毀事故（靠 Drive 自動產生的「檔名 2.ext」衝突備份檔搶救回來）。專案的 git 歷史裡除了 deploy.yml/favicon 相關 commit 外，核心 GAS 原始碼從未被版本控制保護過。
+
+**處理內容**：
+- `.gitignore` 新增規則排除 Google Drive 同步衝突產生的「檔名 2.ext」重複備份檔（`*[ ]2.js`、`*[ ]2.html`、`*[ ]2.md`），避免這些內容重複、含相同函數名稱的殘留檔案污染 git 歷史。
+- 將目前所有已透過 clasp 部署上線、但尚未進 git 的原始碼變更（含這個 session 與並行 session 的成果，涵蓋 v3.3~v3.4、v3.17~v3.20、v501~v511 期間所有修正）一次性 commit（`6c6f6d1`）。
+- 新增檔案一併納管：`AIQuery.js`（AI 智慧查詢助理）、`IncomingCargo.js`＋`JS_IncomingCargo.html`（到貨明細模組）、`.claspignore`、`apple-touch-icon.png`。
+
+**效果**：之後若再發生 Drive 同步衝突導致檔案損毀，可直接 `git checkout` 或 `git diff` 復原，不必再仰賴「僥倖存在的衝突備份檔」這種不可靠的救援方式。
+
+**注意**：此 commit 直接推在 `main` 分支（沿用使用者原本的操作習慣），尚未 push 到遠端 — 如需推到 GitHub 遠端，需使用者另外確認。
+
+---
+
 ## [v3.4.0] - 2026-08-07 (新增 AI 智慧查詢助理 + 到貨明細模組)
 
 ### 🤖 一、AI 智慧查詢助理 (AIQuery.js / script.html / index.html / CSS_Effects.html)
