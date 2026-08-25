@@ -6092,7 +6092,7 @@ const CacheManager = {
  * 讀保留系統維護的新版欄位：品編號 / 產品編號 + 入榜日期/首日進榜日，排除已結案/出清結案
  */
 function getLatestStockoutEntries() {
-  const cacheKey = 'latest_stockout_v2';
+  const cacheKey = 'latest_stockout_v3';
   try {
     const cached = CacheManager.get(cacheKey);
     if (cached) return JSON.parse(cached);
@@ -6144,8 +6144,9 @@ function getLatestStockoutEntries() {
       }
 
       const cat = idxCat !== -1 ? String(row[idxCat] || '').trim() : '';
-      // 🚫 排除已解除或回復狀態
-      if (cat && /已到貨|已解封|解封|恢復|已復原|復原|已結案/.test(cat)) return;
+      // 🚫 排除已解除或回復狀態（含「已補貨」— 缺貨進榜追蹤表本身會把補貨完成的列標成這個分類，
+      // 不是新的缺貨警示，不該出現在跑馬燈；只排除「已補貨」這種完成式，「補貨中」等進行式仍視為警示）
+      if (cat && /已到貨|已解封|解封|恢復|已復原|復原|已結案|已補貨|補貨完成/.test(cat)) return;
 
       const rawDate = idxDate !== -1 ? row[idxDate] : null;
       const d = parseDate(rawDate);
