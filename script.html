@@ -2025,6 +2025,7 @@
     imageData: null,
     gpsPos: null
   };
+  var _seriesBlockSeq = 0; // 系列區塊唯一序號（每次開 modal 重置）
 
   window.openAddLayoutModal = function () {
     addState = { imageData: null, gpsPos: null };
@@ -2033,21 +2034,21 @@
       '<div style="font-weight:800; font-size:16px;">拍攝現場或從相簿選擇</div>' +
       '<div style="font-size:12px; opacity:0.6; margin-top:5px;">支援相機拍照與手機相簿上傳</div>' +
       '</div>';
-    document.getElementById('add-series').value = '';
-    document.getElementById('add-sku-list').innerHTML = '';
-    addNewAddRow();
+    _seriesBlockSeq = 0;
+    document.getElementById('add-series-blocks').innerHTML = '';
+    addSeriesBlock();
     document.getElementById('add-modal').style.display = 'flex';
 
     // 預先取得定位 (作為備援)
     if (document.getElementById('add-gps-sync').checked) {
       updateGpsStatus('loading', '正在取得手機定位...');
       navigator.geolocation.getCurrentPosition(function (pos) {
-        if (!addState.gpsPos) { 
+        if (!addState.gpsPos) {
           addState.gpsPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           updateGpsStatus('phone', '📍 使用手機即時定位');
         }
-      }, function (err) { 
-        console.warn("GPS 備援失敗", err); 
+      }, function (err) {
+        console.warn("GPS 備援失敗", err);
         updateGpsStatus('none', '❌ 無法取得定位');
       });
     }
@@ -2057,8 +2058,135 @@
     document.getElementById('add-modal').style.display = 'none';
   };
 
-  window.addNewAddRow = function () {
-    var container = document.getElementById('add-sku-list');
+  /**
+   * 🚀 新增一個「系列區塊」：填系列名稱 → 自動帶入該系列品項(依尺寸分組、可勾選+填片數)，
+   * 也保留手動輸入的彈性。可重複新增多個區塊，一次記錄多系列版面（存檔時各自保留自己的系列/尺寸）。
+   */
+  window.addSeriesBlock = function () {
+    var container = document.getElementById('add-series-blocks');
+    var id = ++_seriesBlockSeq;
+    var div = document.createElement('div');
+    div.className = 'series-block';
+    div.id = 'series-block-' + id;
+    div.innerHTML =
+      (id > 1 ? '<div class="series-block-remove" onclick="removeSeriesBlock(' + id + ')">×</div>' : '') +
+      '<div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">' +
+        '<div class="edit-field-group">' +
+          '<label class="edit-label-premium">系列名稱</label>' +
+          '<input type="text" class="edit-input-dark sb-series-input" placeholder="例：沐森..." ' +
+            'onblur="fetchSeriesAutofill(' + id + ')" onkeydown="if(event.key===\'Enter\'){this.blur();}">' +
+        '</div>' +
+        '<div class="edit-field-group">' +
+          '<label class="edit-label-premium">產品尺寸 (手動新增用)</label>' +
+          '<input type="text" class="edit-input-dark sb-size-input" placeholder="例：60X120">' +
+        '</div>' +
+      '</div>' +
+      '<div class="autofill-status" id="autofill-status-' + id + '"></div>' +
+      '<div id="autofill-groups-' + id + '"></div>' +
+      '<div class="divider" style="margin:16px 0;"></div>' +
+      '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">' +
+        '<div style="font-weight:700; color:white; font-size:14px;">手動新增品項</div>' +
+        '<button class="btn-add-sku-small" onclick="addNewAddRow(' + id + ')">+ 增加型號</button>' +
+      '</div>' +
+      '<div id="add-sku-list-' + id + '"><!-- 手動型號行 --></div>';
+    container.appendChild(div);
+    var seriesInput = div.querySelector('.sb-series-input');
+    if (seriesInput) seriesInput.focus();
+  };
+
+  window.removeSeriesBlock = function (id) {
+    var el = document.getElementById('series-block-' + id);
+    if (el) el.remove();
+  };
+
+  /**
+   * 🚀 系列名稱輸入完成(失焦)後，向後端查該系列既有編號，依尺寸分組渲染成勾選清單。
+   */
+  window.fetchSeriesAutofill = function (id) {
+    var block = document.getElementById('series-block-' + id);
+    if (!block) return;
+    var input = block.querySelector('.sb-series-input');
+    var series = input && input.value ? input.value.trim() : '';
+    var statusEl = document.getElementById('autofill-status-' + id);
+    var groupsEl = document.getElementById('autofill-groups-' + id);
+    if (!groupsEl) return;
+
+    if (!series) {
+      groupsEl.innerHTML = '';
+      if (statusEl) { statusEl.textContent = ''; statusEl.className = 'autofill-status'; }
+      return;
+    }
+
+    if (statusEl) { statusEl.textContent = '正在查詢「' + series + '」的既有編號...'; statusEl.className = 'autofill-status'; }
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        // 使用者可能在查詢期間已經移除這個區塊
+        var stillGroupsEl = document.getElementById('autofill-groups-' + id);
+        var stillStatusEl = document.getElementById('autofill-status-' + id);
+        if (!stillGroupsEl || !stillStatusEl) return;
+
+        if (!res || !res.success) {
+          stillStatusEl.textContent = '查詢失敗，可手動新增品項';
+          stillStatusEl.className = 'autofill-status notfound';
+          stillGroupsEl.innerHTML = '';
+          return;
+        }
+        if (!res.seriesFound || !res.sizes || !res.sizes.length) {
+          stillStatusEl.textContent = '⚠️ 查無「' + series + '」系列的既有編號（可能是新品或名稱不同），請手動新增';
+          stillStatusEl.className = 'autofill-status notfound';
+          stillGroupsEl.innerHTML = '';
+          return;
+        }
+
+        var totalCount = res.sizes.reduce(function (s, g) { return s + g.items.length; }, 0);
+        stillStatusEl.textContent = '✅ 已帶入「' + res.matchedSeriesName + '」共 ' + totalCount + ' 個編號，勾選並填入片數即可';
+        stillStatusEl.className = 'autofill-status found';
+        stillGroupsEl.innerHTML = res.sizes.map(function (g) {
+          return '<div class="autofill-size-group">' +
+            '<div class="autofill-size-label">' + escapeHtml(g.size) + '（' + g.items.length + '）</div>' +
+            g.items.map(function (it) { return buildAutofillItemRowHtml(it, g.size); }).join('') +
+          '</div>';
+        }).join('');
+      })
+      .withFailureHandler(function (err) {
+        var stillStatusEl = document.getElementById('autofill-status-' + id);
+        if (!stillStatusEl) return;
+        stillStatusEl.textContent = '查詢失敗：' + (err && err.message ? err.message : err);
+        stillStatusEl.className = 'autofill-status notfound';
+      })
+      .getSeriesSkuOptions(series);
+  };
+
+  function buildAutofillItemRowHtml(it, sizeVal) {
+    var imgHtml = it.img
+      ? '<img src="' + it.img + '" onerror="this.parentElement.innerHTML=\'<span>NO IMG</span>\'">'
+      : '<span>NO IMG</span>';
+    return '<div class="autofill-item-row" data-sku="' + escapeHtml(it.sku) + '" data-size="' + escapeHtml(sizeVal || '') + '">' +
+      '<input type="checkbox" onchange="toggleAutofillRow(this)">' +
+      '<div class="autofill-item-thumb">' + imgHtml + '</div>' +
+      '<div class="autofill-item-info">' +
+        '<div class="autofill-item-sku">' + escapeHtml(it.sku) + '</div>' +
+        (it.color ? '<div class="autofill-item-color">' + escapeHtml(it.color) + '</div>' : '') +
+      '</div>' +
+      '<input type="number" class="autofill-item-qty" placeholder="片數" inputmode="numeric">' +
+      '<input type="text" class="autofill-item-batch" placeholder="批號">' +
+    '</div>';
+  }
+
+  window.toggleAutofillRow = function (cb) {
+    var row = cb.closest('.autofill-item-row');
+    if (row) row.classList.toggle('checked', cb.checked);
+  };
+
+  window.addNewAddRow = function (blockId) {
+    var container = blockId ? document.getElementById('add-sku-list-' + blockId) : null;
+    if (!container) {
+      // 相容：若沒傳 blockId，退回抓目前唯一/最後一個系列區塊
+      var lists = document.querySelectorAll('[id^="add-sku-list-"]');
+      container = lists.length ? lists[lists.length - 1] : null;
+    }
+    if (!container) return;
     var div = document.createElement('div');
     div.className = 'edit-row-premium';
     div.innerHTML = '<input type="text" class="edit-sku-input" placeholder="編號" inputmode="text">' +
@@ -2113,41 +2241,81 @@
 
   window.saveNewLayoutEntry = function () {
     var customerName = state.selectedCustomer || state.currentCustomer || '';
-    var series = (document.getElementById('add-series').value || '').trim();
-    var size = (document.getElementById('add-size-global').value || '').trim();
-    var rows = Array.prototype.slice.call(document.querySelectorAll('#add-sku-list .edit-row-premium'));
 
     if (!customerName) {
       showToast('⚠️ 請先選擇客戶');
       return;
     }
-    if (!series) {
-      showToast('⚠️ 請填寫系列名稱');
-      return;
-    }
-    if (!size) {
-      showToast('⚠️ 請填寫產品尺寸');
-      return;
-    }
-
-    var items = rows.map(function (row) {
-      var skuInput = row.querySelector('.edit-sku-input');
-      var qtyInput = row.querySelector('.edit-qty-input');
-      return {
-        sku: (skuInput && skuInput.value ? skuInput.value : '').trim().toUpperCase(),
-        qty: Number(qtyInput && qtyInput.value ? qtyInput.value : 1) || 1,
-        size: size
-      };
-    }).filter(function (item) {
-      return item.sku !== '';
-    });
-
-    if (items.length === 0) {
-      showToast('⚠️ 請至少填寫一個產品編號');
-      return;
-    }
     if (!addState.imageData) {
       showToast('⚠️ 請先拍攝或選擇版面照片');
+      return;
+    }
+
+    // 🚀 依序彙整每個「系列區塊」：自動帶入(勾選+有填片數)的品項 ＋ 手動新增的品項，
+    //    每個品項各自帶自己所屬的 series/size（支援一次記錄多系列版面）。
+    var blocks = Array.prototype.slice.call(document.querySelectorAll('#add-series-blocks .series-block'));
+    if (blocks.length === 0) {
+      showToast('⚠️ 請至少新增一個系列');
+      return;
+    }
+
+    var items = [];
+    var firstSeries = '', firstSize = '';
+
+    for (var bi = 0; bi < blocks.length; bi++) {
+      var block = blocks[bi];
+      var seriesInput = block.querySelector('.sb-series-input');
+      var sizeInput = block.querySelector('.sb-size-input');
+      var series = (seriesInput && seriesInput.value ? seriesInput.value : '').trim();
+      var blockSize = (sizeInput && sizeInput.value ? sizeInput.value : '').trim();
+
+      var checkedRows = Array.prototype.slice.call(block.querySelectorAll('.autofill-item-row'))
+        .filter(function (row) { return row.querySelector('input[type="checkbox"]').checked; });
+      var manualRows = Array.prototype.slice.call(block.querySelectorAll('.edit-row-premium'));
+
+      if (checkedRows.length === 0 && manualRows.length === 0) continue; // 這個區塊沒填東西，跳過
+
+      if (!series) {
+        showToast('⚠️ 有系列區塊填了品項卻沒填系列名稱，請確認');
+        return;
+      }
+      if (manualRows.length > 0 && !blockSize) {
+        showToast('⚠️「' + series + '」有手動新增的品項，請填寫產品尺寸');
+        return;
+      }
+
+      checkedRows.forEach(function (row) {
+        var qtyInput = row.querySelector('.autofill-item-qty');
+        var batchInput = row.querySelector('.autofill-item-batch');
+        var qty = Number(qtyInput && qtyInput.value ? qtyInput.value : 0) || 0;
+        if (qty <= 0) return; // 勾選了但沒填片數，不算數
+        items.push({
+          sku: (row.dataset.sku || '').toUpperCase(),
+          qty: qty,
+          batch: batchInput && batchInput.value ? batchInput.value.trim() : '',
+          series: series,
+          size: row.dataset.size || blockSize || ''
+        });
+      });
+
+      manualRows.forEach(function (row) {
+        var skuInput = row.querySelector('.edit-sku-input');
+        var qtyInput = row.querySelector('.edit-qty-input');
+        var sku = (skuInput && skuInput.value ? skuInput.value : '').trim().toUpperCase();
+        if (!sku) return;
+        items.push({
+          sku: sku,
+          qty: Number(qtyInput && qtyInput.value ? qtyInput.value : 1) || 1,
+          series: series,
+          size: blockSize
+        });
+      });
+
+      if (!firstSeries) { firstSeries = series; firstSize = blockSize; }
+    }
+
+    if (items.length === 0) {
+      showToast('⚠️ 請至少勾選一個自動帶入的品項並填入片數，或手動新增一個產品編號');
       return;
     }
 
@@ -2161,8 +2329,8 @@
     var payload = {
       customerName: customerName,
       salesperson: state.currentSales || '',
-      series: series,
-      size: size,
+      series: firstSeries, // 相容舊版共用欄位（後端拿去當照片檔名等 fallback 用），實際歸戶看每個 item 自己的 series
+      size: firstSize,
       items: items,
       image: addState.imageData,
       gps: document.getElementById('add-gps-sync').checked ? addState.gpsPos : null

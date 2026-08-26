@@ -428,27 +428,11 @@
             </div>
           </div>
 
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-top:20px;">
-            <div class="edit-field-group">
-              <label class="edit-label-premium">系列名稱</label>
-              <input type="text" id="add-series" class="edit-input-dark" placeholder="例：沐森...">
-            </div>
-            <div class="edit-field-group">
-              <label class="edit-label-premium">產品尺寸 (必填)</label>
-              <input type="text" id="add-size-global" class="edit-input-dark" placeholder="例：60X120">
-            </div>
-          </div>
+          <!-- 🚀 系列區塊：輸入系列名稱後自動帶入該系列所有編號(依尺寸分組、可勾選+填數量)，
+               也保留手動輸入的彈性；可新增多個系列區塊，一次記錄多系列版面 -->
+          <div id="add-series-blocks"><!-- 動態系列區塊，由 JS 產生 --></div>
 
-          <div class="divider" style="margin:20px 0;"></div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-            <div style="font-weight:700; color:white;">品項明細</div>
-            <button class="btn-add-sku-small" onclick="addNewAddRow()">+ 增加型號</button>
-          </div>
-
-          <div id="add-sku-list">
-            <!-- 動態型號行 -->
-          </div>
+          <button class="btn-add-sku-small" style="width:100%; margin-top:6px; padding:12px;" onclick="addSeriesBlock()">＋ 新增系列</button>
 
           <!-- 📍 定位選項 -->
           <div class="premium-switch-container">

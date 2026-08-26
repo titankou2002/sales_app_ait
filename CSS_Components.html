@@ -37,6 +37,14 @@
     flex: 1; padding: 24px; background: #000; color: #fff; height: auto; min-height: 100%; padding-bottom: 80px;
   }
 
+  /* 💻 電腦版：手機版全螢幕彈窗在寬螢幕上沒有寬度上限，照片會被拉伸到跟整個瀏覽器視窗一樣寬、
+     看起來異常巨大。桌機寬度改成置中、限制最大寬度，維持手機版的比例觀感。
+     只限制 .modal-content 本身（不動 .modal-overlay 的 align-items），
+     navbar 才能維持原本橫跨整個視窗頂端的滿版樣式，不會被跟著縮窄置中。 */
+  @media (min-width: 992px) {
+    .modal-content { max-width: 520px; margin: 0 auto; }
+  }
+
   .nav-title {
     font-size: 17px; font-weight: 800; letter-spacing: -0.3px;
     flex: 1; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

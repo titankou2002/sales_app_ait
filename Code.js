@@ -5934,6 +5934,48 @@ function parseDate(dateStr) {
   return null;
 }
 
+/**
+ * 🚀 「新增上架」表單自動帶入：輸入系列名稱後，回傳該系列所有編號，依尺寸分組，
+ * 供前端渲染成「勾選＋填數量」的清單，加速輸入（不用逐個手打編號）。
+ * 直接複用 getAggregatedInventory() 既有快取（庫存查詢同一份資料），不額外開表。
+ */
+function getSeriesSkuOptions(seriesName) {
+  try {
+    const target = String(seriesName || '').trim();
+    if (!target) return { success: false, msg: '缺少系列名稱' };
+
+    const invRes = getAggregatedInventory();
+    if (!invRes.success) return { success: false, msg: invRes.msg || '庫存資料讀取失敗' };
+
+    // 先精準比對系列名稱；比對不到才退回模糊比對（雙向 includes，容忍打全名/簡稱）
+    let matched = invRes.data.filter(p => p.sCn === target);
+    if (matched.length === 0) {
+      matched = invRes.data.filter(p => p.sCn && (p.sCn.includes(target) || target.includes(p.sCn)));
+    }
+    if (matched.length === 0) return { success: true, seriesFound: false, sizes: [] };
+
+    // 依尺寸分組，組內依編號排序
+    const bySize = {};
+    matched.forEach(p => {
+      const sizeKey = p.size || '規格外';
+      if (!bySize[sizeKey]) bySize[sizeKey] = [];
+      bySize[sizeKey].push({
+        sku: p.sku,
+        color: p.colorTag || '',
+        img: p.img || ''
+      });
+    });
+    const sizes = Object.keys(bySize).sort().map(sz => ({
+      size: sz,
+      items: bySize[sz].sort((a, b) => a.sku.localeCompare(b.sku))
+    }));
+
+    return { success: true, seriesFound: true, matchedSeriesName: matched[0].sCn, sizes: sizes };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
 function saveNewLayout(payload) {
   const now = new Date(); // 🚀 Move to top to avoid ReferenceError
   const ss = getSafeSsBusiness();
@@ -6005,11 +6047,13 @@ function saveNewLayout(payload) {
     if (idx.custId !== -1) newRow[idx.custId] = payload.customerId || "";
     if (idx.custName !== -1) newRow[idx.custName] = payload.customerName;
     if (idx.date !== -1) newRow[idx.date] = timeStr;
-    if (idx.series !== -1) newRow[idx.series] = payload.series;
+    // 🚀 支援多系列一次送出：每個品項可帶自己的 series/size（來自「系列自動帶入」多個系列區塊），
+    //    沒帶就退回整包共用的 payload.series/size（相容舊版單系列送出方式）。
+    if (idx.series !== -1) newRow[idx.series] = item.series || payload.series;
     if (idx.sku !== -1) newRow[idx.sku] = item.sku.trim().toUpperCase();
     if (idx.batch !== -1) newRow[idx.batch] = item.batch || "";
     if (idx.qty !== -1) newRow[idx.qty] = item.qty || 1;
-    if (idx.size !== -1) newRow[idx.size] = payload.size || ""; // 🚀 寫入尺寸
+    if (idx.size !== -1) newRow[idx.size] = item.size || payload.size || ""; // 🚀 寫入尺寸
     if (idx.mode !== -1) newRow[idx.mode] = "版面";
     if (idx.link !== -1) newRow[idx.link] = imageUrl;
     if (idx.creator !== -1) newRow[idx.creator] = payload.salesperson;

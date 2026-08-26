@@ -153,6 +153,50 @@
   }
   .btn-remove-premium:active { transform: scale(0.8); background: #eee; }
 
+  /* 🚀 系列區塊：輸入系列名稱自動帶入該系列品項（依尺寸分組、可勾選+填數量），加速新增上架輸入 */
+  .series-block {
+    position: relative; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px; padding: 20px; margin-top: 20px;
+  }
+  .series-block-remove {
+    position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff;
+    font-size: 15px; font-weight: 900; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .autofill-status { font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 8px; min-height: 16px; }
+  .autofill-status.found { color: var(--ait-gold, #c29d66); }
+  .autofill-status.notfound { color: #fca5a5; }
+  .autofill-size-group { margin-top: 16px; }
+  .autofill-size-label {
+    font-size: 12px; letter-spacing: 1.5px; font-weight: 800; color: rgba(255,255,255,0.45);
+    margin-bottom: 8px; text-transform: uppercase;
+  }
+  .autofill-item-row {
+    display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 8px 10px; margin-bottom: 8px;
+  }
+  .autofill-item-row.checked { border-color: rgba(194,157,102,0.5); background: rgba(194,157,102,0.08); }
+  .autofill-item-thumb {
+    width: 44px; height: 44px; border-radius: 10px; overflow: hidden; flex-shrink: 0;
+    background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center;
+  }
+  .autofill-item-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .autofill-item-thumb span { font-size: 8px; color: rgba(255,255,255,0.25); text-align: center; }
+  .autofill-item-info { flex: 1; min-width: 0; }
+  .autofill-item-sku { font-size: 13px; font-weight: 800; color: #fff; }
+  .autofill-item-color { font-size: 11px; color: rgba(255,255,255,0.45); margin-top: 2px; }
+  .autofill-item-qty {
+    width: 54px; background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.15) !important;
+    border-radius: 8px; color: #fff !important; padding: 8px 4px !important; font-size: 13px !important;
+    font-weight: 700; text-align: center;
+  }
+  .autofill-item-batch {
+    width: 64px; background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.15) !important;
+    border-radius: 8px; color: #fff !important; padding: 8px 4px !important; font-size: 12px !important;
+    text-align: center;
+  }
+  .autofill-item-row input[type="checkbox"] { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--ait-gold, #c29d66); }
+
   /* 🌚 Dark Mode Inputs */
   .edit-field-group .edit-input-dark {
     width: 100%; background: rgba(255, 255, 255, 0.05); border: 1.5px solid rgba(255, 255, 255, 0.1);

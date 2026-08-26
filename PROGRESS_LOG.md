@@ -41,6 +41,35 @@
 
 ---
 
+## ✨ [2026-08-21] 修正電腦版照片彈窗過大 + 新增上架支援「系列自動帶入」與多系列 (版本 517)
+
+### 1. 修正：電腦版「產品規格」照片彈窗過大
+
+**問題回報**：手機版照片彈窗正常，電腦版（寬螢幕）打開同一個彈窗，照片被拉伸到跟整個瀏覽器視窗一樣寬，異常巨大。
+
+**根因**：`.modal-overlay`／`.modal-content`（[CSS_Components.html](CSS_Components.html)）是純手機版設計，`width:100%` 沒有任何桌機寬度上限，寬螢幕下 `.detail-image`（`width:100%`）自然被撐到跟瀏覽器視窗一樣寬。專案裡其實已經有一個模態框（`#reserve-add-modal`）自己另外用 inline style 加了 `max-width:550px`，但沒有系統性套用到其他模態框。
+
+**修正**：`.modal-content` 新增 `@media (min-width: 992px)` 規則，設 `max-width:520px; margin:0 auto`，比照專案既有的 992px 桌機斷點慣例（`#page-inventory`/`.album-grid` 已在用）。刻意只調整 `.modal-content`，不動 `.modal-overlay` 的 `align-items`，讓 navbar 維持原本橫跨整個視窗頂端的滿版樣式。這個修正是全域套用到 `.modal-content`，所以「新增上架」表單彈窗在桌機上也會一併變得比例正常（原本也沒有寬度上限）。
+
+### 2. 新增：「新增上架」表單支援系列自動帶入 + 多系列
+
+**需求**：業務反應新增上架時要一個個手打編號很慢，希望輸入系列名稱後能自動帶出該系列所有編號（依尺寸分組），用勾選＋填片數取代手打，同時保留手動輸入的彈性；也要能一次記錄多個系列。
+
+**修正內容**：
+- **後端新增 `getSeriesSkuOptions(seriesName)`**（Code.js）：直接複用 `getAggregatedInventory()` 既有快取（庫存查詢同一份資料，不額外開表），依系列名稱篩選（先精準比對，比對不到才退回模糊雙向 `includes`），依尺寸分組回傳每個編號的 SKU／色階／縮圖。
+- **`#add-modal`（新增上架彈窗，index.html）改版為「系列區塊」結構**：
+  - 每個區塊：系列名稱輸入框（失焦時自動查詢帶入）＋ 產品尺寸輸入框（給手動新增用）＋ 自動帶入結果（依尺寸分組，每個編號一列：縮圖／編號／色階／片數輸入／批號輸入／勾選框）＋ 既有的「+ 增加型號」手動新增區。
+  - 「＋ 新增系列」按鈕可重複新增區塊，一次記錄多系列版面；每個區塊可各自移除（第一個區塊不可移除）。
+  - 新增 `.series-block`／`.autofill-item-row` 等 CSS（style.html）。
+- **`saveNewLayoutEntry()`（script.html）重寫收集邏輯**：逐一走過所有系列區塊，收集「勾選且有填片數」的自動帶入品項＋手動新增品項，**每個品項各自帶自己所屬的 series/size**（不再是整包共用一組系列/尺寸）。
+- **後端 `saveNewLayout()`（Code.js）配合改成逐品項覆蓋**：`newRow[idx.series] = item.series || payload.series`、`newRow[idx.size] = item.size || payload.size`，沒帶 per-item 值時退回舊版整包共用欄位（向下相容）。
+
+**驗證**：語法檢查通過（Code.js、script.html 內嵌 script 區塊）、零位元組掃描正常。
+
+**部署**：`clasp push -f` → 版本 517 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @517`（網址不變）。
+
+---
+
 ## 🐛 [2026-08-21] 修正：陳列牆→保留單分頁抓不到圖 (版本 516)
 
 **問題回報**：使用者截圖「漢樺」客戶的「陳列牆 → 保留單」分頁，所有品項卡片一律顯示「NO IMG」，如 `RS61280-掛`、`ED45751-F-掛`。
