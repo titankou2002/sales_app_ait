@@ -13,7 +13,7 @@
  */
 
 const SHELF_REGION_SHEET = "業務分區";
-const SHELF_CACHE_KEY = "shelf_tracking_v11"; // 停用缺貨顯示，快取升代強制失效
+const SHELF_CACHE_KEY = "shelf_tracking_v12"; // 新增保留單資料（有保留篩選），快取升代強制失效
 
 // ⛔ 2026-07-27：上架追蹤的缺貨判別先暫時關閉不顯示（來源「缺貨進榜追蹤」資料有誤，保留系統端查修中）。
 //    確認源頭修好後，把這裡改回 true 即可整批復原。
@@ -212,6 +212,41 @@ function getShelfTrackingData(forceRefresh) {
       }
     }
 
+    // ── 3b. 保留單 → 客戶×系列 保留狀態 ──
+    // custSeriesReserve["cust||series"] = true（跟庫存查詢 Inventory.js 讀保留單同一份資料來源，
+    // 不額外判斷是否還「有效」——沿用專案既有慣例：保留單分頁裡的每一列都視為現行保留紀錄）
+    const custSeriesReserve = {};
+    try {
+      let ssReserve = ssM;
+      if (CONFIG.RESERVE_SS_ID) {
+        try {
+          const remoteSs = SpreadsheetApp.openById(CONFIG.RESERVE_SS_ID);
+          if (remoteSs) ssReserve = remoteSs;
+        } catch (e) { console.warn("保留單試算表開啟失敗，使用主表:", e); }
+      }
+      const rsh = ssReserve.getSheetByName(CONFIG.SHEET_NAME_RESERVE || "保留單");
+      if (rsh) {
+        const rdata = rsh.getDataRange().getValues();
+        const rh = rdata[0];
+        const ridx = {
+          cust: findHeaderIndex(rh, ["客戶", "客戶名稱", "公司"]),
+          sku: findHeaderIndex(rh, ["編號", "產品編號"])
+        };
+        if (ridx.cust !== -1 && ridx.sku !== -1) {
+          rdata.slice(1).forEach(r => {
+            const custRaw = String(r[ridx.cust] || "").trim();
+            if (!custRaw || custRaw.includes("樣品") || custRaw.includes("扣帶")) return;
+            const cust = mergeCustomer(custRaw);
+            if (!cust) return;
+            const sku = String(r[ridx.sku] || "").trim().replace(/[\s\-]/g, "");
+            const series = skuToSeries[sku];
+            if (!series) return;
+            custSeriesReserve[cust + "||" + series] = true;
+          });
+        }
+      }
+    } catch (e) { console.warn("保留單讀取失敗：" + e); }
+
     // ── 4. 業務分區表 → 客戶的區域與負責業務 ──
     const custRegion = {};
     const custBizFromZone = {};
@@ -319,7 +354,8 @@ function getShelfTrackingData(forceRefresh) {
       generatedAt: Utilities.formatDate(new Date(), "GMT+8", "yyyy-MM-dd HH:mm"),
       series: seriesList,
       customers: customers,
-      sales: custSeriesSales
+      sales: custSeriesSales,
+      reserve: custSeriesReserve
     };
 
     CacheManager.putLarge(SHELF_CACHE_KEY, result, 600);

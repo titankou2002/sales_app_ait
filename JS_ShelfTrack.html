@@ -46,6 +46,7 @@
   .shelf-chip.shipped { background: rgba(249,115,22,0.16); color: #fdba74; border: 1px solid rgba(249,115,22,0.4); }
   .shelf-chip.nosale { background: rgba(248,113,113,0.12); color: #fca5a5; border: 1px solid rgba(248,113,113,0.3); }
   .shelf-chip.removed { background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); text-decoration: line-through; }
+  .shelf-chip.reserved { background: rgba(56,189,248,0.15); color: #7dd3fc; border: 1px solid rgba(56,189,248,0.35); }
 
   .shelf-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; opacity: 0.6; margin: 10px 0 4px; }
   details.shelf-region-block { margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.03); }
@@ -232,6 +233,9 @@
 
   function salesOf(cust, series) {
     return (shelfData.sales || {})[cust + '||' + series] || null;
+  }
+  function reserveOf(cust, series) {
+    return !!(shelfData.reserve || {})[cust + '||' + series];
   }
 
   // ── Tab 1: 新品總覽 ──
@@ -491,10 +495,12 @@
     const regionOf = {};
     shelfData.customers.forEach(c => { regionOf[c.name] = zoneOf(c.region); });
 
-    // 依大區分組；每個晶片帶顏色排序權重：綠0 紅1 橘2 灰3 下架4
+    // 依大區分組；每個晶片依 5 種狀態排序權重：
+    // 0 有出貨有上架　1 有保留有上架　2 有上架未出貨　3 有出貨未上架　4 未上架
     const byZone = {};
     const zoneActive = {};
-    const push = (zone, rank, html) => { (byZone[zone] = byZone[zone] || []).push({ rank: rank, html: html }); };
+    const rankCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    const push = (zone, rank, html) => { (byZone[zone] = byZone[zone] || []).push({ rank: rank, html: html }); rankCounts[rank]++; };
 
     const detailClick = c =>
       ' style="cursor:pointer;" onclick="shelfOpenDetail(\'' + esc(c).replace(/'/g, "\\'") + '\',\'' + esc(name).replace(/'/g, "\\'") + '\')"';
@@ -507,29 +513,33 @@
       const zone = regionOf[a.cust] || '未分區';
       zoneActive[zone] = (zoneActive[zone] || 0) + 1;
       const sl = salesOf(a.cust, name);
+      const rv = !sl && reserveOf(a.cust, name);
+      const rank = sl ? 0 : (rv ? 1 : 2);
       const modeTxt = (a.mode && a.mode !== '版面') ? ' ' + esc(a.mode) : '';
-      const cntTxt = sl ? ' ' + sl.c + '次' : '';
+      const cntTxt = sl ? ' ' + sl.c + '次' : (rv ? ' 保留中' : '');
       const small = (modeTxt || cntTxt) ? '<small>' + (modeTxt + cntTxt).trim() + '</small>' : '';
-      push(zone, sl ? 0 : 1,
-        '<span class="shelf-chip' + (sl ? '' : ' nosale') + '"' + detailClick(a.cust) + '>' + esc(a.cust) + small + '</span>');
+      const cls = sl ? '' : (rv ? ' reserved' : ' nosale');
+      push(zone, rank,
+        '<span class="shelf-chip' + cls + '"' + detailClick(a.cust) + '>' + esc(a.cust) + small + '</span>');
     });
     s.removed.forEach(r => {
       activeCusts[r.cust] = true;
       if (r.onDate && (!minOnDate || r.onDate < minOnDate)) minOnDate = r.onDate;
-      push(regionOf[r.cust] || '未分區', 4,
+      const sl = salesOf(r.cust, name);
+      push(regionOf[r.cust] || '未分區', sl ? 3 : 4,
         '<span class="shelf-chip removed"' + detailClick(r.cust) + '>' + esc(r.cust) + '<small>' + esc(r.offDate) + ' 下架</small></span>');
     });
     shelfData.customers.forEach(c => {
       if (activeCusts[c.name]) return;
       const sl = salesOf(c.name, name);
-      push(regionOf[c.name] || '未分區', sl ? 2 : 3,
+      push(regionOf[c.name] || '未分區', sl ? 3 : 4,
         '<span class="shelf-chip ' + (sl ? 'shipped' : 'off') + '"' + detailClick(c.name) + '>' + esc(c.name) +
         (sl ? '<small>' + sl.c + '次</small>' : '') + '</span>');
     });
 
     const others = Object.keys(byZone).filter(z => zoneOrder.indexOf(z) === -1 && z !== '未分區').sort((a, b) => a.localeCompare(b, 'zh-TW'));
     const zones = zoneOrder.filter(z => byZone[z]).concat(others).concat(byZone['未分區'] ? ['未分區'] : []);
-    const filterRanks = { all: null, active: [0, 1], shipped: [2], nosale: [1], notshelf: [2, 3] };
+    const filterRanks = { all: null, shipshelf: [0], reserveshelf: [1], shelfonly: [2], shipoff: [3], notshelf: [4] };
     const allowRanks = filterRanks[shelfSeriesFilter] || null;
     const zoneHtml = zones.map(z => {
       const cnt = zoneActive[z] || 0;
@@ -542,9 +552,6 @@
         '<div class="shelf-chips">' + chipsHtml + '</div></details>';
     }).join('');
 
-    const neverSoldCount = s.active.filter(a => !salesOf(a.cust, name)).length;
-    const shippedNotShelved = shelfData.customers.filter(c => !activeCusts[c.name] && salesOf(c.name, name)).length;
-    const notShelvedCount = shelfData.customers.filter(c => !activeCusts[c.name]).length;
     const ageTxt = fmtShelfAge(minOnDate);
 
     const selStyle = f => shelfSeriesFilter === f ? ' outline:2px solid #facc15; outline-offset:1px;' : '';
@@ -562,10 +569,11 @@
       '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:center;">' +
         (s.shortage ? (function () { const st = shelfShortageStyle(shelfWorstCat(s)); return '<span class="shelf-chip" onclick="shelfToggleShortageCodes()" style="cursor:pointer; background:' + st.bg + '; color:' + st.color + '; border-color:' + st.bd + ';">' + st.icon + ' ' + esc(s.shortage) + '（' + (s.shortageCodes ? s.shortageCodes.length : 0) + '）▾</span>'; })() : '') +
         (ageTxt ? '<span style="font-size:14px; font-weight:900; color:#facc15;">上架 ' + ageTxt + '</span>' : '') +
-        '<span class="shelf-chip" onclick="shelfSeriesFilterSet(\'active\')" style="cursor:pointer;' + selStyle('active') + '">上架 ' + s.active.length + ' 家</span>' +
-        '<span class="shelf-chip shipped" onclick="shelfSeriesFilterSet(\'shipped\')" style="cursor:pointer;' + selStyle('shipped') + '">有出貨未上架 ' + shippedNotShelved + ' 家</span>' +
-        '<span class="shelf-chip nosale" onclick="shelfSeriesFilterSet(\'nosale\')" style="cursor:pointer;' + selStyle('nosale') + '">已上架未售 ' + neverSoldCount + ' 家</span>' +
-        '<span class="shelf-chip off" onclick="shelfSeriesFilterSet(\'notshelf\')" style="cursor:pointer;' + selStyle('notshelf') + '">未上架 ' + notShelvedCount + ' 家</span>' +
+        '<span class="shelf-chip" onclick="shelfSeriesFilterSet(\'shipshelf\')" style="cursor:pointer;' + selStyle('shipshelf') + '">有出貨有上架 ' + rankCounts[0] + ' 家</span>' +
+        '<span class="shelf-chip reserved" onclick="shelfSeriesFilterSet(\'reserveshelf\')" style="cursor:pointer;' + selStyle('reserveshelf') + '">有保留有上架 ' + rankCounts[1] + ' 家</span>' +
+        '<span class="shelf-chip nosale" onclick="shelfSeriesFilterSet(\'shelfonly\')" style="cursor:pointer;' + selStyle('shelfonly') + '">有上架未出貨 ' + rankCounts[2] + ' 家</span>' +
+        '<span class="shelf-chip shipped" onclick="shelfSeriesFilterSet(\'shipoff\')" style="cursor:pointer;' + selStyle('shipoff') + '">有出貨未上架 ' + rankCounts[3] + ' 家</span>' +
+        '<span class="shelf-chip off" onclick="shelfSeriesFilterSet(\'notshelf\')" style="cursor:pointer;' + selStyle('notshelf') + '">未上架 ' + rankCounts[4] + ' 家</span>' +
       '</div>' +
       shortageCodesHtml +
       zoneHtml;
