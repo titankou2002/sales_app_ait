@@ -41,6 +41,26 @@
 
 ---
 
+## 🐛 [2026-08-21] 修正：陳列牆→保留單分頁抓不到圖 (版本 516)
+
+**問題回報**：使用者截圖「漢樺」客戶的「陳列牆 → 保留單」分頁，所有品項卡片一律顯示「NO IMG」，如 `RS61280-掛`、`ED45751-F-掛`。
+
+**根因**（`getReservedOrdersGrouped`，Code_Customer.js:44，供 JS_CustomerManager.html 保留單卡片渲染用）：保留單分頁的「編號」欄位常見 `RS61280-掛`、`ED45751-F-期` 這種格式——「-掛」「-期」是保留系統標記「尚未有正式批號、先登記到貨」的**暫記後綴**，不是編號本體的一部分。但這裡比對「編號價目表」的 `skuKey` 只做了 `replace(/[\s\-]/g,'')`（去空白/連字號），沒有去掉「掛」「期」這個字——`RS61280-掛` 就變成 `RS61280掛`，永遠對不到編號價目表裡真正的 `RS61280`，導致 `meta` 一律 fallback 成空值（`singleImg`/`series`/`size` 全空、`perPing` 也錯用預設值 36），卡片自然全部 NO IMG。
+
+同一個 bug 其實在 `getCustomerDisplays`（Code.js，版面頁面的保留量標註）也存在一份幾乎一樣的程式碼，一併修掉。
+
+**修正內容**：
+- 把這個去暫記後綴的邏輯從 Inventory.js（原本只有到貨日期比對在用，函式內部 nested）**提升為 Code.js 全域共用函式** `normalizeIncomingSkuKey_(raw)`：`replace(/[-\s]*(掛|期)\s*$/, '')` 去後綴 → 再去空白/連字號。
+- `Code_Customer.js` `getReservedOrdersGrouped`：抓 `meta` 用的 `skuKey` 改用 `normalizeIncomingSkuKey_(skuRaw)`（`sku` 顯示欄位仍維持原始帶後綴的 `skuRaw`，只有查表 key 要正規化）。
+- `Code.js` `getCustomerDisplays` 內建的 `customerReservedMap` 同一個 bug 一併修正。
+- **附帶修正**：因為 `meta` 之前 fallback 成預設值，`perPing` 也一直被錯用固定 36，導致這類暫記編號品項的坪數換算（`pyeong`）不準；修好比對後坪數也會一起變正確，不只是圖片。
+
+**驗證**：語法檢查通過（Code.js、Code_Customer.js、Inventory.js）、零位元組掃描正常。
+
+**部署**：`clasp push -f` → 版本 516 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @516`（網址不變）。
+
+---
+
 ## ⚡ [2026-08-21] 版面記錄核心效能優化：客戶版面讀取＋新增上架都慢 (版本 515)
 
 **問題回報**：業務反應「版面記錄」這個核心功能讀取速度跟上傳新增的速度很慢，導致大家不太想用。

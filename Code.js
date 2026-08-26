@@ -5013,6 +5013,20 @@ function findHeaderIndex(headers, candidates) {
   return -1;
 }
 
+/**
+ * 🚀 共用工具：把保留單登記到貨用的「暫記編號」還原成正式編號，供比對「編號價目表」用。
+ * 保留單分頁的「編號」欄常見 "RS61280-掛"、"ED45751-F-期" 這種格式——「-掛」「-期」是
+ * 保留系統用來標記「尚未有正式批號、先登記到貨」的暫記後綴，不是真正編號的一部分；
+ * 若直接拿去比對編號價目表（只有去除空白/連字號，沒去掉這個後綴），一律比對不到，
+ * 圖片/系列/尺寸等資料就會全部拿到空值。原本只有 Inventory.js 內部有一份（供到貨日期比對用），
+ * 這裡拉出來做全域共用，Code_Customer.js 的保留單明細（陳列牆→保留單分頁）圖片抓取同樣需要。
+ */
+function normalizeIncomingSkuKey_(raw) {
+  let s = String(raw || '').trim();
+  s = s.replace(/[-\s]*(掛|期)\s*$/, ''); // 去除保留單登記到貨用的暫記後綴
+  return s.replace(/[\s\-]/g, '');
+}
+
 // -----------------------------------------------------------------------------
 // 2. 業務清單同步 (採戰情室對位邏輯)
 // -----------------------------------------------------------------------------
@@ -5253,7 +5267,9 @@ function getCustomerDisplays(customerName) {
         const reservedGroups = getReservedOrdersGrouped(ssMain, targetMerged, inventoryMap);
         reservedGroups.forEach(group => {
           group.items.forEach(item => {
-            const skuKey = item.sku.replace(/[\s\-]/g, '');
+            // 🚀 跟圖片抓取同一個根因：保留單的「-掛」「-期」暫記編號要先去後綴，
+            // 才能對回版面上架清單的正式編號 key，不然這個客戶的保留標註會悄悄對不到。
+            const skuKey = normalizeIncomingSkuKey_(item.sku);
             if (!customerReservedMap[skuKey]) {
               customerReservedMap[skuKey] = { qty: 0, cases: new Set(), details: [] };
             }

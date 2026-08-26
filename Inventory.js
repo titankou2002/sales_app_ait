@@ -105,12 +105,8 @@ function _buildInventoryData(ss) {
   const reserveMap = {};  // key=SKU, value=已保留片數
   // 🚀 到貨資訊：與保留系統同源，「入倉日期1/數量1、入倉日期2/數量2」實際是保留單分頁裡每一列的欄位
   // （非編號價目表），部份列會以「SKU-掛」「SKU-期」等暫記編號單獨登記到貨，需歸戶回正式編號。
+  // normalizeIncomingSkuKey_ 已提升為 Code.js 全域共用函式（Code_Customer.js 保留單明細抓圖也要用）。
   const incomingMap = {}; // key=SKU(去除暫記後綴) → {date, qty}
-  function normalizeIncomingSkuKey_(raw) {
-    let s = String(raw || '').trim();
-    s = s.replace(/[-\s]*(掛|期)\s*$/, ''); // 去除保留單登記到貨用的暫記後綴
-    return s.replace(/[\s\-]/g, '');
-  }
 
   if (reserveSheet) {
     const rd = reserveSheet.getDataRange().getValues();

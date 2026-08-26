@@ -94,8 +94,12 @@ function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
     if (mergeCustomer(row[idx.cust]) !== cleanName) continue;
     
     var skuRaw = String(row[idx.sku] || "").trim();
-    var skuKey = skuRaw.replace(/[\s\-]/g, '');
-    
+    // 🚀 修正：保留單常見「RS61280-掛」「ED45751-F-期」這種暫記編號（登記到貨用，不是正式編號的
+    // 一部分），原本只去空白/連字號沒去掉「-掛」「-期」，導致比對編號價目表永遠對不到，圖片/系列/
+    // 尺寸全部拿到空值（陳列牆→保留單分頁一律顯示 NO IMG）。改用跟 Inventory.js 到貨比對同一套
+    // normalizeIncomingSkuKey_ 先去暫記後綴再比對。
+    var skuKey = normalizeIncomingSkuKey_(skuRaw);
+
     // 💡 修正對位：內部查庫存的 meta 結構 (使用標準化後的 skuKey)
     var meta = metaMap[skuKey] || { perPing: 36, singleImg: "", series: "一般", size: "" };
     
