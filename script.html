@@ -534,8 +534,11 @@
           } else {
             runSplashScreen();
           }
+          // 🚀 效能優化：這幾個背景預載不用等splash動畫播完才開始——動畫只是視覺效果（setInterval
+          // 純裝飾用，不會阻塞），跟這裡是同步呼叫、立刻併發送出，讓真正的資料載入越早開始越好。
           loadInventoryData();
           loadStockoutSubtitleAlert();
+          if (typeof loadSalesOverview === 'function') loadSalesOverview();
         } else {
           // 🚀 驗證失敗 ➡️ 直接封鎖並清除快取
           try {
@@ -689,8 +692,9 @@
         step++;
       } else {
         clearInterval(interval);
-        // 🚀 關鍵延遲：讓 READY 停留一下再消失
-        setTimeout(showSalesSelection, 500);
+        // 🚀 效能優化：READY 停留時間從 500ms 縮短到 150ms——純視覺效果，跟真正的資料載入無關
+        // （資料載入已經在 verifySalesKey 成功當下就併發送出了，不受這個停留時間影響）
+        setTimeout(showSalesSelection, 150);
       }
     }, 200);
   }
@@ -721,10 +725,10 @@
           }, 100);
         }
 
-        // 🚀 背景偷偷預載
-        setTimeout(loadInventoryData, 100);
-        setTimeout(loadSalesOverview, 300);
-      }, 300); 
+        // 🚀 效能優化：loadInventoryData/loadSalesOverview 現在改成在 verifySalesKey 一驗證成功
+        // 就立刻併發呼叫（見上方），不用等 splash 動畫播完才開始。這裡原本的重複呼叫拿掉
+        // （兩支函式內部都有 state.xxxLoaded 防重複載入的判斷，留著也不會出錯，但已經沒必要）。
+      }, 300);
     }
   }
 

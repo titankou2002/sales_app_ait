@@ -41,6 +41,27 @@
 
 ---
 
+## ⚡ [2026-08-21] 登入 Splash 畫面效能排查與優化 (版本 523)
+
+**問題討論**：使用者問「登入畫面的背景是真的有在跑東西的嗎？拿掉會不會比較快？」，先討論不動作。
+
+**查證結果**：
+- **背景動畫是死碼，完全沒在執行**：`splashCanvas`/`dashboardCanvas`（星空粒子背景）要靠 `initParticleCanvas()` 啟動，但這個函式在業務登入流程裡從未被呼叫過（只有客戶查詢頁 `JS_Client.html` 有在用）；另一套「粒子聚成 LOGO」動畫（`particleEngine`）要靠 `particleEngine.init()` 啟動，但這個 `init()` 整個專案都沒有任何地方呼叫——`particles` 陣列永遠是空的 `[]`，`setGathering()` 形同對空氣揮拳。**結論：背景動畫現在就是 0 消耗，拿掉不會讓程式變快**。
+- **真正的問題是 `runSplashScreen()` 的純裝飾假進度條，而且擋住了真正的資料預載**：進度條（CONNECTING→LOADING ASSETS→READY）完全是寫死的固定 3 步，跟實際載入進度無關；跑完後程式碼自己註解寫「讓 READY 停留一下再消失」故意多等 500ms；接著淡出動畫又要 1.2s + 300ms。粗抓合計約 2.6 秒是純視覺效果在跑。更關鍵的是：`loadSalesOverview()` 原本被安排在**這整套動畫播完之後**才觸發（`showSalesSelection()` 裡的 `setTimeout(loadSalesOverview, 300)`），而不是跟動畫同時開始。
+
+**使用者決定**：保留視覺效果，但提前併發載入。
+
+**修正內容**（script.html）：
+- `loadSalesOverview()` 從「splash 動畫播完後才觸發」改成跟 `loadInventoryData()`/`loadStockoutSubtitleAlert()` 一樣，在 `verifySalesKey` 驗證成功的當下就立刻併發呼叫，不用等動畫。
+- `runSplashScreen()` 的「READY 停留」從 500ms 縮短為 150ms。
+- 移除 `showSalesSelection()` 裡原本重複的 `setTimeout(loadInventoryData, 100)` / `setTimeout(loadSalesOverview, 300)`（兩支函式內部都有防重複載入判斷，這裡的呼叫已經沒必要）。
+
+**驗證**：語法檢查通過、零位元組掃描正常。
+
+**部署**：`clasp push -f` → 版本 523 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @523`（網址不變）。
+
+---
+
 ## ✨ [2026-08-21] 新增上架自動帶入：手機實測 6 項細節優化 (版本 522)
 
 **回饋來源**：使用者實機（手機）測試 v521 後，針對「系列自動帶入」再提出 6 點細節體驗回饋。
