@@ -2416,7 +2416,7 @@ function doGet(e) {
         }
 
         function deleteSalesperson(name) {
-          if (!confirm('確定要「永久刪除」' + name + ' 的金鑰嗎？\n\n跟「停用」不一樣，刪除後此人會從列表徹底消失，且無法復原，僅適用於手動新增的自訂名單（例如測試/助理帳號）。')) return;
+          if (!confirm('確定要「永久刪除」' + name + ' 的金鑰嗎？\\n\\n跟「停用」不一樣，刪除後此人會從列表徹底消失，且無法復原，僅適用於手動新增的自訂名單（例如測試/助理帳號）。')) return;
 
           google.script.run
             .withSuccessHandler(function(res) {
@@ -4282,14 +4282,16 @@ function doGet(e) {
                 <td style="font-weight: 700;">${item.name}</td>
                 <td><code style="font-family: monospace; font-size:14px; color:var(--gold);">${item.key}</code></td>
                 <td>${statusBadge}</td>
-                <td style="white-space: nowrap; display: flex; gap: 8px;">
+                <td style="white-space: nowrap;">
+                  <div style="display:flex; gap:8px;">
                   ${item.isBlocked
                     ? `<span style="color:var(--red, #dc2626); font-size:11px; font-weight:700;">[ 已失效 ]</span>`
                     : `<button class="copy-btn" onclick="copyLink('${inventoryUrl}', this)">複製查庫存連結</button>
                        <button class="copy-btn" onclick="copyLink('${appUrl}', this)">複製主選單連結</button>`
                   }
+                  </div>
                 </td>
-                <td style="white-space: nowrap; display: flex; gap: 6px;">${actionButton}${deleteButton}</td>
+                <td style="white-space: nowrap;"><div style="display:flex; gap:6px;">${actionButton}${deleteButton}</div></td>
               </tr>
           `;
         });

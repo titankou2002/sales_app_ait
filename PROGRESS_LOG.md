@@ -41,6 +41,22 @@
 
 ---
 
+## 🐛 [2026-08-21] 修正：金鑰管理刪除按鈕整個 script 壞掉 + 操作欄位斷行 (版本 519)
+
+**問題回報**：v518 上線後，使用者截圖 console 錯誤 `Uncaught SyntaxError: Invalid or unexpected token` + `Uncaught ReferenceError: deleteSalesperson is not defined`；另外「操作」欄的停用/刪除按鈕跑到「直達連結」欄位下方另起一行，很醜。
+
+**根因 1（語法錯誤，讓整個 script 掛掉）**：這個管理後台頁面是 `doGet()`（Code.js）用 JS **樣板字面值（backtick）**組出一整串 HTML 字串回傳的，裡面包著要給瀏覽器執行的 client-side `<script>`。v518 新增的 `deleteSalesperson()` 確認框用了 `'...？\n\n跟「停用」不一樣...'`——這個 `\n\n` 在 GAS **伺服器端**組字串時就先被當跳脫字元處理掉，變成實際的換行符號位元組，混進最終送到瀏覽器的 HTML 裡；瀏覽器解析這段 client-side JS 時，單引號字串中間出現一個「真的換行」是不合法語法，直接讓整個 `<script>` 區塊解析失敗——所以不只 `deleteSalesperson`，那個 script 裡的所有函式都變成 undefined（這跟稍早修過的 `\'` vs `&apos;` 是同一類「伺服器端樣板字面值吃掉跳脫字元」的坑）。
+**修正**：改成 `\\n\\n`（雙反斜線），讓它在伺服器端組字串後仍保留成字面上的 `\n` 兩個字元，瀏覽器解析 client-side JS 時才會正確當成跳脫字元處理成真正的換行。
+
+**根因 2（操作欄斷行）**：「直達連結」跟「操作」兩個 `<td>` 都直接在 `<td style="...">` 上寫 `display:flex`——CSS 的 `display` 可以覆蓋瀏覽器對 `<td>` 預設的 `display:table-cell`，一旦被蓋成 `flex`，這格就不再是「表格儲存格」，變成一般的區塊級 flex 容器，跳出表格的欄位格線，改用一般文件流排版（一個接一個往下疊），導致「操作」欄整個掉到「直達連結」欄下方另起一行。
+**修正**：`<td>` 本身拿掉 `display:flex`，改成 `<td><div style="display:flex; ...">...按鈕...</div></td>`——用內層 `<div>` 做水平排列，`<td>` 本身維持原生表格儲存格屬性，兩欄就能正常並排在同一列。
+
+**驗證**：語法檢查通過、零位元組掃描正常；順手掃過整份檔案確認沒有其他 `confirm()`/`alert()` 有同樣單層跳脫的 `\n` 殘留。
+
+**部署**：`clasp push -f` → 版本 519 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @519`（網址不變）。
+
+---
+
 ## ✨ [2026-08-21] 業務app金鑰管理：新增永久刪除按鈕 + 主選單連結存取記錄 (版本 518)
 
 **需求**（來自「高雅瓷機密中心」管理後台 `view=getkeys` 頁面）：① 每個業務都有專屬主選單連結，希望開啟時能留下 log 記錄；② 目前「操作」欄只有停用/啟用，希望能加「刪除」按鈕。
