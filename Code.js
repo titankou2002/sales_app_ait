@@ -6018,8 +6018,8 @@ function parseDate(dateStr) {
 }
 
 /**
- * 🚀 「新增上架」表單自動帶入：輸入系列名稱後，回傳該系列所有編號，依尺寸分組，
- * 供前端渲染成「勾選＋填數量」的清單，加速輸入（不用逐個手打編號）。
+ * 🚀 「新增上架」表單自動帶入：輸入系列名稱（或直接輸入其中一個編號）後，回傳該系列所有編號，
+ * 依尺寸分組，供前端渲染成「勾選＋填數量」的清單，加速輸入（不用逐個手打編號）。
  * 直接複用 getAggregatedInventory() 既有快取（庫存查詢同一份資料），不額外開表。
  */
 function getSeriesSkuOptions(seriesName) {
@@ -6035,6 +6035,15 @@ function getSeriesSkuOptions(seriesName) {
     if (matched.length === 0) {
       matched = invRes.data.filter(p => p.sCn && (p.sCn.includes(target) || target.includes(p.sCn)));
     }
+    // 🚀 都比對不到系列名稱時，改當作「輸入的是編號」試著反查：正規化去空白/連字號後比對編號，
+    // 找到該編號後改用它所屬的系列，再抓整個系列的所有編號（方便只記得編號、不記得系列名稱時使用）。
+    if (matched.length === 0) {
+      const targetSkuKey = target.toUpperCase().replace(/[\s\-]/g, '');
+      const hitProduct = invRes.data.find(p => p.sku && p.sku.toUpperCase().replace(/[\s\-]/g, '') === targetSkuKey);
+      if (hitProduct && hitProduct.sCn) {
+        matched = invRes.data.filter(p => p.sCn === hitProduct.sCn);
+      }
+    }
     if (matched.length === 0) return { success: true, seriesFound: false, sizes: [] };
 
     // 依尺寸分組，組內依編號排序
@@ -6044,7 +6053,9 @@ function getSeriesSkuOptions(seriesName) {
       if (!bySize[sizeKey]) bySize[sizeKey] = [];
       bySize[sizeKey].push({
         sku: p.sku,
-        color: p.colorTag || '',
+        // 🚀 「顏色」跟「色階」是編號價目表裡不同欄位——色階是等級代碼，顏色才是給業務看的色名，
+        // 沒有「顏色」欄位時才退回「色階」，避免直接空白。
+        color: p.colorName || p.colorTag || '',
         img: p.img || ''
       });
     });
@@ -6054,6 +6065,35 @@ function getSeriesSkuOptions(seriesName) {
     }));
 
     return { success: true, seriesFound: true, matchedSeriesName: matched[0].sCn, sizes: sizes };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 🚀 「新增上架」表單系列名稱輸入框的即時建議：輸入任何一個字，回傳所有包含這個字的系列名稱，
+ * 供前端渲染成下拉建議清單（邊打邊搜，不用打完整名稱）。同樣直接複用 getAggregatedInventory() 快取。
+ */
+function getSeriesNameSuggestions(query) {
+  try {
+    const q = String(query || '').trim();
+    if (!q) return { success: true, names: [] };
+
+    const invRes = getAggregatedInventory();
+    if (!invRes.success) return { success: false, msg: invRes.msg || '庫存資料讀取失敗' };
+
+    const seen = {};
+    const names = [];
+    invRes.data.forEach(p => {
+      const name = p.sCn;
+      if (!name || seen[name]) return;
+      if (name.includes(q)) {
+        seen[name] = true;
+        names.push(name);
+      }
+    });
+    names.sort((a, b) => a.localeCompare(b, 'zh-TW'));
+    return { success: true, names: names.slice(0, 12) }; // 最多回傳 12 筆，避免下拉清單過長
   } catch (e) {
     return { success: false, msg: e.toString() };
   }

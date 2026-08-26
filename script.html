@@ -2070,16 +2070,13 @@
     div.id = 'series-block-' + id;
     div.innerHTML =
       (id > 1 ? '<div class="series-block-remove" onclick="removeSeriesBlock(' + id + ')">×</div>' : '') +
-      '<div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">' +
-        '<div class="edit-field-group">' +
-          '<label class="edit-label-premium">系列名稱</label>' +
-          '<input type="text" class="edit-input-dark sb-series-input" placeholder="例：沐森..." ' +
-            'onblur="fetchSeriesAutofill(' + id + ')" onkeydown="if(event.key===\'Enter\'){this.blur();}">' +
-        '</div>' +
-        '<div class="edit-field-group">' +
-          '<label class="edit-label-premium">產品尺寸 (手動新增用)</label>' +
-          '<input type="text" class="edit-input-dark sb-size-input" placeholder="例：60X120">' +
-        '</div>' +
+      '<div class="edit-field-group" style="position:relative;">' +
+        '<label class="edit-label-premium">系列名稱</label>' +
+        '<input type="text" class="edit-input-dark sb-series-input" placeholder="輸入系列名稱或其中一個編號..." ' +
+          'oninput="handleSeriesInput(' + id + ')" ' +
+          'onblur="hideSeriesSuggestions(' + id + '); fetchSeriesAutofill(' + id + ')" ' +
+          'onkeydown="if(event.key===\'Enter\'){this.blur();}">' +
+        '<div class="series-suggest-list" id="series-suggest-' + id + '"></div>' +
       '</div>' +
       '<div class="autofill-status" id="autofill-status-' + id + '"></div>' +
       '<div id="autofill-groups-' + id + '"></div>' +
@@ -2087,6 +2084,10 @@
       '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">' +
         '<div style="font-weight:700; color:white; font-size:14px;">手動新增品項</div>' +
         '<button class="btn-add-sku-small" onclick="addNewAddRow(' + id + ')">+ 增加型號</button>' +
+      '</div>' +
+      '<div class="edit-field-group" style="margin-bottom:12px;">' +
+        '<label class="edit-label-premium">產品尺寸 (手動新增用)</label>' +
+        '<input type="text" class="edit-input-dark sb-size-input" placeholder="例：60X120">' +
       '</div>' +
       '<div id="add-sku-list-' + id + '"><!-- 手動型號行 --></div>';
     container.appendChild(div);
@@ -2100,7 +2101,59 @@
   };
 
   /**
-   * 🚀 系列名稱輸入完成(失焦)後，向後端查該系列既有編號，依尺寸分組渲染成勾選清單。
+   * 🚀 系列名稱輸入框「邊打邊搜」：打一個字就查符合的系列名稱，渲染成下拉建議清單。
+   */
+  var _seriesInputDebounce = {};
+  window.handleSeriesInput = function (id) {
+    var block = document.getElementById('series-block-' + id);
+    if (!block) return;
+    var input = block.querySelector('.sb-series-input');
+    var q = input && input.value ? input.value.trim() : '';
+    var suggestEl = document.getElementById('series-suggest-' + id);
+    if (!suggestEl) return;
+
+    clearTimeout(_seriesInputDebounce[id]);
+    if (!q) { suggestEl.innerHTML = ''; suggestEl.style.display = 'none'; return; }
+
+    _seriesInputDebounce[id] = setTimeout(function () {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          var stillSuggestEl = document.getElementById('series-suggest-' + id);
+          if (!stillSuggestEl) return;
+          if (!res || !res.success || !res.names || !res.names.length) {
+            stillSuggestEl.innerHTML = '';
+            stillSuggestEl.style.display = 'none';
+            return;
+          }
+          stillSuggestEl.innerHTML = res.names.map(function (name) {
+            // 用 mousedown（不是 click）：要搶在 input 的 blur 事件之前先觸發，才不會被 blur 隱藏清單卡住
+            return '<div class="series-suggest-item" onmousedown="selectSeriesSuggestion(' + id + ', \'' + name.replace(/'/g, "\\'") + '\')">' + escapeHtml(name) + '</div>';
+          }).join('');
+          stillSuggestEl.style.display = 'block';
+        })
+        .getSeriesNameSuggestions(q);
+    }, 250);
+  };
+
+  window.selectSeriesSuggestion = function (id, name) {
+    var block = document.getElementById('series-block-' + id);
+    if (!block) return;
+    var input = block.querySelector('.sb-series-input');
+    if (input) input.value = name;
+    hideSeriesSuggestions(id);
+    fetchSeriesAutofill(id);
+  };
+
+  window.hideSeriesSuggestions = function (id) {
+    // 延遲一點點再隱藏：讓 onmousedown 選建議項目的事件先觸發完成
+    setTimeout(function () {
+      var suggestEl = document.getElementById('series-suggest-' + id);
+      if (suggestEl) suggestEl.style.display = 'none';
+    }, 150);
+  };
+
+  /**
+   * 🚀 系列名稱輸入完成(失焦，或點選建議清單)後，向後端查該系列既有編號，依尺寸分組渲染成勾選清單。
    */
   window.fetchSeriesAutofill = function (id) {
     var block = document.getElementById('series-block-' + id);
@@ -2167,7 +2220,7 @@
       '<div class="autofill-item-thumb">' + imgHtml + '</div>' +
       '<div class="autofill-item-info">' +
         '<div class="autofill-item-sku">' + escapeHtml(it.sku) + '</div>' +
-        (it.color ? '<div class="autofill-item-color">' + escapeHtml(it.color) + '</div>' : '') +
+        (it.color ? '<div class="autofill-item-color">顏色：' + escapeHtml(it.color) + '</div>' : '') +
       '</div>' +
       '<input type="number" class="autofill-item-qty" placeholder="片數" inputmode="numeric">' +
       '<input type="text" class="autofill-item-batch" placeholder="批號">' +

@@ -25,7 +25,7 @@ function _shortenArrivalDate_(dVal) {
 
 function getAggregatedInventory() {
   try {
-    const cacheKey = "inv_full_v11"; // v11: 移除外部「到貨明細」試算表相依，避免拖慢/卡住庫存查詢，改回只讀「保留單」分頁每列欄位(入倉日期1/2,數量1/2)
+    const cacheKey = "inv_full_v12"; // v12: 新增 colorName（「顏色」欄，跟「色階」不同），供新增上架自動帶入用
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return { success: true, data: cached };
 
@@ -163,6 +163,7 @@ function _buildInventoryData(ss) {
       folder:   findHeaderIndex(ph, ["雲端圖片"]),
       origin:   findHeaderIndex(ph, ["產地"]),
       color:    findHeaderIndex(ph, ["色階"]),
+      colorName: findHeaderIndex(ph, ["顏色"]), // 🚀 跟「色階」是不同欄位：色階是等級代碼，顏色才是給人看的色名
       scene1:   findHeaderIndex(ph, ["實景1", "實景圖1"]),
       scene2:   findHeaderIndex(ph, ["實景2", "實景圖2"]),
       scene3:   findHeaderIndex(ph, ["實景3", "實景圖3"]),
@@ -271,6 +272,7 @@ function _buildInventoryData(ss) {
         size:     String(pd[i][pi.size]     || ''),
         origin:   pi.origin !== -1 ? String(pd[i][pi.origin] || '') : '',
         colorTag: String(pd[i][pi.color]    || ''),
+        colorName: pi.colorName !== -1 ? String(pd[i][pi.colorName] || '') : '',
         ratio:    ratio,
         qty:      Math.floor(availQty),
         pyeong:   availPyeong,
