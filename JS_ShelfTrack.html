@@ -569,6 +569,7 @@
       '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:center;">' +
         (s.shortage ? (function () { const st = shelfShortageStyle(shelfWorstCat(s)); return '<span class="shelf-chip" onclick="shelfToggleShortageCodes()" style="cursor:pointer; background:' + st.bg + '; color:' + st.color + '; border-color:' + st.bd + ';">' + st.icon + ' ' + esc(s.shortage) + '（' + (s.shortageCodes ? s.shortageCodes.length : 0) + '）▾</span>'; })() : '') +
         (ageTxt ? '<span style="font-size:14px; font-weight:900; color:#facc15;">上架 ' + ageTxt + '</span>' : '') +
+        '<span class="shelf-chip" onclick="shelfSeriesFilterSet(\'all\')" style="cursor:pointer; background:rgba(255,255,255,0.08); color:#fff; border-color:rgba(255,255,255,0.25);' + selStyle('all') + '">全部 ' + (rankCounts[0] + rankCounts[1] + rankCounts[2] + rankCounts[3] + rankCounts[4]) + ' 家</span>' +
         '<span class="shelf-chip" onclick="shelfSeriesFilterSet(\'shipshelf\')" style="cursor:pointer;' + selStyle('shipshelf') + '">有出貨有上架 ' + rankCounts[0] + ' 家</span>' +
         '<span class="shelf-chip reserved" onclick="shelfSeriesFilterSet(\'reserveshelf\')" style="cursor:pointer;' + selStyle('reserveshelf') + '">有保留有上架 ' + rankCounts[1] + ' 家</span>' +
         '<span class="shelf-chip nosale" onclick="shelfSeriesFilterSet(\'shelfonly\')" style="cursor:pointer;' + selStyle('shelfonly') + '">有上架未出貨 ' + rankCounts[2] + ' 家</span>' +

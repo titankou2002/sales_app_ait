@@ -62,6 +62,8 @@
   - 已下架（`removed`）客戶維持顯示「下架＋下架日期」的特殊標記，但依是否曾出貨併入「有出貨未上架」或「未上架」計數，不再像舊版一樣被排除在所有具名分類之外。
 - **驗證**：語法檢查通過（ShelfTracking.js 全文 + JS_ShelfTrack.html 內嵌 script 區塊）、零位元組掃描正常。
 
+**追加 v514**：使用者截圖回報「按了『有出貨有上架』chip 後只剩 1 家，我要全部呈現出來用顏色分類」——查證後確認**不是預設狀態被誤篩選**（`shelfSeriesFilter` 預設就是 `'all'`，切換系列時也會重置，未篩選狀態本來就會顯示全部客戶並依 5 色分類），而是使用者自己點了該 chip 進行測試，但**沒有明顯的「回到全部」入口**（只能再點一次同一個 chip 靠 toggle 邏輯取消）。修法：在 5 個分類 chip 最前面新增一顆「全部 X 家」chip，點擊直接重置為未篩選（不用記得要點同一顆才能取消），計數 = 5 種分類加總，UX 更直覺。`clasp push -f` → 版本 514 → redeploy 既有 deployment @514。
+
 **部署**：`clasp push -f` → 版本 513 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @513`（網址不變）。
 
 ---
