@@ -2404,6 +2404,7 @@ function doGet(e) {
         function toggleStatus(name, action) {
           if (!confirm('您確定要將 ' + name + ' 的金鑰' + (action === 'revoke' ? '停用失效' : '恢復啟用') + '嗎？')) return;
 
+          showToast('處理中，請稍候...');
           google.script.run
             .withSuccessHandler(function(res) {
               if (res.success) {
@@ -2412,12 +2413,16 @@ function doGet(e) {
               } else {
                 alert('操作失敗：' + res.msg);
               }
+            })
+            .withFailureHandler(function(err) {
+              alert('程式執行出錯，操作未完成：' + (err && err.message ? err.message : err) + '\\n\\n請重新整理頁面後再試一次。');
             })[action === 'revoke' ? 'revokeDirectSalesperson' : 'enableDirectSalesperson'](name);
         }
 
         function deleteSalesperson(name) {
           if (!confirm('確定要「永久刪除」' + name + ' 的金鑰嗎？\\n\\n跟「停用」不一樣，刪除後此人會從列表徹底消失，且無法復原，僅適用於手動新增的自訂名單（例如測試/助理帳號）。')) return;
 
+          showToast('處理中，請稍候...');
           google.script.run
             .withSuccessHandler(function(res) {
               if (res.success) {
@@ -2426,6 +2431,9 @@ function doGet(e) {
               } else {
                 alert('刪除失敗：' + res.msg);
               }
+            })
+            .withFailureHandler(function(err) {
+              alert('程式執行出錯，刪除未完成：' + (err && err.message ? err.message : err) + '\\n\\n請重新整理頁面後再試一次。');
             })
             .deleteDirectSalesperson(name);
         }

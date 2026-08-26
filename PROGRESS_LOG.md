@@ -41,6 +41,24 @@
 
 ---
 
+## 🔧 [2026-08-21] 金鑰管理停用/刪除補強：處理中提示 + 失敗保護 (版本 520)
+
+**問題回報**：v519 修好斷行問題後，使用者測試刪除功能，回報「刪掉後沒有動畫顯示，就跳到 `script.google.com 拒絕連線` 畫面了」。
+
+**排查**：`toggleStatus`／`deleteSalesperson`（Code.js 內嵌 client-side script）原本都只有 `.withSuccessHandler()`，**沒有 `.withFailureHandler()`**——如果後端執行拋例外，`google.script.run` 不會有任何回呼觸發，畫面就是靜靜卡住、毫無反應，使用者形容的「沒有動畫顯示」正是這個缺口。至於「`script.google.com 拒絕連線`」這個瀏覽器層級的連線錯誤（不是 GAS 應用層的錯誤畫面），比較像是暫時性的網路/Google 端狀況——這個 session 短時間內連續 redeploy 了 10 次（v510～v519），不排除觸發了暫時性流量保護；純前端 `window.location.replace()` 導頁本身不會造成這種連線層級錯誤。
+
+**補強內容**（不確定連線問題會不會再發生，但這兩個缺口本來就該補）：
+- `toggleStatus`／`deleteSalesperson` 都新增 `.withFailureHandler()`：後端出錯時彈出明確訊息＋建議重新整理，不再靜默卡住。
+- 點擊確認後立刻 `showToast('處理中，請稍候...')`，在等待伺服器回應期間至少有即時的視覺回饋，不會讓人以為「沒反應」。
+
+**驗證**：語法檢查通過、零位元組掃描正常。
+
+**部署**：`clasp push -f` → 版本 520 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @520`（網址不變）。
+
+**待確認**：請使用者重新整理頁面、再試一次刪除／停用，確認「script.google.com 拒絕連線」是否只是當下的偶發網路問題，還是會穩定重現——若穩定重現，代表還有沒抓到的根因，需要進一步排查。
+
+---
+
 ## 🐛 [2026-08-21] 修正：金鑰管理刪除按鈕整個 script 壞掉 + 操作欄位斷行 (版本 519)
 
 **問題回報**：v518 上線後，使用者截圖 console 錯誤 `Uncaught SyntaxError: Invalid or unexpected token` + `Uncaught ReferenceError: deleteSalesperson is not defined`；另外「操作」欄的停用/刪除按鈕跑到「直達連結」欄位下方另起一行，很醜。
