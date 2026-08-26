@@ -41,6 +41,27 @@
 
 ---
 
+## ✨ [2026-08-21] 系列名稱自動帶入：搜尋體驗 4 項修正 (版本 524)
+
+**問題回報**：使用者實測輸入產品編號（如 `RC612109`、`61243`）時，發現①查找很慢又沒有讀取動畫、②選單在還沒點選前會突然消失、③邊打邊搜的下拉建議根本不支援編號搜尋（只比對系列名稱）、④希望依中英數字元類型設定最短觸發字數。
+
+**根因**：
+- `getSeriesNameSuggestions()`（Code.js，供下拉建議清單用）原本**只比對系列名稱**（`p.sCn.includes(q)`），完全沒有比對編號——打編號永遠配不到任何建議，難怪畫面一片空白又像「消失」。
+- `handleSeriesInput`／`fetchSeriesAutofill` 沒有任何字數門檻，**打第一個字就送出查詢**——太短、太籠統的查詢一來浪費請求、體感變慢，二來連續改字時，較晚送出但較早回來的查詢結果可能被更晚抵達的舊回應蓋掉，造成「清單閃一下又消失」的競態問題（`handleSeriesInput` 原本沒有做請求排序保護，只有 `fetchSeriesAutofill` 有加 token）。
+- `fetchSeriesAutofill`（最終確認查詢）原本只有文字狀態（「正在查詢...」），沒有動畫，等待時看起來像沒反應。
+
+**修正內容**：
+- `getSeriesNameSuggestions()`：新增比對編號（正規化去空白/連字號後 `includes`），打編號片段（如 `61243`）也能找到對應系列並列入建議清單。
+- 前端新增 `_seriesQueryMeetsThreshold(q)`：純中文要 >2 字、純數字要 >4 碼、純英文要 >2 碼、混合英數（一般編號格式）要 >3 碼，未達門檻不送出任何查詢（`handleSeriesInput` 邊打邊搜、`fetchSeriesAutofill` 最終查詢皆套用），從源頭減少無意義的請求量。
+- `handleSeriesInput` 補上遞增 token 競態保護（比照 `fetchSeriesAutofill` 既有做法），舊查詢的回應若已經過期就直接忽略，不會蓋掉/清空最新的建議清單。
+- `fetchSeriesAutofill` 查詢期間也顯示跟邊打邊搜共用的轉圈動畫（原本只有文字狀態），查詢中/查詢完成都看得到明確回饋。
+
+**驗證**：語法檢查通過（Code.js、script.html 內嵌 script 區塊）、零位元組掃描正常。
+
+**部署**：`clasp push -f` → 版本 524 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @524`（網址不變）。
+
+---
+
 ## ⚡ [2026-08-21] 登入 Splash 畫面效能排查與優化 (版本 523)
 
 **問題討論**：使用者問「登入畫面的背景是真的有在跑東西的嗎？拿掉會不會比較快？」，先討論不動作。

@@ -6075,13 +6075,15 @@ function getSeriesSkuOptions(seriesName) {
 }
 
 /**
- * 🚀 「新增上架」表單系列名稱輸入框的即時建議：輸入任何一個字，回傳所有包含這個字的系列名稱，
- * 供前端渲染成下拉建議清單（邊打邊搜，不用打完整名稱）。同樣直接複用 getAggregatedInventory() 快取。
+ * 🚀 「新增上架」表單系列名稱輸入框的即時建議：輸入任何一個字（或一段編號），回傳所有包含這個字
+ * 的系列名稱，或是編號含這段字的品項所屬系列，供前端渲染成下拉建議清單（邊打邊搜，不用打完整名稱，
+ * 也支援直接打編號片段如「61243」）。同樣直接複用 getAggregatedInventory() 快取。
  */
 function getSeriesNameSuggestions(query) {
   try {
     const q = String(query || '').trim();
     if (!q) return { success: true, names: [] };
+    const qUpperNoSep = q.toUpperCase().replace(/[\s\-]/g, '');
 
     const invRes = getAggregatedInventory();
     if (!invRes.success) return { success: false, msg: invRes.msg || '庫存資料讀取失敗' };
@@ -6091,7 +6093,9 @@ function getSeriesNameSuggestions(query) {
     invRes.data.forEach(p => {
       const name = p.sCn;
       if (!name || seen[name]) return;
-      if (name.includes(q)) {
+      const nameMatch = name.includes(q);
+      const skuMatch = p.sku && p.sku.toUpperCase().replace(/[\s\-]/g, '').includes(qUpperNoSep);
+      if (nameMatch || skuMatch) {
         seen[name] = true;
         names.push(name);
       }

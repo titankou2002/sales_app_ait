@@ -2108,9 +2108,27 @@
   };
 
   /**
-   * 🚀 系列名稱輸入框「邊打邊搜」：打一個字就查符合的系列名稱，渲染成下拉建議清單。
+   * 🚀 判斷輸入的字數是否足夠開始搜尋，避免太短、太籠統的字就觸發查詢（浪費請求、結果又一堆不相關）：
+   * 純中文要超過 2 字、純數字要超過 4 碼、純英文要超過 2 碼；混合英數字（常見於編號，如 RC612109）
+   * 用比較寬鬆但一樣有意義的門檻（超過 3 碼）。
+   */
+  function _seriesQueryMeetsThreshold(q) {
+    if (!q) return false;
+    var hasHan = /[一-龥]/.test(q);
+    var hasDigit = /[0-9]/.test(q);
+    var hasAlpha = /[A-Za-z]/.test(q);
+    if (hasHan && !hasDigit && !hasAlpha) return q.length > 2;
+    if (hasDigit && !hasHan && !hasAlpha) return q.length > 4;
+    if (hasAlpha && !hasHan && !hasDigit) return q.length > 2;
+    return q.length > 3; // 混合英數字（編號）
+  }
+
+  /**
+   * 🚀 系列名稱輸入框「邊打邊搜」：字數達門檻後就查符合的系列名稱（或含此段編號的品項所屬系列），
+   * 渲染成下拉建議清單。
    */
   var _seriesInputDebounce = {};
+  var _seriesSuggestToken = {};
   window.handleSeriesInput = function (id) {
     var block = document.getElementById('series-block-' + id);
     if (!block) return;
@@ -2131,16 +2149,20 @@
     }
 
     clearTimeout(_seriesInputDebounce[id]);
-    if (!q) {
+    _seriesSuggestToken[id] = (_seriesSuggestToken[id] || 0) + 1; // 讓還沒回來的舊查詢作廢
+
+    if (!q || !_seriesQueryMeetsThreshold(q)) {
       suggestEl.innerHTML = ''; suggestEl.style.display = 'none';
       if (spinnerEl) spinnerEl.style.display = 'none';
       return;
     }
 
     if (spinnerEl) spinnerEl.style.display = 'block';
+    var myToken = _seriesSuggestToken[id];
     _seriesInputDebounce[id] = setTimeout(function () {
       google.script.run
         .withSuccessHandler(function (res) {
+          if (_seriesSuggestToken[id] !== myToken) return; // 已經有更新的查詢在跑，這筆回應作廢（避免舊回應把清單蓋掉/閃現又消失）
           var stillSuggestEl = document.getElementById('series-suggest-' + id);
           var stillSpinnerEl = document.getElementById('series-search-spinner-' + id);
           if (stillSpinnerEl) stillSpinnerEl.style.display = 'none';
@@ -2157,6 +2179,7 @@
           stillSuggestEl.style.display = 'block';
         })
         .withFailureHandler(function () {
+          if (_seriesSuggestToken[id] !== myToken) return;
           var stillSpinnerEl = document.getElementById('series-search-spinner-' + id);
           if (stillSpinnerEl) stillSpinnerEl.style.display = 'none';
         })
@@ -2201,10 +2224,20 @@
       return;
     }
 
+    // 🚀 字數不夠門檻就不查（避免太短、太籠統的字送出查詢，既浪費請求又容易配到不相關的系列）
+    if (!_seriesQueryMeetsThreshold(series)) {
+      groupsEl.innerHTML = '';
+      if (statusEl) { statusEl.textContent = '請輸入更完整的系列名稱或編號（中文3字/數字5碼/英文3碼以上）再查詢'; statusEl.className = 'autofill-status notfound'; }
+      delete block.dataset.confirmedSeries;
+      return;
+    }
+
     // 🚀 用遞增的 token 擋掉「舊查詢比新查詢晚回來、把畫面蓋回舊結果」的競態問題：
     // 使用者快速改字連續觸發查詢時，只有最後一次的回應會真的被渲染。
     var myToken = (_seriesFetchToken[id] = (_seriesFetchToken[id] || 0) + 1);
 
+    var spinnerEl = document.getElementById('series-search-spinner-' + id);
+    if (spinnerEl) spinnerEl.style.display = 'block';
     if (statusEl) { statusEl.textContent = '正在查詢「' + series + '」的既有編號...'; statusEl.className = 'autofill-status'; }
 
     google.script.run
@@ -2214,6 +2247,8 @@
         var stillGroupsEl = document.getElementById('autofill-groups-' + id);
         var stillStatusEl = document.getElementById('autofill-status-' + id);
         var stillBlock = document.getElementById('series-block-' + id);
+        var stillSpinnerEl = document.getElementById('series-search-spinner-' + id);
+        if (stillSpinnerEl) stillSpinnerEl.style.display = 'none';
         if (!stillGroupsEl || !stillStatusEl) return;
 
         if (!res || !res.success) {
@@ -2243,6 +2278,8 @@
       .withFailureHandler(function (err) {
         if (_seriesFetchToken[id] !== myToken) return;
         var stillStatusEl = document.getElementById('autofill-status-' + id);
+        var stillSpinnerEl = document.getElementById('series-search-spinner-' + id);
+        if (stillSpinnerEl) stillSpinnerEl.style.display = 'none';
         if (!stillStatusEl) return;
         stillStatusEl.textContent = '查詢失敗：' + (err && err.message ? err.message : err);
         stillStatusEl.className = 'autofill-status notfound';
