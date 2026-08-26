@@ -6051,12 +6051,16 @@ function getSeriesSkuOptions(seriesName) {
     matched.forEach(p => {
       const sizeKey = p.size || '規格外';
       if (!bySize[sizeKey]) bySize[sizeKey] = [];
+      // 🚀 該編號目前庫存裡實際存在的批號清單（去重、去空白），供前端批號欄位做「可選也可自打」
+      const batchSet = {};
+      (p.batches || []).forEach(b => { const bv = String(b.batch || '').trim(); if (bv) batchSet[bv] = true; });
       bySize[sizeKey].push({
         sku: p.sku,
         // 🚀 「顏色」跟「色階」是編號價目表裡不同欄位——色階是等級代碼，顏色才是給業務看的色名，
         // 沒有「顏色」欄位時才退回「色階」，避免直接空白。
         color: p.colorName || p.colorTag || '',
-        img: p.img || ''
+        img: p.img || '',
+        batches: Object.keys(batchSet)
       });
     });
     const sizes = Object.keys(bySize).sort().map(sz => ({

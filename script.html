@@ -2030,9 +2030,9 @@
   window.openAddLayoutModal = function () {
     addState = { imageData: null, gpsPos: null };
     document.getElementById('add-photo-preview').innerHTML = '<div class="photo-placeholder">' +
-      '<div style="font-size:40px; margin-bottom:10px;">📸</div>' +
-      '<div style="font-weight:800; font-size:16px;">拍攝現場或從相簿選擇</div>' +
-      '<div style="font-size:12px; opacity:0.6; margin-top:5px;">支援相機拍照與手機相簿上傳</div>' +
+      '<div style="font-size:22px; margin-bottom:4px;">📸</div>' +
+      '<div style="font-weight:800; font-size:13px;">拍攝現場或從相簿選擇</div>' +
+      '<div style="font-size:10px; opacity:0.6; margin-top:3px;">支援相機拍照與手機相簿上傳</div>' +
       '</div>';
     _seriesBlockSeq = 0;
     document.getElementById('add-series-blocks').innerHTML = '';
@@ -2070,13 +2070,16 @@
     div.id = 'series-block-' + id;
     div.innerHTML =
       (id > 1 ? '<div class="series-block-remove" onclick="removeSeriesBlock(' + id + ')">×</div>' : '') +
-      '<div class="edit-field-group" style="position:relative;">' +
+      '<div class="edit-field-group">' +
         '<label class="edit-label-premium">系列名稱</label>' +
-        '<input type="text" class="edit-input-dark sb-series-input" placeholder="輸入系列名稱或其中一個編號..." ' +
-          'oninput="handleSeriesInput(' + id + ')" ' +
-          'onblur="hideSeriesSuggestions(' + id + '); fetchSeriesAutofill(' + id + ')" ' +
-          'onkeydown="if(event.key===\'Enter\'){this.blur();}">' +
-        '<div class="series-suggest-list" id="series-suggest-' + id + '"></div>' +
+        '<div style="position:relative;">' +
+          '<input type="text" class="edit-input-dark sb-series-input" placeholder="輸入系列名稱或其中一個編號..." ' +
+            'oninput="handleSeriesInput(' + id + ')" ' +
+            'onblur="hideSeriesSuggestions(' + id + '); fetchSeriesAutofill(' + id + ')" ' +
+            'onkeydown="if(event.key===\'Enter\'){this.blur();}">' +
+          '<div class="series-search-spinner" id="series-search-spinner-' + id + '" style="display:none;"></div>' +
+          '<div class="series-suggest-list" id="series-suggest-' + id + '"></div>' +
+        '</div>' +
       '</div>' +
       '<div class="autofill-status" id="autofill-status-' + id + '"></div>' +
       '<div id="autofill-groups-' + id + '"></div>' +
@@ -2110,15 +2113,33 @@
     var input = block.querySelector('.sb-series-input');
     var q = input && input.value ? input.value.trim() : '';
     var suggestEl = document.getElementById('series-suggest-' + id);
+    var spinnerEl = document.getElementById('series-search-spinner-' + id);
     if (!suggestEl) return;
 
-    clearTimeout(_seriesInputDebounce[id]);
-    if (!q) { suggestEl.innerHTML = ''; suggestEl.style.display = 'none'; return; }
+    // 🚀 已經選定並帶出一個系列之後，如果又回來改輸入框的字，代表要重新搜尋別的系列了——
+    // 立刻清掉舊的自動帶入結果，不要讓「正在打新的字，畫面卻還顯示舊系列的清單」這種混淆狀態出現。
+    if (block.dataset.confirmedSeries && q !== block.dataset.confirmedSeries) {
+      var staleStatusEl = document.getElementById('autofill-status-' + id);
+      var staleGroupsEl = document.getElementById('autofill-groups-' + id);
+      if (staleStatusEl) { staleStatusEl.textContent = ''; staleStatusEl.className = 'autofill-status'; }
+      if (staleGroupsEl) staleGroupsEl.innerHTML = '';
+      delete block.dataset.confirmedSeries;
+    }
 
+    clearTimeout(_seriesInputDebounce[id]);
+    if (!q) {
+      suggestEl.innerHTML = ''; suggestEl.style.display = 'none';
+      if (spinnerEl) spinnerEl.style.display = 'none';
+      return;
+    }
+
+    if (spinnerEl) spinnerEl.style.display = 'block';
     _seriesInputDebounce[id] = setTimeout(function () {
       google.script.run
         .withSuccessHandler(function (res) {
           var stillSuggestEl = document.getElementById('series-suggest-' + id);
+          var stillSpinnerEl = document.getElementById('series-search-spinner-' + id);
+          if (stillSpinnerEl) stillSpinnerEl.style.display = 'none';
           if (!stillSuggestEl) return;
           if (!res || !res.success || !res.names || !res.names.length) {
             stillSuggestEl.innerHTML = '';
@@ -2130,6 +2151,10 @@
             return '<div class="series-suggest-item" onmousedown="selectSeriesSuggestion(' + id + ', \'' + name.replace(/'/g, "\\'") + '\')">' + escapeHtml(name) + '</div>';
           }).join('');
           stillSuggestEl.style.display = 'block';
+        })
+        .withFailureHandler(function () {
+          var stillSpinnerEl = document.getElementById('series-search-spinner-' + id);
+          if (stillSpinnerEl) stillSpinnerEl.style.display = 'none';
         })
         .getSeriesNameSuggestions(q);
     }, 250);
@@ -2155,6 +2180,7 @@
   /**
    * 🚀 系列名稱輸入完成(失焦，或點選建議清單)後，向後端查該系列既有編號，依尺寸分組渲染成勾選清單。
    */
+  var _seriesFetchToken = {};
   window.fetchSeriesAutofill = function (id) {
     var block = document.getElementById('series-block-' + id);
     if (!block) return;
@@ -2167,16 +2193,23 @@
     if (!series) {
       groupsEl.innerHTML = '';
       if (statusEl) { statusEl.textContent = ''; statusEl.className = 'autofill-status'; }
+      delete block.dataset.confirmedSeries;
       return;
     }
+
+    // 🚀 用遞增的 token 擋掉「舊查詢比新查詢晚回來、把畫面蓋回舊結果」的競態問題：
+    // 使用者快速改字連續觸發查詢時，只有最後一次的回應會真的被渲染。
+    var myToken = (_seriesFetchToken[id] = (_seriesFetchToken[id] || 0) + 1);
 
     if (statusEl) { statusEl.textContent = '正在查詢「' + series + '」的既有編號...'; statusEl.className = 'autofill-status'; }
 
     google.script.run
       .withSuccessHandler(function (res) {
+        if (_seriesFetchToken[id] !== myToken) return; // 已經有更新的查詢在跑，這筆回應作廢
         // 使用者可能在查詢期間已經移除這個區塊
         var stillGroupsEl = document.getElementById('autofill-groups-' + id);
         var stillStatusEl = document.getElementById('autofill-status-' + id);
+        var stillBlock = document.getElementById('series-block-' + id);
         if (!stillGroupsEl || !stillStatusEl) return;
 
         if (!res || !res.success) {
@@ -2192,17 +2225,19 @@
           return;
         }
 
+        if (stillBlock) stillBlock.dataset.confirmedSeries = series; // 記錄目前畫面顯示的是哪個系列，供 handleSeriesInput 判斷是否該清空
         var totalCount = res.sizes.reduce(function (s, g) { return s + g.items.length; }, 0);
         stillStatusEl.textContent = '✅ 已帶入「' + res.matchedSeriesName + '」共 ' + totalCount + ' 個編號，勾選並填入片數即可';
         stillStatusEl.className = 'autofill-status found';
         stillGroupsEl.innerHTML = res.sizes.map(function (g) {
           return '<div class="autofill-size-group">' +
             '<div class="autofill-size-label">' + escapeHtml(g.size) + '（' + g.items.length + '）</div>' +
-            g.items.map(function (it) { return buildAutofillItemRowHtml(it, g.size); }).join('') +
+            g.items.map(function (it) { return buildAutofillItemRowHtml(id, it, g.size); }).join('') +
           '</div>';
         }).join('');
       })
       .withFailureHandler(function (err) {
+        if (_seriesFetchToken[id] !== myToken) return;
         var stillStatusEl = document.getElementById('autofill-status-' + id);
         if (!stillStatusEl) return;
         stillStatusEl.textContent = '查詢失敗：' + (err && err.message ? err.message : err);
@@ -2211,19 +2246,25 @@
       .getSeriesSkuOptions(series);
   };
 
-  function buildAutofillItemRowHtml(it, sizeVal) {
+  function buildAutofillItemRowHtml(blockId, it, sizeVal) {
     var imgHtml = it.img
       ? '<img src="' + it.img + '" onerror="this.parentElement.innerHTML=\'<span>NO IMG</span>\'">'
       : '<span>NO IMG</span>';
+    // 🚀 批號可選也可自打：如果這個編號在庫存裡有查到現成批號，用 <datalist> 做成下拉可選＋仍可自行輸入。
+    var batchListId = 'batch-opts-' + blockId + '-' + it.sku.replace(/[^A-Za-z0-9]/g, '');
+    var batchOptionsHtml = (it.batches && it.batches.length)
+      ? '<datalist id="' + batchListId + '">' + it.batches.map(function (b) { return '<option value="' + escapeHtml(b) + '">'; }).join('') + '</datalist>'
+      : '';
     return '<div class="autofill-item-row" data-sku="' + escapeHtml(it.sku) + '" data-size="' + escapeHtml(sizeVal || '') + '">' +
       '<input type="checkbox" onchange="toggleAutofillRow(this)">' +
       '<div class="autofill-item-thumb">' + imgHtml + '</div>' +
       '<div class="autofill-item-info">' +
         '<div class="autofill-item-sku">' + escapeHtml(it.sku) + '</div>' +
-        (it.color ? '<div class="autofill-item-color">顏色：' + escapeHtml(it.color) + '</div>' : '') +
+        (it.color ? '<div class="autofill-item-color">' + escapeHtml(it.color) + '</div>' : '') +
       '</div>' +
-      '<input type="number" class="autofill-item-qty" placeholder="片數" inputmode="numeric">' +
-      '<input type="text" class="autofill-item-batch" placeholder="批號">' +
+      '<input type="text" class="autofill-item-qty" placeholder="片數" inputmode="numeric" pattern="[0-9]*">' +
+      '<input type="text" class="autofill-item-batch" placeholder="批號"' + (batchOptionsHtml ? ' list="' + batchListId + '"' : '') + '>' +
+      batchOptionsHtml +
     '</div>';
   }
 
@@ -2243,7 +2284,7 @@
     var div = document.createElement('div');
     div.className = 'edit-row-premium';
     div.innerHTML = '<input type="text" class="edit-sku-input" placeholder="編號" inputmode="text">' +
-      '<input type="number" class="edit-qty-input" placeholder="片數" inputmode="numeric" value="1">' +
+      '<input type="text" class="edit-qty-input" placeholder="片數" inputmode="numeric" pattern="[0-9]*" value="1">' +
       '<button class="btn-remove-premium" onclick="this.parentElement.remove()">×</button>';
     container.appendChild(div);
   };
