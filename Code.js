@@ -5190,6 +5190,18 @@ function getCustomerList(salesName) {
 
 function getCustomerDisplays(customerName) {
   try {
+    const targetMerged = mergeCustomer(customerName);
+
+    // 🚀 效能優化：整包回應快取 3 分鐘（業務反應版面記錄讀取很慢，根因是這裡完全沒快取，
+    //    每次開客戶頁都重新全表掃描＋跨表讀保留單）。所有會改到這個客戶版面資料的寫入路徑
+    //    （saveNewLayout / updateDisplayBatch / offShelfDisplayBatch / deleteDisplayBatchPermanent /
+    //    updateLayoutFieldBatch）都會主動呼叫 CacheManager.removeLarge 清除，不會看到舊資料。
+    const cacheKey = "displays_" + targetMerged;
+    try {
+      const cached = CacheManager.getLarge(cacheKey);
+      if (cached) return cached;
+    } catch (e) {}
+
     const ssBusiness = getSafeSsBusiness();
     const ssMain = getSafeSsMain();
     const sheet = ssBusiness.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
@@ -5215,8 +5227,6 @@ function getCustomerDisplays(customerName) {
 
     if (idx.cust === -1) return { success: false, msg: "找不到客戶欄位", debug_headers: headers };
 
-    const targetMerged = mergeCustomer(customerName);
-
     // 🚀 優化 1：快取庫存與單磚圖資料 (10 分鐘)
     let inventoryMap = {};
     try {
@@ -5239,7 +5249,8 @@ function getCustomerDisplays(customerName) {
     let customerReservedMap = {};
     try {
       if (typeof getReservedOrdersGrouped === 'function') {
-        const reservedGroups = getReservedOrdersGrouped(ssMain, targetMerged);
+        // 🚀 傳入已算好的 inventoryMap，避免函式內部再開一次主表、重掃一次編號價目表
+        const reservedGroups = getReservedOrdersGrouped(ssMain, targetMerged, inventoryMap);
         reservedGroups.forEach(group => {
           group.items.forEach(item => {
             const skuKey = item.sku.replace(/[\s\-]/g, '');
@@ -5322,12 +5333,14 @@ function getCustomerDisplays(customerName) {
     const active = allData.filter(d => !d.offDate);
     const history = allData.filter(d => d.offDate);
 
-    return {
+    const result = {
       success: true,
       active: active,
       history: history,
       debug: { active: active.length, history: history.length, target: targetMerged }
     };
+    try { CacheManager.putLarge(cacheKey, result, 180); } catch (e) {}
+    return result;
   } catch (e) {
     return { success: false, msg: "資料抓取失敗: " + e.toString() };
   }
@@ -5519,6 +5532,9 @@ function deleteDisplayBatchPermanent(customerName, skus, photoUrl) {
       try { DriveApp.getFileById(targetPhotoId).setTrashed(true); } catch (e) { console.warn("照片刪除失敗", e); }
     }
 
+    // 🚀 清除版面記錄快取，避免刪除後畫面還顯示舊資料
+    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
+
     return { success: true, msg: "已永久刪除 " + deleted + " 筆資料與相關照片" };
   } catch (e) {
     return { success: false, msg: "刪除失敗: " + e.toString() };
@@ -5575,6 +5591,9 @@ function offShelfDisplayBatch(customerName, skus, salesperson, photoUrl) {
         sheet.getRangeList(updateA1s).setValue(timestamp);
       }
     }
+
+    // 🚀 清除版面記錄快取，避免下架後畫面還顯示舊資料
+    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
 
     return { success: true, msg: "已成功下架 " + offDateUpdates.length + " 個品項" };
   } catch (e) {
@@ -5779,7 +5798,10 @@ function updateDisplayBatch(customerName, photoUrl, newItems, newPhotoData, gpsD
     }
 
     // 清除快取
-    CacheService.getUserCache().remove("CUSTOMER_DISPLAYS_" + targetMerged);
+    // 🚀 原本用 getUserCache() 存到「CUSTOMER_DISPLAYS_」這個 key，但 getCustomerDisplays
+    //    從沒往這個 key 寫過（不同快取空間+不同 key 名），等於清了個空氣，是無效程式碼。
+    //    改用跟 getCustomerDisplays 一致的 CacheManager.removeLarge("displays_"+客戶)。
+    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
 
     return { success: true, msg: "已成功更新並移至最上方", finalPhotoUrl: finalPhotoUrl };
   } catch (e) {
@@ -5824,6 +5846,9 @@ function updateLayoutFieldBatch(customerName, skus, fieldName, newVal) {
         sheet.getRangeList(updateA1s).setValue(timestamp);
       }
     }
+
+    // 🚀 清除版面記錄快取，避免改完畫面還顯示舊資料（這個函式原本完全沒清過快取）
+    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
 
     return { success: true };
   } catch (e) {
@@ -5899,9 +5924,11 @@ function saveNewLayout(payload) {
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
   if (!sheet) return { success: false, msg: "找不到資料表：" + CONFIG.SHEET_NAME_LAYOUT };
 
-  const dataRange = sheet.getDataRange().getValues();
+  // 🚀 效能優化：這裡只需要標題列，原本 getDataRange().getValues() 會把整張表（可能上萬列）
+  //    全部讀進記憶體，只為了取 2 列標題——改成只讀前 2 列，「新增上架」的儲存速度明顯變快。
   // 🚀 關鍵：第1列是說明，第2列是標題 (Index 1)
-  const headers = dataRange[1] || dataRange[0];
+  const headerRange = sheet.getRange(1, 1, 2, sheet.getLastColumn()).getValues();
+  const headers = headerRange[1] || headerRange[0];
   const startRow = 2; // 資料從第三行開始
 
   const idx = {
@@ -5985,8 +6012,10 @@ function saveNewLayout(payload) {
   }
 
   // 5. 清理快取
-  const cache = CacheService.getScriptCache();
-  cache.remove("displays_" + mergeCustomer(payload.customerName));
+  // 🚀 這裡原本用 cache.remove()（單一 key）清一個從沒被寫入過的快取，是無效程式碼——
+  //    getCustomerDisplays 現在改用 CacheManager.putLarge（大型資料會切成多個 chunk key），
+  //    要用對應的 removeLarge 才清得乾淨。
+  try { CacheManager.removeLarge("displays_" + mergeCustomer(payload.customerName)); } catch (e) {}
 
   return { success: true, count: payload.items.length };
 }

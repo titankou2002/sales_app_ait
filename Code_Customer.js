@@ -41,10 +41,10 @@ function getCustomerDashboardData(custName) {
 /**
  * 📦 讀取保留單 (案名分組版)
  */
-function getReservedOrdersGrouped(ss, cleanName) {
+function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
   var sheet = ss.getSheetByName(CONFIG.SHEET_NAME_RESERVE || "保留單");
   if (!sheet) return [];
-  
+
   var data = sheet.getDataRange().getValues();
   var header = data[0];
   
@@ -78,9 +78,14 @@ function getReservedOrdersGrouped(ss, cleanName) {
   };
   
   // 預載產品資訊 (為了坪數與圖片)
-  // 🚀 重要：庫存資訊一律從主試算表讀取
-  var mainSs = SpreadsheetApp.openById(CONFIG.SS_ID);
-  var metaMap = getInventoryMap(mainSs);
+  // 🚀 效能優化：呼叫端若已經算好 inventoryMap（例如 getCustomerDisplays 早就用快取版取過），
+  //    直接沿用，避免這裡又重開一次主試算表、重掃一次編號價目表/庫存表。
+  //    沒傳才退回舊行為，向下相容其他呼叫點（如 getCustomerDashboardData）。
+  var metaMap = metaMapOverride;
+  if (!metaMap) {
+    var mainSs = SpreadsheetApp.openById(CONFIG.SS_ID);
+    metaMap = getInventoryMap(mainSs);
+  }
   var now = new Date();
   var groups = {};
   

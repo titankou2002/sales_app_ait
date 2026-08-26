@@ -41,6 +41,35 @@
 
 ---
 
+## ⚡ [2026-08-21] 版面記錄核心效能優化：客戶版面讀取＋新增上架都慢 (版本 515)
+
+**問題回報**：業務反應「版面記錄」這個核心功能讀取速度跟上傳新增的速度很慢，導致大家不太想用。
+
+**根因（讀取端，`getCustomerDisplays`，Code.js）**：這是每次業務點開一個客戶的版面頁面就會呼叫的核心函式，**完全沒有結果快取**——每次都重新：
+1. 全表掃描「版面上架清單」（找該客戶所有列）
+2. 呼叫 `getReservedOrdersGrouped()` 抓保留單標註，而這個函式本身**也完全沒快取**，還會：
+   - 開一次跨試算表的「保留單」來源（`CONFIG.RESERVE_SS_ID`，跨表 `openById` 本身就慢）
+   - 全表掃描「保留單」分頁
+   - **再額外多開一次主試算表**（`SpreadsheetApp.openById(CONFIG.SS_ID)`），**重新**讀一次「編號價目表/庫存表」算 `metaMap`——即使 `getCustomerDisplays` 剛剛才用快取版算好一份幾乎一樣的 `inventoryMap`，完全是白算一次。
+
+也就是每次開一個客戶頁，實際上是「讀版面表＋讀保留單表＋讀兩次庫存/價目表」，四五次重量級表格操作疊在一起，且完全命中不到任何快取。
+
+**額外發現**：程式碼裡其實已經有兩處「清除快取」的殘留程式碼（`saveNewLayout` 清 `displays_<客戶>`、`updateDisplayBatch` 清 `CUSTOMER_DISPLAYS_<客戶>`），但 `getCustomerDisplays` 從來沒有實作對應的「讀快取／寫快取」——等於兩次都在清一個從沒被寫入過的空氣，是過去半途而廢、忘記接上的功能。
+
+**修正內容**：
+- **`getCustomerDisplays`（Code.js）**：實作整包回應快取（`CacheManager.getLarge`/`putLarge`，180 秒 TTL，key＝`displays_<客戶簡稱>`）。命中快取時直接跳過所有試算表操作。
+- **`getReservedOrdersGrouped`（Code_Customer.js）**：新增第 3 個參數 `metaMapOverride`——呼叫端（`getCustomerDisplays`）現在會把已經算好的 `inventoryMap` 直接傳進去，函式內部不再重複開表、重新計算一次幾乎一樣的資料；沒傳參數的舊呼叫點（如 `getCustomerDashboardData`）維持原本行為，向下相容。
+- **`saveNewLayout`（Code.js，「新增上架」寫入路徑）**：原本 `sheet.getDataRange().getValues()` 把整張表（可能上萬列）全讀進記憶體，**只是為了拿標題列**；改成只讀前 2 列（`getRange(1,1,2,lastCol)`），直接省掉這次全表讀取。
+- **修好 2 處失效的快取清除，並補齊 3 處遺漏**：`saveNewLayout`／`updateDisplayBatch` 原本清的 key／快取空間跟新實作的讀取端對不上，已改用一致的 `CacheManager.removeLarge("displays_"+客戶)`；另外 `offShelfDisplayBatch`、`deleteDisplayBatchPermanent`、`updateLayoutFieldBatch` 這三個「下架／永久刪除／欄位批次修改」的寫入路徑原本完全沒清過快取，現在也都補上——確保新的快取機制不會讓業務改完東西還看到舊資料。
+
+**效果**：同一個客戶在快取有效期內（3 分鐘）重複開啟版面頁面，直接跳過所有試算表 I/O；快取過期後首次讀取，也少掉一次完全重複的庫存表讀取。新增上架的寫入路徑減少一次不必要的全表讀取。
+
+**驗證**：語法檢查通過（Code.js、Code_Customer.js）、零位元組掃描正常。
+
+**部署**：`clasp push -f` → 版本 515 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @515`（網址不變）。
+
+---
+
 ## ✨ [2026-08-21] 上架追蹤／系列明細：新增「有保留」篩選，重組為 5 種狀態 (版本 513)
 
 **需求**：使用者在「上架追蹤 → 系列明細」看到的原本 4 個篩選 chip（上架/有出貨未上架/已上架未售/未上架）少了「保留」這個維度，要求新增「有出貨／有保留／有上架」篩選。經確認後定案：**取代**原本 4 個，改成 5 種互斥狀態，按優先序分類每個客戶：
