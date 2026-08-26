@@ -159,6 +159,9 @@ function getSalesKeysList() {
       name: name,
       key: getSalesDirectKey(name),
       isBlocked: isBlocked,
+      // 🚀 是否為管理後台手動新增的自訂名單——只有這種才能被永久刪除；
+      // 業務分區/固定名單的正式業務刪了下次讀取還是會自動再出現，前端據此決定要不要顯示「刪除」按鈕。
+      isCustom: customSales.includes(name),
       url: "?view=inventory&sales=" + encodeURIComponent(name) + "&key=" + getSalesDirectKey(name)
     });
   });
@@ -277,22 +280,70 @@ function enableDirectSalesperson(name) {
 }
 
 /**
+ * 🗑️ 永久刪除業務金鑰（僅限管理後台手動新增的自訂名單；業務分區/固定名單的正式業務只能停用，
+ * 因為刪了下次讀 getSalesList() 還是會自動再出現，刪除在語意上不成立，直接明確拒絕比較不會誤導）
+ */
+function deleteDirectSalesperson(name) {
+  name = String(name || '').trim();
+  if (!name) return { success: false, msg: "姓名不能為空" };
+
+  const props = PropertiesService.getScriptProperties();
+  let customSales = [];
+  try {
+    customSales = JSON.parse(props.getProperty("DIRECT_ACCESS_CUSTOM") || "[]");
+  } catch (e) {}
+
+  if (!customSales.includes(name)) {
+    return { success: false, msg: "「" + name + "」是業務分區或固定名單裡的正式業務，這裡沒辦法永久刪除（刪了下次還是會自動出現），只能用「停用」。" };
+  }
+
+  customSales = customSales.filter(n => n !== name);
+  props.setProperty("DIRECT_ACCESS_CUSTOM", JSON.stringify(customSales));
+
+  // 一併清掉停用清單裡的殘留紀錄，避免累積垃圾資料
+  let blockedSales = [];
+  try {
+    blockedSales = JSON.parse(props.getProperty("DIRECT_ACCESS_BLOCKED") || "[]");
+  } catch (e) {}
+  if (blockedSales.includes(name)) {
+    blockedSales = blockedSales.filter(n => n !== name);
+    props.setProperty("DIRECT_ACCESS_BLOCKED", JSON.stringify(blockedSales));
+  }
+
+  logAdminKeyAction_("永久刪除金鑰", name, "已從自訂業務名單移除，此連結徹底失效且不會再出現於列表");
+  return { success: true, msg: "同仁「" + name + "」已永久刪除！" };
+}
+
+/**
  * 🛡️ 前端金鑰全局安全校正 API (方案 1 核心)
  */
 function verifySalesKey(sales, key) {
   sales = String(sales || '').trim();
   key = String(key || '').trim();
   if (!sales || !key) return { success: false, msg: "資訊不完整" };
-  
+
   const expectedKey = getSalesDirectKey(sales);
-  
+
   // 檢查是否被停用
   let blockedSales = [];
   try {
     blockedSales = JSON.parse(PropertiesService.getScriptProperties().getProperty("DIRECT_ACCESS_BLOCKED") || "[]");
   } catch(e){}
-  
-  if (key === expectedKey && !blockedSales.includes(sales)) {
+
+  const isValid = (key === expectedKey && !blockedSales.includes(sales));
+
+  // 🚀 存取記錄：每個業務開啟自己專屬主選單連結時（每次進 app 只會驗證一次，不是逐次點擊都記）
+  // 都留一筆 log，方便管理後台稽核「誰、什麼時候用了哪個連結」；成功/失敗都記，失敗的也有稽核價值
+  // （例如金鑰已停用還在嘗試存取）。跟既有的管理操作 log 共用同一張「LOG」分頁，方便統一查閱。
+  try {
+    logAdminKeyAction_(
+      isValid ? "業務開啟專屬連結" : "業務連結驗證失敗",
+      sales,
+      isValid ? "身分驗證成功，已進入系統" : "金鑰不符或已被停用，拒絕存取"
+    );
+  } catch (e) {}
+
+  if (isValid) {
     return { success: true };
   }
   return { success: false, msg: "金鑰已失效或無效存取" };
@@ -2352,7 +2403,7 @@ function doGet(e) {
         
         function toggleStatus(name, action) {
           if (!confirm('您確定要將 ' + name + ' 的金鑰' + (action === 'revoke' ? '停用失效' : '恢復啟用') + '嗎？')) return;
-          
+
           google.script.run
             .withSuccessHandler(function(res) {
               if (res.success) {
@@ -2362,6 +2413,21 @@ function doGet(e) {
                 alert('操作失敗：' + res.msg);
               }
             })[action === 'revoke' ? 'revokeDirectSalesperson' : 'enableDirectSalesperson'](name);
+        }
+
+        function deleteSalesperson(name) {
+          if (!confirm('確定要「永久刪除」' + name + ' 的金鑰嗎？\n\n跟「停用」不一樣，刪除後此人會從列表徹底消失，且無法復原，僅適用於手動新增的自訂名單（例如測試/助理帳號）。')) return;
+
+          google.script.run
+            .withSuccessHandler(function(res) {
+              if (res.success) {
+                showToast(res.msg);
+                window.location.replace(getKeysUrl);
+              } else {
+                alert('刪除失敗：' + res.msg);
+              }
+            })
+            .deleteDirectSalesperson(name);
         }
         
         // 👥 客戶查庫存金鑰管理 - 單筆
@@ -4203,20 +4269,27 @@ function doGet(e) {
           const actionButton = item.isBlocked
             ? `<button class="act-btn" onclick="toggleStatus('${item.name}', 'enable')">啟用</button>`
             : `<button class="act-btn disabled-btn" onclick="toggleStatus('${item.name}', 'revoke')">停用</button>`;
-            
+          // 🚀 刪除按鈕：只有管理後台手動新增的自訂名單才能永久刪除（業務分區/固定名單的正式業務
+          // 刪了下次讀取還是會自動再出現，語意上不成立，這裡直接不給刪除按鈕，避免點了也沒用）
+          // 🚀 --red 這個 CSS 變數在這份樣式表裡其實沒有被定義過（"[ 已失效 ]" 那個標籤原本也是用它，
+          // 一直沒真的顯示紅色），這裡補上 fallback 色值，順便讓刪除按鈕看起來有危險操作的警示感。
+          const deleteButton = item.isCustom
+            ? `<button class="act-btn" style="background:transparent; color:var(--red, #dc2626); border-color:var(--red, #dc2626);" onclick="deleteSalesperson('${item.name}')">刪除</button>`
+            : '';
+
           html += `
               <tr class="${trClass}">
                 <td style="font-weight: 700;">${item.name}</td>
                 <td><code style="font-family: monospace; font-size:14px; color:var(--gold);">${item.key}</code></td>
                 <td>${statusBadge}</td>
                 <td style="white-space: nowrap; display: flex; gap: 8px;">
-                  ${item.isBlocked 
-                    ? `<span style="color:var(--red); font-size:11px; font-weight:700;">[ 已失效 ]</span>`
+                  ${item.isBlocked
+                    ? `<span style="color:var(--red, #dc2626); font-size:11px; font-weight:700;">[ 已失效 ]</span>`
                     : `<button class="copy-btn" onclick="copyLink('${inventoryUrl}', this)">複製查庫存連結</button>
                        <button class="copy-btn" onclick="copyLink('${appUrl}', this)">複製主選單連結</button>`
                   }
                 </td>
-                <td>${actionButton}</td>
+                <td style="white-space: nowrap; display: flex; gap: 6px;">${actionButton}${deleteButton}</td>
               </tr>
           `;
         });
