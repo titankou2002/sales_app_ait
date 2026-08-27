@@ -1562,9 +1562,14 @@
           imgHtml +
           '<div class="sku-row-content">' +
 
-            // 編號 + 片數批號（一般模式可直接編輯）+ 刪除
+            // 編號（一般模式可直接改，改完縮圖會用新編號重新對照庫存圖）+ 片數批號（可直接編輯）+ 刪除
             '<div class="sku-row-top" style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;">' +
-              '<div class="sku-row-id">' + item.sku + (item.spec ? ' <span style="font-size:10px; opacity:0.5; font-weight:600;">(' + item.spec + ')</span>' : '') + '</div>' +
+              (state.isClientView || isHistory ?
+                '<div class="sku-row-id">' + item.sku + (item.spec ? ' <span style="font-size:10px; opacity:0.5; font-weight:600;">(' + item.spec + ')</span>' : '') + '</div>'
+              :
+                '<input type="text" class="sku-inline-code" value="' + item.sku + '" data-old-sku="' + item.sku + '" onchange="quickSaveSkuField(this)">' +
+                (item.spec ? '<span style="font-size:10px; opacity:0.5; font-weight:600;">(' + item.spec + ')</span>' : '')
+              ) +
               (state.isClientView || isHistory ?
                 '<span style="font-size:11px; color:rgba(255,255,255,0.4);">' + qtyDisplay + '片 ' + batchDisplay + '</span>'
               :
@@ -1672,6 +1677,55 @@
       })
       .withFailureHandler(function (err) {
         inputEl.disabled = false;
+        showToast('❌ 連線失敗: ' + (err && err.message ? err.message : err));
+      })
+      .updateDisplayBatch(state.selectedCustomer, group.photoUrl, payloadItems, null, null, state.currentSales);
+  };
+
+  /**
+   * 🚀 卡片上直接修改產品編號：改完整組重繪，縮圖會用新編號重新對照 state.inventoryData
+   * 找對應的單磚圖（跟片數/批號同一支後端 updateDisplayBatch()，只是這裡連 sku 本身都能改）。
+   */
+  window.quickSaveSkuField = function (inputEl) {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!group) return;
+    var oldSku = inputEl.dataset.oldSku;
+    var newSku = inputEl.value.trim().toUpperCase();
+
+    if (!newSku) {
+      showToast('⚠️ 編號不能空白');
+      renderSkuDetailList();
+      return;
+    }
+    if (newSku === oldSku) return;
+    if (group.items.some(function (i) { return i.sku === newSku; })) {
+      showToast('⚠️ 這個版面已經有編號「' + newSku + '」了，不能重複');
+      renderSkuDetailList();
+      return;
+    }
+
+    var item = group.items.find(function (i) { return i.sku === oldSku; });
+    if (!item) return;
+    item.sku = newSku;
+
+    // 🚀 直接整組重繪：縮圖／片數批號輸入框的 data-sku／刪除按鈕，全部跟著新編號一起校正，
+    // 不用手動一個個修補 DOM（renderSkuDetailList 本來就會用最新的 item.sku 重新查庫存圖）
+    renderSkuDetailList();
+
+    var payloadItems = group.items.map(function (i) {
+      return { sku: i.sku, qty: i.originalQty || 1, batch: i.batch || '', size: i.size || '', spec: i.spec || '' };
+    });
+
+    showToast('儲存中...');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res && res.success) {
+          showToast('✅ 編號已更新');
+        } else {
+          showToast('❌ 更新失敗: ' + ((res && res.msg) || '未知錯誤'));
+        }
+      })
+      .withFailureHandler(function (err) {
         showToast('❌ 連線失敗: ' + (err && err.message ? err.message : err));
       })
       .updateDisplayBatch(state.selectedCustomer, group.photoUrl, payloadItems, null, null, state.currentSales);
@@ -1788,12 +1842,15 @@
     showLoadingWithStatus('正在新增品項...');
     google.script.run
       .withSuccessHandler(function (res) {
-        showLoading(false);
         if (res && res.success) {
           showToast('✨ 已新增 ' + newItems.length + ' 個品項');
           toggleQuickAddPanel();
-          selectCustomer(state.selectedCustomer); // 重新整理，讓新品項的完整庫存/銷售資訊一併帶出
+          // 🚀 原本這裡呼叫 selectCustomer() 整頁重載——會導覽離開目前打開的詳情彈窗，
+          // 使用者看不到剛新增的品項，要重新點進來才看得到。改成只重抓這個客戶的資料，
+          // 但只更新「目前正在看的這一組」並原地重繪，不離開彈窗、不用整頁重來。
+          refreshCurrentGroupFromServer(function () { showLoading(false); });
         } else {
+          showLoading(false);
           showToast('❌ 新增失敗: ' + ((res && res.msg) || '未知錯誤'));
         }
       })
@@ -1802,6 +1859,61 @@
         showToast('❌ 連線失敗: ' + (err && err.message ? err.message : err));
       })
       .updateDisplayBatch(state.selectedCustomer, group.photoUrl, payloadItems, null, null, state.currentSales);
+  };
+
+  /**
+   * 🚀 只重抓「目前正在看的這一組版面」的最新資料並原地重繪，不離開詳情彈窗、不整頁重來。
+   * 用在「新增品項」這類需要拿到後端完整計算欄位（庫存/銷售/圖片等新品項本身沒有的資訊）
+   * 才能正確渲染卡片的情境；跟 quickSaveItemField/quickDeleteItem 那種純樂觀本地更新不同，
+   * 這裡真的需要問一次後端，但只更新這一組、不影響使用者正在看的畫面位置。
+   */
+  window.refreshCurrentGroupFromServer = function (callback) {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!group) { if (callback) callback(); return; }
+    var photoKey = group.photoUrl || 'no-photo';
+
+    google.script.run
+      .withSuccessHandler(function (response) {
+        if (response && response.success) {
+          state.currentDisplays = response.active;
+          state.historyDisplays = response.history;
+
+          var matchedItems = (response.active || []).filter(function (d) {
+            return (d.photoUrl || 'no-photo') === photoKey;
+          });
+          if (matchedItems.length > 0) {
+            var seriesSet = {};
+            var totalSalesAmt = 0, totalSalesQty = 0, totalFrequency = 0, totalReservedQty = 0;
+            var skuList = [];
+            matchedItems.forEach(function (d) {
+              if (d.series) seriesSet[d.series] = true;
+              totalSalesAmt += (d.customerSalesAmt || 0);
+              totalSalesQty += (d.customerSalesQty || 0);
+              totalFrequency += (d.frequency || 0);
+              totalReservedQty += (d.customerReservedQty || 0);
+              skuList.push(d.sku);
+            });
+            var names = Object.keys(seriesSet);
+            group.items = matchedItems;
+            group.series = matchedItems[0].series;
+            group.seriesLabel = names.length > 0 ? names.join('、') : (group.series || '未命名');
+            group.totalSalesAmt = totalSalesAmt;
+            group.totalSalesQty = totalSalesQty;
+            group.totalFrequency = totalFrequency;
+            group.totalReservedQty = totalReservedQty;
+            group.skuList = skuList;
+
+            renderSkuDetailList();
+            var seriesEl = document.getElementById('detail-series');
+            if (seriesEl) seriesEl.innerText = group.seriesLabel || group.series || '';
+          }
+        }
+        if (callback) callback();
+      })
+      .withFailureHandler(function () {
+        if (callback) callback(); // 重抓失敗至少讓 loading 收起來，不要卡住；使用者的本地畫面還是舊資料，但不影響已經送出成功的存檔
+      })
+      .getCustomerDisplays(state.selectedCustomer);
   };
 
   /**

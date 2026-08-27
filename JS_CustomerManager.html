@@ -33,38 +33,43 @@ function switchAlbumTab(tabId) {
 }
 
 /**
- * 載入當前客戶的保留單
+ * 🚀 保留單改直接連到「保留系統」那個專案的保留單頁面（跟那裡的樣式、更新流程一致，
+ * 也是真正維護保留單資料的地方），並帶入這個客戶的名字做搜尋篩選，不用在這裡另外重做一套。
+ * ?tab=reserve 直接開到保留單分頁；?q=客戶名稱 會自動帶進那邊的「搜尋客戶/工地」欄位。
+ */
+var RESERVE_SYSTEM_URL = 'https://script.google.com/macros/s/AKfycbxTYjCWP-HI9RYcznkp30rQ6sIoQUV2lK4DfS3zhQNAYugAHPLm92Tx9hvAhthcfemnTQ/exec';
+function openReserveSystemForCustomer() {
+  var customerName = state.currentCustomer;
+  if (!customerName) return;
+  var url = RESERVE_SYSTEM_URL + '?tab=reserve&q=' + encodeURIComponent(customerName);
+  window.open(url, '_blank');
+}
+
+/**
+ * 載入當前客戶的保留單：改成顯示「前往保留系統查看」的入口，不再自己重畫一套保留單列表
+ * （原本這裡讀出來的清單常常跟保留系統本尊對不齊、樣式也不一樣，乾脆直接連過去最準）。
  */
 function loadReservedOrders() {
   var container = document.getElementById('reserved-list');
   var customerName = state.currentCustomer;
-  
-  if (!customerName) return;
-  
-  // 顯示加載中，並先渲染工具列佔位
-  container.innerHTML = 
-    '<div class="reserve-toolbar">' +
-      '<select class="reserve-select" disabled><option>載入中...</option></select>' +
-      '<button class="reserve-filter-btn" disabled>業務篩選</button>' +
-      '<button class="reserve-filter-btn" disabled style="background:var(--ait-gold-soft); color:var(--ait-gold); border-color:rgba(194,157,102,0.2);">📝 申請保留</button>' +
-    '</div>' +
-    '<div style="text-align:center; padding:60px 20px; color:rgba(255,255,255,0.2);">' +
-      '<div class="loading-spinner" style="margin-bottom:15px; border-top-color:var(--ait-gold);"></div>' +
-      '正在彙整 ' + customerName + ' 的保留資料...' +
-    '</div>';
 
-  google.script.run
-    .withSuccessHandler(function(res) {
-      if (res.success) {
-        _allReservedData = res.data.reserved;
-        _uniqueBizList = res.data.uniqueBiz;
-        _selectedBiz = [].concat(_uniqueBizList); // 預設全選
-        renderReservedDashboard();
-      } else {
-        container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">讀取失敗: ' + res.msg + '</div>';
-      }
-    })
-    .getCustomerDashboardData(customerName);
+  if (!customerName) return;
+
+  container.innerHTML =
+    '<div style="text-align:center; padding:60px 24px;">' +
+      '<div style="font-size:48px; margin-bottom:16px;">📦</div>' +
+      '<div style="font-weight:800; font-size:16px; color:#fff; margin-bottom:8px;">保留單資料以「保留系統」為準</div>' +
+      '<div style="font-size:13px; color:rgba(255,255,255,0.5); margin-bottom:24px; line-height:1.7;">' +
+        '直接前往保留系統查看「<b style="color:var(--ait-gold);">' + customerName + '</b>」的完整保留紀錄，<br>' +
+        '在那裡就能更新進度、繼續／取消保留，樣式跟資料都跟本尊一致' +
+      '</div>' +
+      '<button onclick="openReserveSystemForCustomer()" style="background:linear-gradient(135deg, var(--ait-gold), #8c6a3c); color:#000; font-weight:900; padding:14px 28px; border:none; border-radius:14px; font-size:15px; cursor:pointer; margin-bottom:14px;">' +
+        '🔗 前往保留系統查看保留單' +
+      '</button>' +
+      '<div>' +
+        '<button class="reserve-filter-btn" style="background:var(--ait-gold-soft); color:var(--ait-gold); border-color:rgba(194,157,102,0.4);" onclick="openAddReservationModal()">📝 在這裡直接申請新保留</button>' +
+      '</div>' +
+    '</div>';
 }
 
 /**
