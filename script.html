@@ -1420,8 +1420,24 @@
     return skuStr;
   }
 
+  /**
+   * 🚀 左右滑動切換版面：direction=1 下一版、-1 上一版，維持在目前這組（陳列牆或歷史）清單裡移動。
+   */
+  window.switchDetailGroup = function (direction) {
+    var isHistory = !!state.currentIsHistory;
+    var list = isHistory ? state.sortedHistoryGroups : state.sortedGroups;
+    if (!list || list.length <= 1) return;
+    var newIdx = state.currentGIdx + direction;
+    if (newIdx < 0 || newIdx >= list.length) {
+      showToast(direction > 0 ? '已經是最後一個版面了' : '已經是第一個版面了');
+      return;
+    }
+    showGroupDetail(newIdx, isHistory);
+  };
+
   window.showGroupDetail = function (gIdx, isHistory = false) {
     state.currentGIdx = gIdx;
+    state.currentIsHistory = isHistory; // 🚀 記錄目前是看陳列牆還是歷史清單，供左右滑動切換版面時知道要在哪個陣列裡移動
     var group = isHistory ? state.sortedHistoryGroups[gIdx] : state.sortedGroups[gIdx];
     if (!group) return;
 
@@ -1584,6 +1600,17 @@
               ) +
             '</div>' +
 
+            // 🚀 編號下方顯示顏色（如「冰揚灰」，跟「新增上架」自動帶入卡片同一份 colorName/colorTag 資料
+            // 來源，直接沿用 state.inventoryData 現成的 invItem，不用後端再多加欄位）＋ 尺寸
+            (function () {
+              var colorTxt = invItem ? (invItem.colorName || invItem.colorTag || '') : '';
+              var sizeTxt = item.size || (invItem && invItem.size) || '';
+              if (!colorTxt && !sizeTxt) return '';
+              return '<div style="font-size:11px; color:rgba(255,255,255,0.45); margin-top:2px;">' +
+                (colorTxt ? colorTxt : '') + (colorTxt && sizeTxt ? '　' : '') + (sizeTxt ? sizeTxt : '') +
+              '</div>';
+            })() +
+
             // 庫存 + 銷售
             '<div style="display:flex; justify-content:space-between; margin-top:6px;">' +
               (state.isClientView ? '' :
@@ -1616,11 +1643,16 @@
               )
             ) +
 
-            // 缺貨警示
-            (level === 1 ?
+            // 🚀 缺貨警示：不續辦品項不管庫存等級多低，都不該顯示任何「會補貨」的字樣（售完真的不會再進），
+            // 直接明講「不續辦、售完不補」；有明確到貨新批（見下面的「新批...到」）時，也不再顯示
+            // 「補貨安排中」——已經知道確切到貨日期/數量了，講「安排中」反而矛盾、多餘。
+            (invItem && invItem.isStop ?
+              '<div style="margin-top:6px; background:rgba(120,113,108,0.15); border:1px solid rgba(168,162,158,0.35);' +
+              'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#a8a29e;">⏸ 不續辦產品，售完不補</div>'
+            : level === 1 ?
               '<div style="margin-top:6px; background:rgba(0,0,0,0.3); border:1px solid #fff;' +
               'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#fff;">⚫ 絕後 / 缺貨中</div>'
-            : level === 2 ?
+            : (level === 2 && !(invItem && invItem.hasArrival)) ?
               '<div style="margin-top:6px; background:rgba(255,59,48,0.1); border:1px solid rgba(255,59,48,0.3);' +
               'padding:4px 8px; border-radius:6px; font-size:12px; font-weight:800; color:#ff3b30;">🔴 補貨安排中</div>'
             : '') +
@@ -2297,13 +2329,24 @@
     window.addEventListener('touchend', e => {
       let touchEndX = e.changedTouches[0].screenX;
       let touchEndY = e.changedTouches[0].screenY;
+      let dx = touchEndX - touchStartX;
+      let dy = touchEndY - touchStartY;
+
+      if (Math.abs(dy) >= 50) return; // 垂直位移太大就不當水平滑動處理，避免跟捲動衝突
+
+      // 🚀 詳情彈窗開著時，非邊緣的左右滑動用來切換上一版／下一版；
+      // 只有從螢幕最左邊邊緣開始的右滑，才維持原本「關閉返回」的行為，兩者才不會打架。
+      var modal = document.getElementById('detail-modal');
+      if (modal && modal.style.display === 'flex' && touchStartX >= 50) {
+        if (dx < -80) { window.switchDetailGroup(1); }
+        else if (dx > 80) { window.switchDetailGroup(-1); }
+        return;
+      }
 
       // 判斷是否為左向右滑動, 且垂直位移不大
-      if (touchEndX - touchStartX > 100 && Math.abs(touchEndY - touchStartY) < 50) {
+      if (dx > 100 && touchStartX < 50) {
         // 只有從螢幕邊緣附近開始才算
-        if (touchStartX < 50) {
-          handleSwipeBack();
-        }
+        handleSwipeBack();
       }
     }, false);
 

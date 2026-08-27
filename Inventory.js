@@ -25,7 +25,7 @@ function _shortenArrivalDate_(dVal) {
 
 function getAggregatedInventory() {
   try {
-    const cacheKey = "inv_full_v12"; // v12: 新增 colorName（「顏色」欄，跟「色階」不同），供新增上架自動帶入用
+    const cacheKey = "inv_full_v13"; // v13: 新增 isStop（「不續辦」欄），供陳列牆卡片判斷是否顯示「補貨安排中」用
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return { success: true, data: cached };
 
@@ -164,6 +164,7 @@ function _buildInventoryData(ss) {
       origin:   findHeaderIndex(ph, ["產地"]),
       color:    findHeaderIndex(ph, ["色階"]),
       colorName: findHeaderIndex(ph, ["顏色"]), // 🚀 跟「色階」是不同欄位：色階是等級代碼，顏色才是給人看的色名
+      discontinue: findHeaderIndex(ph, ["不續辦"]), // 🚀 不續辦品項不該顯示「補貨安排中」，售完不會再進貨
       scene1:   findHeaderIndex(ph, ["實景1", "實景圖1"]),
       scene2:   findHeaderIndex(ph, ["實景2", "實景圖2"]),
       scene3:   findHeaderIndex(ph, ["實景3", "實景圖3"]),
@@ -273,6 +274,7 @@ function _buildInventoryData(ss) {
         origin:   pi.origin !== -1 ? String(pd[i][pi.origin] || '') : '',
         colorTag: String(pd[i][pi.color]    || ''),
         colorName: pi.colorName !== -1 ? String(pd[i][pi.colorName] || '') : '',
+        isStop: pi.discontinue !== -1 ? !!String(pd[i][pi.discontinue] || '').trim() : false,
         ratio:    ratio,
         qty:      Math.floor(availQty),
         pyeong:   availPyeong,
