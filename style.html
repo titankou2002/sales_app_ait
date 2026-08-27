@@ -105,6 +105,26 @@
   .sku-row-content { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
   .sku-row-id { font-size: 14px; font-weight: 900; color: #fff; }
 
+  /* 🚀 卡片上直接編輯片數/批號，不用切到整頁編輯模式 */
+  .sku-inline-edit { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+  .sku-inline-qty {
+    width: 34px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px; color: #fff; padding: 3px 2px; font-size: 12px; font-weight: 700; text-align: center;
+  }
+  .sku-inline-batch {
+    width: 48px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px; color: #fff; padding: 3px 4px; font-size: 11px; text-align: center;
+  }
+  .sku-inline-unit { font-size: 11px; color: rgba(255,255,255,0.4); }
+  .btn-sku-delete {
+    background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.3); color: #ff3b30;
+    border-radius: 6px; font-size: 13px; font-weight: 800; padding: 2px 7px; cursor: pointer; flex-shrink: 0;
+  }
+  .btn-quick-add-item {
+    width: 100%; margin-top: 4px; padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.05);
+    border: 1px dashed rgba(255,255,255,0.2); color: #fff; font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+
   /* 🔧 編輯模式樣式 */
   .sku-edit-row { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 20px; padding: 16px; margin-bottom: 12px; }
   .edit-input {

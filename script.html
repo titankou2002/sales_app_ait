@@ -1447,14 +1447,20 @@
     }
 
     // 🚀 客戶模式隱藏管理功能與銷售數據
+    var quickAddBtn = document.getElementById('btn-quick-add-item');
+    var quickAddPanel = document.getElementById('quick-add-panel');
     if (state.isClientView || isHistory) {
       document.getElementById('normal-actions').style.display = 'none';
       document.getElementById('edit-photo-overlay').style.display = 'none';
+      if (quickAddBtn) quickAddBtn.style.display = 'none';
+      if (quickAddPanel) { quickAddPanel.style.display = 'none'; quickAddPanel.innerHTML = ''; }
       const stats = document.querySelectorAll('.detail-stats-grid .stat-item');
       if (stats.length >= 4) stats[3].style.display = 'none';
     } else {
       document.getElementById('normal-actions').style.display = 'grid';
       document.getElementById('edit-photo-overlay').style.display = 'block';
+      if (quickAddBtn) { quickAddBtn.style.display = 'block'; quickAddBtn.innerText = '➕ 新增品項'; }
+      if (quickAddPanel) { quickAddPanel.style.display = 'none'; quickAddPanel.innerHTML = ''; } // 換版面時收起，避免殘留上一組的暫存
       const stats = document.querySelectorAll('.detail-stats-grid .stat-item');
       if (stats.length >= 4) stats[3].style.display = 'block';
     }
@@ -1560,24 +1566,29 @@
         ? '<img src="' + singleImg + '" class="sku-row-thumb" onerror="this.src=\'https://placehold.co/200x200/1a1a1a/666?text=ERR\'">'
         : '<div class="sku-row-thumb" style="background:rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.1); font-size:10px;">無圖</div>';
 
-      var onClickHtml = state.isClientView ? '' : ' onclick="enterEditMode()"';
-
+      // 🚀 卡片上直接編輯片數/批號＋刪除，不用再點整張卡片跳轉去編輯模式（那個是給批次改系列/尺寸用的）
       listHtml +=
-        '<div class="sku-row ' + oosClass + '"' + onClickHtml + '>' +
+        '<div class="sku-row ' + oosClass + '">' +
           imgHtml +
           '<div class="sku-row-content">' +
 
-            // 編號 + 片數批號
-            '<div class="sku-row-top" style="display:flex; justify-content:space-between; align-items:center;">' +
-              '<div class="sku-row-id">' + item.sku +
-                '<span style="font-size:11px; color:rgba(255,255,255,0.4); margin-left:8px;">' +
-                  qtyDisplay + '片 ' + batchDisplay + (item.spec ? ' (' + item.spec + ')' : '') +
-                '</span>' +
-              '</div>' +
-              (state.isClientView ? '' :
-                '<button onclick="event.stopPropagation(); closeDetail(); switchAlbumTab(\'reserved\'); setTimeout(function(){ openAddReservationModal(\'' + item.sku.replace(/'/g, "\\'") + '\') }, 150);" ' +
-                'style="background:var(--ait-gold-soft); color:var(--ait-gold); border:1px solid rgba(194,157,102,0.4); border-radius:6px; font-size:11px; font-weight:800; padding:2px 8px; cursor:pointer; z-index:10;">' +
-                '📝 保留</button>'
+            // 編號 + 片數批號（一般模式可直接編輯）+ 保留/刪除
+            '<div class="sku-row-top" style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;">' +
+              '<div class="sku-row-id">' + item.sku + (item.spec ? ' <span style="font-size:10px; opacity:0.5; font-weight:600;">(' + item.spec + ')</span>' : '') + '</div>' +
+              (state.isClientView ?
+                '<span style="font-size:11px; color:rgba(255,255,255,0.4);">' + qtyDisplay + '片 ' + batchDisplay + '</span>'
+              :
+                '<div class="sku-inline-edit">' +
+                  '<input type="text" class="sku-inline-qty" value="' + qtyDisplay + '" inputmode="numeric" pattern="[0-9]*" ' +
+                    'data-sku="' + item.sku + '" onchange="quickSaveItemField(this, \'qty\')">' +
+                  '<span class="sku-inline-unit">片</span>' +
+                  '<input type="text" class="sku-inline-batch" placeholder="批號" value="' + (item.batch || '') + '" ' +
+                    'data-sku="' + item.sku + '" onchange="quickSaveItemField(this, \'batch\')">' +
+                  '<button class="btn-sku-delete" title="移除此編號" onclick="quickDeleteItem(\'' + item.sku.replace(/'/g, "\\'") + '\')">🗑</button>' +
+                  '<button onclick="closeDetail(); switchAlbumTab(\'reserved\'); setTimeout(function(){ openAddReservationModal(\'' + item.sku.replace(/'/g, "\\'") + '\') }, 150);" ' +
+                  'style="background:var(--ait-gold-soft); color:var(--ait-gold); border:1px solid rgba(194,157,102,0.4); border-radius:6px; font-size:11px; font-weight:800; padding:2px 6px; cursor:pointer;">' +
+                  '📝</button>' +
+                '</div>'
               ) +
             '</div>' +
 
@@ -1625,6 +1636,173 @@
 
   window.sortSkuList = function (method) {
     renderSkuDetailList();
+  };
+
+  /**
+   * 🚀 卡片上直接修改片數/批號：整組（同一張照片）品項一起送回後端覆寫，
+   * 沿用既有的 updateDisplayBatch()（跟「編輯內容」批次儲存同一支函式，行為一致）。
+   */
+  window.quickSaveItemField = function (inputEl, field) {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!group) return;
+    var sku = inputEl.dataset.sku;
+    var item = group.items.find(function (i) { return i.sku === sku; });
+    if (!item) return;
+
+    if (field === 'qty') {
+      var qtyNum = parseInt(inputEl.value, 10) || 1;
+      inputEl.value = qtyNum;
+      item.originalQty = qtyNum;
+    } else if (field === 'batch') {
+      item.batch = inputEl.value.trim();
+    }
+
+    var payloadItems = group.items.map(function (i) {
+      return { sku: i.sku, qty: i.originalQty || 1, batch: i.batch || '', size: i.size || '', spec: i.spec || '' };
+    });
+
+    inputEl.disabled = true;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        inputEl.disabled = false;
+        if (res && res.success) {
+          showToast('✅ 已更新');
+        } else {
+          showToast('❌ 更新失敗: ' + ((res && res.msg) || '未知錯誤'));
+        }
+      })
+      .withFailureHandler(function (err) {
+        inputEl.disabled = false;
+        showToast('❌ 連線失敗: ' + (err && err.message ? err.message : err));
+      })
+      .updateDisplayBatch(state.selectedCustomer, group.photoUrl, payloadItems, null, null, state.currentSales);
+  };
+
+  /**
+   * 🚀 卡片上直接刪除單一編號（同一張照片其餘品項不動）。至少要留一個編號，
+   * 若是最後一個請引導使用「刪除照片」整版刪除。
+   */
+  window.quickDeleteItem = function (sku) {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!group) return;
+    if (group.items.length <= 1) {
+      showToast('⚠️ 這是版面裡最後一個編號了，要移除請用下方「刪除照片」整版刪除');
+      return;
+    }
+    if (!confirm('確定要從這個版面移除編號「' + sku + '」嗎？')) return;
+
+    showLoadingWithStatus('正在移除...');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res && res.success) {
+          group.items = group.items.filter(function (i) { return i.sku !== sku; });
+          showToast('✅ 已移除');
+          renderSkuDetailList();
+        } else {
+          showToast('❌ 移除失敗: ' + ((res && res.msg) || '未知錯誤'));
+        }
+      })
+      .withFailureHandler(function (err) {
+        showLoading(false);
+        showToast('❌ 連線失敗: ' + (err && err.message ? err.message : err));
+      })
+      .deleteDisplayBatchPermanent(state.selectedCustomer, [sku], group.photoUrl);
+  };
+
+  /**
+   * 🚀 快速新增品項面板：重用「新增上架」同一套系列搜尋(邊打邊搜)＋依尺寸分組勾選＋批號可選可打，
+   * 不用切到整頁編輯模式就能加新編號進同一張版面照片。用同一組 series-block 相關函式
+   * （handleSeriesInput/fetchSeriesAutofill/buildAutofillItemRowHtml），靠固定 id="quickadd" 對接。
+   */
+  window.toggleQuickAddPanel = function () {
+    var panel = document.getElementById('quick-add-panel');
+    if (!panel) return;
+    if (panel.style.display === 'none' || !panel.style.display) {
+      var group = state.sortedGroups[state.currentGIdx];
+      var id = 'quickadd';
+      panel.innerHTML =
+        '<div class="series-block" id="series-block-' + id + '" style="margin-top:0;">' +
+          '<div class="edit-field-group">' +
+            '<label class="edit-label-premium">系列名稱</label>' +
+            '<div style="position:relative;">' +
+              '<input type="text" class="edit-input-dark sb-series-input" placeholder="輸入系列名稱或其中一個編號..." ' +
+                'value="' + escapeHtml((group && group.series) || '') + '" ' +
+                'oninput="handleSeriesInput(\'' + id + '\')" ' +
+                'onblur="hideSeriesSuggestions(\'' + id + '\'); fetchSeriesAutofill(\'' + id + '\')" ' +
+                'onkeydown="if(event.key===\'Enter\'){this.blur();}">' +
+              '<div class="series-search-spinner" id="series-search-spinner-' + id + '" style="display:none;"></div>' +
+              '<div class="series-suggest-list" id="series-suggest-' + id + '"></div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="autofill-status" id="autofill-status-' + id + '"></div>' +
+          '<div id="autofill-groups-' + id + '"></div>' +
+        '</div>' +
+        '<button class="btn-premium-action primary" style="width:100%; margin-top:12px;" onclick="confirmQuickAddItems()">✅ 確認新增到此版面</button>';
+      panel.style.display = 'block';
+      document.getElementById('btn-quick-add-item').innerText = '✖ 收起新增面板';
+      // 若卡片本身就有系列名稱，直接帶入查一次，省得使用者還要手動觸發
+      if (group && group.series) fetchSeriesAutofill(id);
+    } else {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      document.getElementById('btn-quick-add-item').innerText = '➕ 新增品項';
+    }
+  };
+
+  window.confirmQuickAddItems = function () {
+    var group = state.sortedGroups[state.currentGIdx];
+    if (!group) return;
+    var block = document.getElementById('series-block-quickadd');
+    if (!block) return;
+    var seriesInput = block.querySelector('.sb-series-input');
+    var series = (seriesInput && seriesInput.value ? seriesInput.value : '').trim();
+
+    var checkedRows = Array.prototype.slice.call(block.querySelectorAll('.autofill-item-row'))
+      .filter(function (row) { return row.querySelector('input[type="checkbox"]').checked; });
+
+    var newItems = [];
+    checkedRows.forEach(function (row) {
+      var qtyInput = row.querySelector('.autofill-item-qty');
+      var batchInput = row.querySelector('.autofill-item-batch');
+      var qty = Number(qtyInput && qtyInput.value ? qtyInput.value : 0) || 0;
+      if (qty <= 0) return;
+      var sku = (row.dataset.sku || '').toUpperCase();
+      if (group.items.some(function (i) { return i.sku === sku; })) return; // 已經在這個版面裡了，跳過避免重複
+      newItems.push({
+        sku: sku,
+        qty: qty,
+        batch: batchInput && batchInput.value ? batchInput.value.trim() : '',
+        size: row.dataset.size || ''
+      });
+    });
+
+    if (newItems.length === 0) {
+      showToast('⚠️ 請至少勾選一個品項並填入片數');
+      return;
+    }
+
+    var payloadItems = group.items.map(function (i) {
+      return { sku: i.sku, qty: i.originalQty || 1, batch: i.batch || '', size: i.size || '', spec: i.spec || '' };
+    }).concat(newItems);
+
+    showLoadingWithStatus('正在新增品項...');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showLoading(false);
+        if (res && res.success) {
+          showToast('✨ 已新增 ' + newItems.length + ' 個品項');
+          toggleQuickAddPanel();
+          selectCustomer(state.selectedCustomer); // 重新整理，讓新品項的完整庫存/銷售資訊一併帶出
+        } else {
+          showToast('❌ 新增失敗: ' + ((res && res.msg) || '未知錯誤'));
+        }
+      })
+      .withFailureHandler(function (err) {
+        showLoading(false);
+        showToast('❌ 連線失敗: ' + (err && err.message ? err.message : err));
+      })
+      .updateDisplayBatch(state.selectedCustomer, group.photoUrl, payloadItems, null, null, state.currentSales);
   };
 
   /**
@@ -1763,6 +1941,11 @@
     document.getElementById('edit-photo-overlay').style.display = 'block'; // 顯示照片替換按鈕
     document.getElementById('btn-add-sku').style.display = 'block';
     document.getElementById('btn-close-modal').style.display = 'none';
+    // 🚀 整頁編輯模式跟卡片快速新增面板是兩套獨立入口，同時開會互相干擾，進編輯模式時先收起快速新增
+    var quickAddBtn = document.getElementById('btn-quick-add-item');
+    var quickAddPanel = document.getElementById('quick-add-panel');
+    if (quickAddBtn) quickAddBtn.style.display = 'none';
+    if (quickAddPanel) { quickAddPanel.style.display = 'none'; quickAddPanel.innerHTML = ''; }
     renderEditRows();
   };
 
@@ -1777,6 +1960,8 @@
     document.getElementById('edit-photo-overlay').style.display = 'none';
     document.getElementById('btn-add-sku').style.display = 'none';
     document.getElementById('btn-close-modal').style.display = 'block';
+    var quickAddBtn2 = document.getElementById('btn-quick-add-item');
+    if (quickAddBtn2 && !state.isClientView) quickAddBtn2.style.display = 'block';
     showGroupDetail(state.currentGIdx);
   };
 
@@ -2109,15 +2294,16 @@
 
   /**
    * 🚀 判斷輸入的字數是否足夠開始搜尋，避免太短、太籠統的字就觸發查詢（浪費請求、結果又一堆不相關）：
-   * 純中文要超過 2 字、純數字要超過 4 碼、純英文要超過 2 碼；混合英數字（常見於編號，如 RC612109）
-   * 用比較寬鬆但一樣有意義的門檻（超過 3 碼）。
+   * 純中文要 2 字以上（很多系列名稱本身就是 2 字，如「冰岩」「馬約」，不能要求超過 2 字）、
+   * 純數字要超過 4 碼、純英文要超過 2 碼；混合英數字（常見於編號，如 RC612109）用比較寬鬆但
+   * 一樣有意義的門檻（超過 3 碼）。
    */
   function _seriesQueryMeetsThreshold(q) {
     if (!q) return false;
     var hasHan = /[一-龥]/.test(q);
     var hasDigit = /[0-9]/.test(q);
     var hasAlpha = /[A-Za-z]/.test(q);
-    if (hasHan && !hasDigit && !hasAlpha) return q.length > 2;
+    if (hasHan && !hasDigit && !hasAlpha) return q.length >= 2;
     if (hasDigit && !hasHan && !hasAlpha) return q.length > 4;
     if (hasAlpha && !hasHan && !hasDigit) return q.length > 2;
     return q.length > 3; // 混合英數字（編號）
@@ -2227,7 +2413,7 @@
     // 🚀 字數不夠門檻就不查（避免太短、太籠統的字送出查詢，既浪費請求又容易配到不相關的系列）
     if (!_seriesQueryMeetsThreshold(series)) {
       groupsEl.innerHTML = '';
-      if (statusEl) { statusEl.textContent = '請輸入更完整的系列名稱或編號（中文3字/數字5碼/英文3碼以上）再查詢'; statusEl.className = 'autofill-status notfound'; }
+      if (statusEl) { statusEl.textContent = '請輸入更完整的系列名稱或編號（中文2字/數字5碼/英文3碼以上）再查詢'; statusEl.className = 'autofill-status notfound'; }
       delete block.dataset.confirmedSeries;
       return;
     }

@@ -39,15 +39,29 @@ function getCustomerDashboardData(custName) {
 }
 
 /**
- * 📦 讀取保留單 (案名分組版)
+ * 🚀 效能優化：原本 getReservedOrdersGrouped() 每次呼叫都對整張「保留單」分頁做一次全表掃描，
+ * 只為了抓「這一個客戶」的保留紀錄——業務連續切換客戶時，同一張表在幾分鐘內被重複整張重讀。
+ * 改成跟客戶銷售彙總同一套做法：全部客戶「一次性」掃過整張表、依客戶分組成一份共用結果去快取，
+ * 之後查任何客戶都是直接查表；只有快取真的過期時才重新整張掃一次（且是幫全部客戶一起算好）。
+ * 保留單異動比銷售資料頻繁（業務隨時在建立/更新），TTL 刻意抓短一點（5 分鐘）。
  */
-function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
+function getAllReservedOrdersCached_(ss, metaMap) {
+  var cacheKey = "all_reserved_orders_v1";
+  var cached = CacheManager.getLarge(cacheKey);
+  if (cached) return cached;
+
+  var map = buildAllReservedOrders_(ss, metaMap);
+  try { CacheManager.putLarge(cacheKey, map, 300); } catch (e) {}
+  return map;
+}
+
+function buildAllReservedOrders_(ss, metaMap) {
   var sheet = ss.getSheetByName(CONFIG.SHEET_NAME_RESERVE || "保留單");
-  if (!sheet) return [];
+  if (!sheet) return {};
 
   var data = sheet.getDataRange().getValues();
   var header = data[0];
-  
+
   // 🚀 頂級對位函式
   var c = function(targets) {
     for (var i = 0; i < targets.length; i++) {
@@ -76,52 +90,43 @@ function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
     status: c(['業務更新', '處理進度', '狀態', '進度']),
     note:   header.indexOf('備註')
   };
-  
-  // 預載產品資訊 (為了坪數與圖片)
-  // 🚀 效能優化：呼叫端若已經算好 inventoryMap（例如 getCustomerDisplays 早就用快取版取過），
-  //    直接沿用，避免這裡又重開一次主試算表、重掃一次編號價目表/庫存表。
-  //    沒傳才退回舊行為，向下相容其他呼叫點（如 getCustomerDashboardData）。
-  var metaMap = metaMapOverride;
-  if (!metaMap) {
-    var mainSs = SpreadsheetApp.openById(CONFIG.SS_ID);
-    metaMap = getInventoryMap(mainSs);
-  }
+
   var now = new Date();
-  var groups = {};
-  
+  var allGroups = {}; // mergedCustomer → { caseName: {name, biz, maxDays, items} }
+
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
-    if (mergeCustomer(row[idx.cust]) !== cleanName) continue;
-    
+    var cust = mergeCustomer(row[idx.cust]);
+    if (!cust) continue;
+
     var skuRaw = String(row[idx.sku] || "").trim();
-    // 🚀 修正：保留單常見「RS61280-掛」「ED45751-F-期」這種暫記編號（登記到貨用，不是正式編號的
-    // 一部分），原本只去空白/連字號沒去掉「-掛」「-期」，導致比對編號價目表永遠對不到，圖片/系列/
-    // 尺寸全部拿到空值（陳列牆→保留單分頁一律顯示 NO IMG）。改用跟 Inventory.js 到貨比對同一套
-    // normalizeIncomingSkuKey_ 先去暫記後綴再比對。
+    // 🚀 保留單常見「RS61280-掛」「ED45751-F-期」這種暫記編號（登記到貨用，不是正式編號的一部分），
+    // 用跟 Inventory.js 到貨比對同一套 normalizeIncomingSkuKey_ 先去暫記後綴再比對。
     var skuKey = normalizeIncomingSkuKey_(skuRaw);
 
     // 💡 修正對位：內部查庫存的 meta 結構 (使用標準化後的 skuKey)
     var meta = metaMap[skuKey] || { perPing: 36, singleImg: "", series: "一般", size: "" };
-    
+
     var qty = parseFloat(row[idx.qty]) || 0;
     var pyeong = meta.perPing > 0 ? (qty / meta.perPing).toFixed(1) : "0.0";
-    
+
     var dateRaw = row[idx.date];
     var dObj = dateRaw instanceof Date ? dateRaw : (typeof parseDate === 'function' ? parseDate(dateRaw) : null);
     var days = dObj ? Math.floor((now.getTime() - dObj.getTime()) / 86400000) : 0;
-    
+
     var caseName = String(row[idx.case] || row[idx.addr] || "其他項目").trim();
-    if (!groups[caseName]) {
-      groups[caseName] = {
+    if (!allGroups[cust]) allGroups[cust] = {};
+    if (!allGroups[cust][caseName]) {
+      allGroups[cust][caseName] = {
         name: caseName,
         biz: String(row[idx.biz] || "未指定").trim(),
         maxDays: 0,
         items: []
       };
     }
-    
-    if (days > groups[caseName].maxDays) groups[caseName].maxDays = days;
-    
+
+    if (days > allGroups[cust][caseName].maxDays) allGroups[cust][caseName].maxDays = days;
+
     // 🚀 圖片網址轉換邏輯
     var thumbUrl = meta.singleImg;
     if (thumbUrl && typeof extractIdFromUrl === 'function') {
@@ -129,7 +134,7 @@ function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
       if (driveId) thumbUrl = "https://lh3.googleusercontent.com/d/" + driveId + "=w200";
     }
 
-    groups[caseName].items.push({
+    allGroups[cust][caseName].items.push({
       sku: skuRaw,
       qty: qty,
       pyeong: pyeong,
@@ -144,15 +149,32 @@ function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
       rowIdx: i + 1 // 紀錄 Excel 列號以便回寫
     });
   }
-  
-  var result = [];
-  for (var key in groups) {
-    result.push(groups[key]);
-  }
-  
-  // 預設排序：天數愈久愈上面
-  result.sort(function(a, b) { return b.maxDays - a.maxDays; });
+
+  var result = {};
+  Object.keys(allGroups).forEach(function (cust) {
+    var groups = [];
+    for (var key in allGroups[cust]) groups.push(allGroups[cust][key]);
+    groups.sort(function (a, b) { return b.maxDays - a.maxDays; }); // 預設排序：天數愈久愈上面
+    result[cust] = groups;
+  });
   return result;
+}
+
+/**
+ * 📦 讀取保留單 (案名分組版)
+ */
+function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
+  // 預載產品資訊 (為了坪數與圖片)
+  // 🚀 效能優化：呼叫端若已經算好 inventoryMap（例如 getCustomerDisplays 早就用快取版取過），
+  //    直接沿用，避免這裡又重開一次主試算表、重掃一次編號價目表/庫存表。
+  //    沒傳才退回舊行為，向下相容其他呼叫點（如 getCustomerDashboardData）。
+  var metaMap = metaMapOverride;
+  if (!metaMap) {
+    var mainSs = SpreadsheetApp.openById(CONFIG.SS_ID);
+    metaMap = getInventoryMap(mainSs);
+  }
+  var allMap = getAllReservedOrdersCached_(ss, metaMap);
+  return allMap[cleanName] || [];
 }
 
 /**

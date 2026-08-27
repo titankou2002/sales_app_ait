@@ -578,6 +578,11 @@
           </div>
           <button id="btn-add-sku" class="btn-add-full" style="display:none; margin-top:10px;"
             onclick="addNewEditRow()">+ 新增編號</button>
+
+          <!-- 🚀 快速新增品項（一般檢視模式下就能用，不用切到整頁編輯模式）：
+               重用「新增上架」同一套系列搜尋＋依尺寸分組勾選＋批號可選可打 -->
+          <button id="btn-quick-add-item" class="btn-quick-add-item" onclick="toggleQuickAddPanel()">➕ 新增品項</button>
+          <div id="quick-add-panel" style="display:none; margin-top:12px;"></div>
         </div>
 
         <!-- 📊 數據統計區 -->

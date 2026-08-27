@@ -5463,18 +5463,66 @@ function getInventoryMapCached(ss) {
   return map;
 }
 
-function getCustomerSalesCached(ss, targetMerged, inventoryMap) {
-  const cache = CacheService.getScriptCache();
-  const cacheKey = "sales_" + targetMerged;
-  const cached = cache.get(cacheKey);
-  if (cached) return JSON.parse(cached);
+/**
+ * 🚀 效能優化：原本這裡是「每個客戶各自一把 5 分鐘快取 key，快取沒中就整張『經銷銷售報表』
+ * （數萬行）重新全表掃描一次」——業務連續點好幾個不同客戶，等於同一張大表在幾分鐘內被重複整張
+ * 重讀好幾次。改成跟 getSalesOverview() 一樣的做法：全公司所有客戶「一次性」掃過整張表、依客戶
+ * 分組成一份共用結果去快取，之後不管查哪個客戶都是直接查表（O(1)），只有快取真的過期時才需要
+ * 重新整張掃一次，且那一次是「幫全公司所有人都算好」，不是「只幫這個客戶算」。
+ */
+function getAllCustomerSalesCached_(ss, inventoryMap) {
+  const cacheKey = "all_customer_sales_v1";
+  const cached = CacheManager.getLarge(cacheKey);
+  if (cached) return cached;
 
-  const customerSalesMap = calculateSalesManual(ss, targetMerged, inventoryMap);
-  const json = JSON.stringify(customerSalesMap);
-  if (json.length < 90000) {
-    cache.put(cacheKey, json, 300);
+  const map = calculateAllCustomerSales_(ss, inventoryMap);
+  try { CacheManager.putLarge(cacheKey, map, 600); } catch (e) {} // 10 分鐘共用快取
+  return map;
+}
+
+function calculateAllCustomerSales_(ss, inventoryMap) {
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_SALES);
+  if (!sheet) return {};
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return {};
+
+  const headers = data[0];
+  const sIdx = {
+    cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
+    sku: findHeaderIndex(headers, ["產品編號", "編號", "序號"]),
+    qty: findHeaderIndex(headers, ["數量", "片數"]),
+    amt: findHeaderIndex(headers, ["金額", "銷售金額"]),
+    date: findHeaderIndex(headers, ["單據日期", "日期"])
+  };
+
+  const allMap = {}; // mergedCustomer → { sku: {pings, amt, count} }
+  const rows = data.slice(1);
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const cust = mergeCustomer(row[sIdx.cust]);
+    if (!cust) continue;
+    const rawSku = row[sIdx.sku];
+    if (!rawSku) continue;
+    const sku = String(rawSku).trim().replace(/[\s\-]/g, '');
+
+    if (!allMap[cust]) allMap[cust] = {};
+    if (!allMap[cust][sku]) allMap[cust][sku] = { pings: 0, amt: 0, count: 0 };
+    const meta = inventoryMap[sku] || { perPing: 36 };
+
+    const qty = parseFloat(row[sIdx.qty]) || 0;
+    const amt = parseFloat(row[sIdx.amt]) || 0;
+
+    allMap[cust][sku].pings += qty / (meta.perPing || 36);
+    allMap[cust][sku].amt += amt;
+    allMap[cust][sku].count += 1;
   }
-  return customerSalesMap;
+  return allMap;
+}
+
+function getCustomerSalesCached(ss, targetMerged, inventoryMap) {
+  const allMap = getAllCustomerSalesCached_(ss, inventoryMap);
+  return allMap[targetMerged] || {};
 }
 
 function calculateSalesManual(ss, targetMerged, inventoryMap) {
