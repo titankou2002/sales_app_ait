@@ -218,6 +218,31 @@ function getIncomingCargoContainers(branch, forceRefresh) {
   return result;
 }
 
+/**
+ * 🔥 到貨明細快取預熱：4 家分公司＋全部（共 5 個快取鍵）＋各分公司「編號價目表」對照表。
+ * 讓使用者一打開「到貨明細」永遠讀到熱快取，不必再顯示「第一次讀取比較久」這種提示。
+ * 掛在 Sales.js:prewarmAllCaches（每 5 分鐘跑一次），搶在 1 小時 TTL 過期前刷新。
+ */
+function prewarmIncomingCargo() {
+  try {
+    // 依賴的「編號價目表」對照表（30 分鐘快取）先熱，避免貨櫃清單重算時卡在這一步
+    [undefined, INCOMING_CARGO_BRANCH_SS_ID['安帝嘉'], INCOMING_CARGO_BRANCH_SS_ID['喜悅納']].forEach(ssId => {
+      try { _getProductMasterMap_(ssId); } catch (e) { console.error('【編號價目表預熱】' + (ssId || '高雅瓷主表') + ' 錯誤：' + e); }
+    });
+
+    INCOMING_CARGO_BRANCHES.concat(['全部']).forEach(branch => {
+      try {
+        const res = getIncomingCargoContainers(branch, false);
+        console.log('【到貨明細預熱】' + branch + '：' + (res && res.success ? '成功' : '失敗：' + (res && res.msg)));
+      } catch (e) {
+        console.error('【到貨明細預熱】' + branch + ' 錯誤：' + e);
+      }
+    });
+  } catch (e) {
+    console.error('【到貨明細預熱】整體錯誤：' + e);
+  }
+}
+
 function _getIncomingCargoContainersUncached_(targetBranch) {
   try {
     const ss = SpreadsheetApp.openById(INCOMING_CARGO_SS_ID);

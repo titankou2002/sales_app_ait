@@ -1695,6 +1695,7 @@ function prewarmAllCaches() {
   prewarmShelfTracking();
   prewarmOmniscientLogs();
   prewarmCustomerVisitRanking();
+  prewarmIncomingCargo();
 }
 
 /**

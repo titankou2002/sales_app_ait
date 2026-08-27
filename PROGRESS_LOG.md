@@ -9,7 +9,7 @@
 | 2026-08-14 12:15 | 版本 500 | processLineBotQueue | 0.07% | LINE Bot 訊息佇列處理器，每 1 分鐘跑：把存於 `LINE_QUEUE` 的待處理訊息做簽章驗證後處理 |
 | 2026-08-13 19:36 | 上端 | syncSalesDataToZoning | 0% | 依時間觸發：把交易報表當月銷售數據同步寫入「業務分區」表 |
 | 2026-08-14 06:32 | 上端 | dailyAutoSync | 0% | 每日自動同步：`syncSalesDataByYear` 同步全年銷售數據到業務分區表 |
-| 2026-08-14 12:12 | 上端 | prewarmAllCaches | 0% | 統一快取預熱入口：業績總覽＋庫存查詢＋上架追蹤＋全知視角＋客戶到訪紀錄，每 5 分鐘跑一次 |
+| 2026-08-14 12:12 | 上端 | prewarmAllCaches | 0% | 統一快取預熱入口：業績總覽＋庫存查詢＋上架追蹤＋全知視角＋客戶到訪紀錄＋到貨明細(v529新增)，每 5 分鐘跑一次 |
 
 ### 🔍 各觸發器詳細說明
 
@@ -18,7 +18,7 @@
 3. **processLineBotQueue**（LineBot.js:40）— LINE Bot 訊息佇列處理器，固定每 1 分鐘跑：把等待處理的 LINE 訊息（存於 Script Properties 的 `LINE_QUEUE`）依序做簽章驗證後處理（文字指令／追蹤事件），避免 doPost 超時。
 4. **syncSalesDataToZoning**（Sales.js:1565）— 依時間觸發：把「交易報表」的當月銷售數據同步寫入「業務分區」表，讓戰情室的當月數字自動更新。
 5. **dailyAutoSync**（Sales.js:1587）— 每日自動同步：呼叫 `syncSalesDataByYear` 同步**全年**銷售數據到業務分區表（每日清晨跑，讓分區數字每天都是最新的）。
-6. **prewarmAllCaches**（Sales.js:1666）— 統一快取預熱入口：同時預熱 **業績總覽＋庫存查詢＋上架追蹤＋全知視角（昨天）＋客戶到訪紀錄（謝博皓/潘右森/陳勁多）** 五種資料，設定為每 5 分鐘跑一次，搶在快取過期前刷新，讓業務開頁面時永遠讀到熱快取。
+6. **prewarmAllCaches**（Sales.js:1692）— 統一快取預熱入口：同時預熱 **業績總覽＋庫存查詢＋上架追蹤＋全知視角（昨天）＋客戶到訪紀錄（謝博皓/潘右森/陳勁多）＋到貨明細（v529 新增，見下方）** 六種資料，設定為每 5 分鐘跑一次，搶在快取過期前刷新，讓業務開頁面時永遠讀到熱快取。
 
 > **註**：`prewarmAllCaches`（Sales.js:1666，業績/庫存/上架/全知視角）與 `runAllPreWarm`（FieldWork.js:2752，配送＋工作日誌）是**不同函式**。若想改為統一單一入口，需手動執行 `setupSalesOverviewPrewarmTrigger`（Sales.js:1678）調整。
 
@@ -70,6 +70,23 @@
 **驗證**：語法檢查通過（Inventory.js、script.html 內嵌 script 區塊）、零位元組掃描正常。
 
 **部署**：`clasp push -f` → 版本 528 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @528`（網址不變）。
+
+---
+
+## ✨ [2026-08-27] 到貨明細：拿掉「第一次讀取比較久」提示 + 加入預熱快取 (版本 529)
+
+**問題回報**：使用者截圖看到「到貨明細」畫面轉圈超過 4 秒後跳出「這家分公司資料第一次讀取比較久，請再稍候…」，回饋「1、不要顯示這麼白目的話 2、加快速度好嗎(快取存好)」。
+
+**根因**：`getIncomingCargoContainers(branch)`（IncomingCargo.js:203）本身已經有快取（依分公司分 key，1 小時 TTL），依賴的「編號價目表」對照表（`_getProductMasterMap_`，AIQuery.js:338）也有 30 分鐘快取——但兩者都是「被動快取」：只有真的被呼叫過一次才會存進去，且會隨 TTL 到期。專案裡其他重資料（業績總覽、庫存、上架追蹤、全知視角、客戶到訪紀錄）都已經掛在 `prewarmAllCaches`（Sales.js:1692，每 5 分鐘自動跑一次）主動預熱，唯獨「到貨明細」這個模組漏掉，所以只要 1 小時內沒人剛好點過某個分公司分頁，或伺服器重啟後快取是空的，使用者點進去就會遇到冷快取，直接去讀外部試算表（含最多 3 份不同分公司的「編號價目表」），速度明顯變慢，才會觸發那句提示。
+
+**修正**：
+1. **拿掉提示文字**（`JS_IncomingCargo.html`）：移除 4 秒後把「載入中…」換成「這家分公司資料第一次讀取比較久」的計時器邏輯，只留單純的轉圈＋「載入中…」，不再對使用者講這種聽起來很卡的話。
+2. **加入主動預熱**（`IncomingCargo.js` 新增 `prewarmIncomingCargo()`）：依序預熱 3 份「編號價目表」對照表（高雅瓷主表／安帝嘉／喜悅納，各自獨立試算表）＋ 4 家分公司＋「全部」共 5 個到貨明細分頁快取，掛進 `prewarmAllCaches`（Sales.js），跟其他模組一樣每 5 分鐘自動跑一次，搶在 1 小時/30 分鐘 TTL 到期前刷新，讓使用者理論上永遠讀到熱快取，不會再遇到冷讀取。
+3. 手動點畫面上「⟳ 強制重新整理」時仍會照舊繞過快取直接重讀（`forceRefresh=true`），這是刻意保留的行為，跟預熱互不衝突。
+
+**驗證**：`IncomingCargo.js`、`Sales.js`、`JS_IncomingCargo.html` 內嵌 script 區塊語法檢查皆通過，零位元組掃描正常。`clasp run prewarmIncomingCargo` 手動觸發測試回應 `NOT_FOUND`（clasp 對 Apps Script API 的已知限制，非程式碼問題）——實際生效仍依賴既有的 5 分鐘定時觸發器（觸發器抓的是最新推送的 HEAD 程式碼，`clasp push -f` 後下一輪（最多 5 分鐘內）就會自動套用，不需要額外設定新觸發器）。
+
+**部署**：`clasp push -f` → 版本 529 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @529`（網址不變）。
 
 ---
 

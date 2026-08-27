@@ -57,26 +57,16 @@
     loadIncomingCargo(false);
   };
 
-  var _cargoSlowHintTimer = null;
-
   window.loadIncomingCargo = function(force) {
     const listEl = document.getElementById('cargo-container-list');
     listEl.innerHTML =
       '<div style="text-align:center; opacity:0.6; padding:50px 0; font-size:13px;">' +
         '<div class="ai-query-spinner"></div>' +
-        '<div id="cargo-loading-hint" style="margin-top:14px;">載入中…</div>' +
+        '<div style="margin-top:14px;">載入中…</div>' +
       '</div>';
-
-    // 分公司資料是獨立試算表，第一次讀（沒快取命中）常常明顯慢一點，超過 4 秒補一句提示，不要讓使用者以為卡住了
-    clearTimeout(_cargoSlowHintTimer);
-    _cargoSlowHintTimer = setTimeout(() => {
-      const hint = document.getElementById('cargo-loading-hint');
-      if (hint) hint.textContent = '這家分公司資料第一次讀取比較久，請再稍候…';
-    }, 4000);
 
     google.script.run
       .withSuccessHandler(res => {
-        clearTimeout(_cargoSlowHintTimer);
         if (!res || !res.success) {
           listEl.innerHTML = '<div style="text-align:center; color:#fca5a5; padding:40px 0;">載入失敗：' + (res ? res.msg : '無回應') + '</div>';
           return;
@@ -86,7 +76,6 @@
         renderCargoContainerList();
       })
       .withFailureHandler(err => {
-        clearTimeout(_cargoSlowHintTimer);
         listEl.innerHTML = '<div style="text-align:center; color:#fca5a5; padding:40px 0;">錯誤：' + err + '</div>';
       })
       .getIncomingCargoContainers(cargoCurrentBranch, !!force);
