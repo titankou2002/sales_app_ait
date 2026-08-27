@@ -1162,11 +1162,13 @@
           totalSalesAmt: 0,
           totalSalesQty: 0,
           totalFrequency: 0,
-          series: d.series,
+          series: d.series, // 🚀 保留原始單一值，給編輯模式(整組改系列)等「本來就只能設一個值」的地方用
+          seriesSet: {},
           skuList: []
         };
       }
       groups[key].items.push(d);
+      if (d.series) groups[key].seriesSet[d.series] = true; // 🚀 累積這張照片裡實際出現過的所有系列（可能不只一個，例如用「新增品項」加了別系列的編號進來）
       // 🔥 使用該客戶專屬的銷售數據進行聚合
       groups[key].totalSalesAmt += (d.customerSalesAmt || 0);
       groups[key].totalSalesQty += (d.customerSalesQty || 0);
@@ -1179,6 +1181,13 @@
       }
 
       groups[key].skuList.push(d.sku);
+    });
+
+    // 🚀 每個群組算出「系列標籤」：只有一個系列就顯示那個名稱；混了好幾個系列（同一張照片放了不同系列
+    // 的編號）就用頓號全部列出來，不再只顯示第一筆遇到的系列、蓋掉其他系列的存在
+    Object.keys(groups).forEach(function (key) {
+      var names = Object.keys(groups[key].seriesSet);
+      groups[key].seriesLabel = names.length > 0 ? names.join('、') : (groups[key].series || '未命名');
     });
 
     // 2. 轉換為陣列並進行智慧排序
@@ -1287,7 +1296,7 @@
         '</div>' +
         
         '<div style="position:absolute; top:12px; right:12px; z-index:5; text-align:right;">' +
-          '<div style="font-size:15px; font-weight:900; color:#fff; text-shadow:0 0 10px rgba(0,0,0,0.8);">' + escapeHtml(group.series || '未命名') + '</div>' +
+          '<div style="font-size:15px; font-weight:900; color:#fff; text-shadow:0 0 10px rgba(0,0,0,0.8);">' + escapeHtml(group.seriesLabel || group.series || '未命名') + '</div>' +
         '</div>' +
 
         // 🧊 玻璃化底部遮罩 (強制採用 Row 佈局，讓日期與天數分居左右底部)
@@ -1422,29 +1431,14 @@
       : 'https://placehold.co/800x800/0a0a0a/666?text=無圖片';
 
     document.getElementById('detail-img').src = imgUrl;
-    document.getElementById('detail-series').innerText = group.series || '';
+    document.getElementById('detail-series').innerText = group.seriesLabel || group.series || '';
     document.getElementById('detail-last-update').innerText = d.lastUpdate || '';
 
     renderSkuDetailList(isHistory);
 
-    // 📊 更新數據統計區
-    document.getElementById('detail-date-v2').innerHTML = isHistory ? `
-      <div style="font-size:11px; color:#ff3b30;">上架: ${d.installDate}</div>
-      <div style="font-size:11px; color:#ff3b30; font-weight:800;">下架: ${d.offDate}</div>
-    ` : `
-      <div style="font-size:11px; opacity:0.6;">上架: ${d.installDate}</div>
-      <div style="font-size:11px; color:#facc15; margin-top:2px;">更新: ${d.lastUpdate || d.installDate}</div>
-    `;
-    document.getElementById('detail-days-v2').innerText = isHistory ? '已結案' : formatDaysToDuration(d.daysOnDisplay);
+    // 🚀 上架日期/展示天數/累積銷售已經改到每張品項卡片各自顯示（renderSkuDetailList 裡），
+    // 這裡只需要設定「展示方式」下拉選單（唯一還留在 detail-stats-grid 裡的欄位）
     document.getElementById('detail-mode-select').value = d.mode || '版面';
-
-    var totalQty = Math.round(group.totalSalesQty || 0);
-    var totalAmt = Math.round(group.totalSalesAmt / 10000 || 0);
-    if (totalQty > 0 || totalAmt > 0) {
-      document.getElementById('detail-sales-v2').innerText = Math.round(totalQty) + ' 坪 / ' + totalAmt + ' 萬';
-    } else {
-      document.getElementById('detail-sales-v2').innerText = '—';
-    }
 
     // 🚀 客戶模式隱藏管理功能與銷售數據
     var quickAddBtn = document.getElementById('btn-quick-add-item');
@@ -1454,15 +1448,11 @@
       document.getElementById('edit-photo-overlay').style.display = 'none';
       if (quickAddBtn) quickAddBtn.style.display = 'none';
       if (quickAddPanel) { quickAddPanel.style.display = 'none'; quickAddPanel.innerHTML = ''; }
-      const stats = document.querySelectorAll('.detail-stats-grid .stat-item');
-      if (stats.length >= 4) stats[3].style.display = 'none';
     } else {
       document.getElementById('normal-actions').style.display = 'grid';
       document.getElementById('edit-photo-overlay').style.display = 'block';
       if (quickAddBtn) { quickAddBtn.style.display = 'block'; quickAddBtn.innerText = '➕ 新增品項'; }
       if (quickAddPanel) { quickAddPanel.style.display = 'none'; quickAddPanel.innerHTML = ''; } // 換版面時收起，避免殘留上一組的暫存
-      const stats = document.querySelectorAll('.detail-stats-grid .stat-item');
-      if (stats.length >= 4) stats[3].style.display = 'block';
     }
 
     document.getElementById('detail-modal').style.display = 'flex';
@@ -1572,10 +1562,10 @@
           imgHtml +
           '<div class="sku-row-content">' +
 
-            // 編號 + 片數批號（一般模式可直接編輯）+ 保留/刪除
+            // 編號 + 片數批號（一般模式可直接編輯）+ 刪除
             '<div class="sku-row-top" style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;">' +
               '<div class="sku-row-id">' + item.sku + (item.spec ? ' <span style="font-size:10px; opacity:0.5; font-weight:600;">(' + item.spec + ')</span>' : '') + '</div>' +
-              (state.isClientView ?
+              (state.isClientView || isHistory ?
                 '<span style="font-size:11px; color:rgba(255,255,255,0.4);">' + qtyDisplay + '片 ' + batchDisplay + '</span>'
               :
                 '<div class="sku-inline-edit">' +
@@ -1585,9 +1575,6 @@
                   '<input type="text" class="sku-inline-batch" placeholder="批號" value="' + (item.batch || '') + '" ' +
                     'data-sku="' + item.sku + '" onchange="quickSaveItemField(this, \'batch\')">' +
                   '<button class="btn-sku-delete" title="移除此編號" onclick="quickDeleteItem(\'' + item.sku.replace(/'/g, "\\'") + '\')">🗑</button>' +
-                  '<button onclick="closeDetail(); switchAlbumTab(\'reserved\'); setTimeout(function(){ openAddReservationModal(\'' + item.sku.replace(/'/g, "\\'") + '\') }, 150);" ' +
-                  'style="background:var(--ait-gold-soft); color:var(--ait-gold); border:1px solid rgba(194,157,102,0.4); border-radius:6px; font-size:11px; font-weight:800; padding:2px 6px; cursor:pointer;">' +
-                  '📝</button>' +
                 '</div>'
               ) +
             '</div>' +
@@ -1598,6 +1585,18 @@
                 '<div style="font-size:13px; font-weight:700; color:#facc15;">現貨 ' + Math.round(stockP) + ' 坪</div>'
               ) +
               '<div style="font-size:13px; font-weight:700; color:#34c759;">售出 ' + salesP + ' 坪</div>' +
+            '</div>' +
+
+            // 🚀 上架/更新日期＋展示天數＋累積銷售（原本獨立在下方的「數據統計區」，改到每張卡片上，
+            // 因為這些資訊本來就是逐編號各自記錄的，放在卡片上比整組共用一份更準確）
+            '<div style="font-size:10px; color:' + (isHistory ? '#ff3b30' : 'rgba(255,255,255,0.35)') + '; margin-top:4px; display:flex; flex-wrap:wrap; gap:8px;">' +
+              '<span>上架 ' + (item.installDate || '—') + '</span>' +
+              (isHistory
+                ? (item.offDate ? '<span style="font-weight:800;">下架 ' + item.offDate + '</span>' : '')
+                : (item.lastUpdate && item.lastUpdate !== item.installDate ? '<span>更新 ' + item.lastUpdate + '</span>' : '')
+              ) +
+              '<span>展示 ' + (isHistory ? '已結案' : formatDaysToDuration(item.daysOnDisplay)) + '</span>' +
+              (item.salesAmt > 0 ? '<span>累銷 ' + Math.round(item.salesQty || 0) + '坪/' + Math.round(item.salesAmt / 10000) + '萬</span>' : '') +
             '</div>' +
 
             // 🚀 總庫存 & 保留展示
@@ -2360,7 +2359,9 @@
           }
           stillSuggestEl.innerHTML = res.names.map(function (name) {
             // 用 mousedown（不是 click）：要搶在 input 的 blur 事件之前先觸發，才不會被 blur 隱藏清單卡住
-            return '<div class="series-suggest-item" onmousedown="selectSeriesSuggestion(' + id + ', \'' + name.replace(/'/g, "\\'") + '\')">' + escapeHtml(name) + '</div>';
+            // 🚀 id 一律加引號當字串傳——快速新增面板用的是 'quickadd' 這種字串 id，
+            // 之前沒加引號會被當成裸的 JS 變數名稱去解析，拋 ReferenceError（id 是數字時剛好沒事，才沒早點發現）
+            return '<div class="series-suggest-item" onmousedown="selectSeriesSuggestion(\'' + id + '\', \'' + name.replace(/'/g, "\\'") + '\')">' + escapeHtml(name) + '</div>';
           }).join('');
           stillSuggestEl.style.display = 'block';
         })
@@ -3661,7 +3662,7 @@
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 20px sans-serif';
         var y = img.height + 24;
-        if (fields.series) { ctx.fillText('🏷️ ' + (g.series || '未命名'), 15, y); y += 26; }
+        if (fields.series) { ctx.fillText('🏷️ ' + (g.seriesLabel || g.series || '未命名'), 15, y); y += 26; }
         if (fields.sku) {
           ctx.font = '15px sans-serif';
           ctx.fillStyle = '#ccc';
@@ -3715,7 +3716,7 @@
         batchExport._renderJpg(g, fields, function(blob) {
           if (!blob) { next(); return; }
           var a = document.createElement('a');
-          a.download = (g.series || '未命名').replace(/[\/?<>\\:*|" ]/g,'_') + '.jpg';
+          a.download = (g.seriesLabel || g.series || '未命名').replace(/[\/?<>\\:*|" ]/g,'_') + '.jpg';
           var url = URL.createObjectURL(blob);
           a.href = url;
           document.body.appendChild(a);
@@ -3768,7 +3769,7 @@
             var reader = new FileReader();
             reader.onload = function() {
               var base64 = reader.result.split(',')[1];
-              results.push({ data: base64, name: (g.series || '未命名').replace(/[\/?<>\\:*|" ]/g,'_') });
+              results.push({ data: base64, name: (g.seriesLabel || g.series || '未命名').replace(/[\/?<>\\:*|" ]/g,'_') });
               next();
             };
             reader.readAsDataURL(blob);
@@ -3808,7 +3809,7 @@
           // fallback: LINE URL
           var text = '📦 版面資料 - ' + (state.selectedCustomer || '') + '\n';
           groups.forEach(function(g, i) {
-            text += '\n【' + (i+1) + '】' + (g.series || '未命名') + '\n';
+            text += '\n【' + (i+1) + '】' + (g.seriesLabel || g.series || '未命名') + '\n';
             if (g.photoUrl) text += g.photoUrl + '\n';
           });
           // 行動用 line://，桌面用 https://

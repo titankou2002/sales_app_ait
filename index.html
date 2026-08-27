@@ -585,17 +585,10 @@
           <div id="quick-add-panel" style="display:none; margin-top:12px;"></div>
         </div>
 
-        <!-- 📊 數據統計區 -->
+        <!-- 📊 數據統計區：上架日期/展示天數/累積銷售已移到每張品項卡片上顯示（逐編號各自記錄比較準確），
+             這裡只留「展示方式」這個真正需要操作的設定 -->
         <div class="detail-stats-grid" id="detail-stats-grid">
-          <div class="stat-item">
-            <div class="stat-label">上架日期</div>
-            <div class="stat-value" id="detail-date-v2">--</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">展示天數</div>
-            <div class="stat-value" id="detail-days-v2">--</div>
-          </div>
-          <div class="stat-item">
+          <div class="stat-item" style="grid-column: 1 / -1;">
             <div class="stat-label">展示方式</div>
             <div class="stat-value">
               <select id="detail-mode-select" class="mode-select" onchange="updateLayoutMode(this.value)">
@@ -604,10 +597,6 @@
                 <option value="實景">實景</option>
               </select>
             </div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">累積銷售</div>
-            <div class="stat-value" id="detail-sales-v2">--</div>
           </div>
         </div>
 
