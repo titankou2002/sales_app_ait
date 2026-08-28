@@ -1,0 +1,284 @@
+<script>
+/**
+ * 📊 整合版客戶分析 — 前端渲染
+ *
+ * 所有數字都來自睡美人戰情室的既有 API（見 CustomerAnalysis.js），
+ * 這裡只負責排版呈現，不做任何運算，所以手機看到的數字跟戰情室必然一致。
+ */
+
+var _caCache = {};      // 客戶名 → 分析結果，切回同一個客戶時不用重打
+var _caLoading = false;
+
+/** 金額格式化：一萬以上用「萬」，避免手機上一長串數字 */
+function caMoney(v) {
+  var n = Number(v) || 0;
+  if (Math.abs(n) >= 10000) {
+    var w = n / 10000;
+    return (Math.abs(w) >= 100 ? Math.round(w) : Math.round(w * 10) / 10) + '萬';
+  }
+  return Math.round(n).toLocaleString();
+}
+
+function caEsc(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+
+var CA_HEALTH_TEXT = {
+  growth: '成長中', decline: '衰退', warning: '需注意',
+  dormant: '沉睡', normal: '正常', no_sales: '無銷售'
+};
+
+/** 進入分析分頁 */
+function loadCustomerAnalysis(forceRefresh) {
+  var container = document.getElementById('analysis-list');
+  var customerName = state.currentCustomer;
+  if (!container || !customerName) return;
+
+  if (!forceRefresh && _caCache[customerName]) {
+    renderCustomerAnalysis(_caCache[customerName]);
+    return;
+  }
+  if (_caLoading) return;
+  _caLoading = true;
+
+  container.innerHTML =
+    '<div class="ca-empty">' +
+      '<div class="ai-query-spinner"></div>' +
+      '<div style="margin-top:16px;">正在向戰情室讀取客戶分析…</div>' +
+    '</div>';
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      _caLoading = false;
+      if (res && res.success) _caCache[customerName] = res;
+      renderCustomerAnalysis(res);
+    })
+    .withFailureHandler(function (err) {
+      _caLoading = false;
+      container.innerHTML =
+        '<div class="ca-empty">' +
+          '<div class="ca-empty-icon">⚠️</div>' +
+          '<div>讀取失敗</div>' +
+          '<div style="margin-top:8px; font-size:11.5px; opacity:0.7;">' + caEsc(err) + '</div>' +
+        '</div>';
+    })
+    .getCustomerAnalysisSnapshot(customerName, !!forceRefresh);
+}
+
+function renderCustomerAnalysis(res) {
+  var container = document.getElementById('analysis-list');
+  if (!container) return;
+
+  if (!res || !res.success) {
+    var msg = (res && res.msg) || '沒有取得資料';
+    var hint = '';
+    if (res && res.notFound) {
+      hint = '<div style="margin-top:10px; font-size:11.5px; opacity:0.6;">' +
+             '以「' + caEsc(res.lookedFor) + '」比對不到。<br>' +
+             '戰情室若沒有這家客戶的銷售紀錄就不會有資料。</div>';
+    }
+    container.innerHTML =
+      '<div class="ca-empty">' +
+        '<div class="ca-empty-icon">📭</div>' +
+        '<div>' + caEsc(msg) + '</div>' + hint +
+      '</div>';
+    return;
+  }
+
+  var c = res.customer;
+  var html = '<div class="ca-wrap">';
+
+  // ── 狀態列 ──
+  var health = c.health || 'normal';
+  html +=
+    '<div class="ca-status">' +
+      '<div class="ca-status-name">' + caEsc(c.name) + '</div>' +
+      '<div class="ca-chips">' +
+        '<span class="ca-chip h-' + caEsc(health) + '">' + (CA_HEALTH_TEXT[health] || health) + '</span>' +
+        (c.grade ? '<span class="ca-chip">等級 ' + caEsc(c.grade) + '</span>' : '') +
+        (c.salesRep ? '<span class="ca-chip">' + caEsc(c.salesRep) + '</span>' : '') +
+        (c.area ? '<span class="ca-chip">' + caEsc(c.area) + '</span>' : '') +
+      '</div>' +
+    '</div>';
+
+  // ── 銷售狀況 ──
+  var cur = Number(c.thisYearAmount) || 0;
+  var prev = Number(c.lastYearAmount) || 0;
+  var peak = Math.max(cur, prev, 1);
+  var yoy = c.yoyPct;
+
+  html +=
+    '<div class="ca-card">' +
+      '<div class="ca-card-title"><span>💰 銷售狀況</span>' +
+        (yoy !== null && yoy !== undefined
+          ? '<span class="ca-sub" style="color:' + (yoy >= 0 ? '#4ade80' : '#f87171') + '">' +
+            (yoy >= 0 ? '▲' : '▼') + ' ' + Math.abs(yoy) + '%</span>'
+          : '') +
+      '</div>' +
+      '<div class="ca-bar-row">' +
+        '<div class="ca-bar-label"><span>今年累計</span><span>' + caMoney(cur) + '</span></div>' +
+        '<div class="ca-bar-track"><div class="ca-bar-fill cur" style="width:' + (cur / peak * 100) + '%"></div></div>' +
+      '</div>' +
+      '<div class="ca-bar-row">' +
+        '<div class="ca-bar-label"><span>去年同期</span><span>' + caMoney(prev) + '</span></div>' +
+        '<div class="ca-bar-track"><div class="ca-bar-fill prev" style="width:' + (prev / peak * 100) + '%"></div></div>' +
+      '</div>' +
+      '<div class="ca-grid" style="margin-top:14px;">' +
+        '<div class="ca-cell"><div class="ca-cell-label">當月</div>' +
+          '<div class="ca-cell-value">' + caMoney(c.thisMonthAmount) + '</div></div>' +
+        '<div class="ca-cell"><div class="ca-cell-label">歷年累計</div>' +
+          '<div class="ca-cell-value">' + caMoney(c.totalAmount) + '</div></div>' +
+        '<div class="ca-cell"><div class="ca-cell-label">最後下單</div>' +
+          (c.lastOrderDate
+            ? '<div class="ca-cell-value" style="font-size:14px;">' + caEsc(c.lastOrderDate) + '</div>' +
+              '<div class="ca-cell-note">' + (c.daysSinceLastOrder !== null ? c.daysSinceLastOrder + ' 天前' : '') + '</div>'
+            : '<div class="ca-cell-value muted">無紀錄</div>') +
+        '</div>' +
+        '<div class="ca-cell"><div class="ca-cell-label">交易筆數</div>' +
+          '<div class="ca-cell-value">' + (c.saleCount || 0) + '</div></div>' +
+      '</div>';
+
+  if (c.avgMarginPct !== null && c.avgMarginPct !== undefined) {
+    html +=
+      '<div class="ca-grid" style="margin-top:10px;">' +
+        '<div class="ca-cell"><div class="ca-cell-label">平均毛利率</div>' +
+          '<div class="ca-cell-value ' + (c.avgMarginPct < 10 ? 'neg' : (c.avgMarginPct >= 25 ? 'pos' : '')) + '">' +
+          c.avgMarginPct + '%</div></div>' +
+        (c.target
+          ? '<div class="ca-cell"><div class="ca-cell-label">年度目標</div>' +
+            '<div class="ca-cell-value" style="font-size:14px;">' + caMoney(c.target) + '</div>' +
+            '<div class="ca-cell-note">達成 ' + Math.round(cur / c.target * 100) + '%</div></div>'
+          : '') +
+      '</div>';
+  }
+  html += '</div>';
+
+  // ── 到訪紀錄 ──
+  var cats = c.catCounts || {};
+  var catKeys = Object.keys(cats).filter(function (k) { return cats[k] > 0; })
+                  .sort(function (a, b) { return cats[b] - cats[a]; });
+  var catMax = catKeys.length ? cats[catKeys[0]] : 1;
+
+  html +=
+    '<div class="ca-card">' +
+      '<div class="ca-card-title"><span>🚗 到訪紀錄</span></div>' +
+      '<div class="ca-grid">' +
+        '<div class="ca-cell"><div class="ca-cell-label">累計到訪</div>' +
+          '<div class="ca-cell-value">' + (c.visits || 0) + ' 次</div></div>' +
+        '<div class="ca-cell"><div class="ca-cell-label">最後到訪</div>' +
+          (c.lastVisitDate
+            ? '<div class="ca-cell-value" style="font-size:14px;">' + caEsc(c.lastVisitDate) + '</div>'
+            : '<div class="ca-cell-value muted">無紀錄</div>') +
+        '</div>' +
+      '</div>';
+
+  if (catKeys.length) {
+    html += '<div style="margin-top:14px;">';
+    catKeys.slice(0, 7).forEach(function (k) {
+      html +=
+        '<div class="ca-cat-row">' +
+          '<div class="ca-cat-name">' + caEsc(k) + '</div>' +
+          '<div class="ca-cat-track"><div class="ca-cat-fill" style="width:' + (cats[k] / catMax * 100) + '%"></div></div>' +
+          '<div class="ca-cat-num">' + cats[k] + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+  }
+
+  if (c.lastNote) {
+    html +=
+      '<div style="margin-top:14px;">' +
+        '<div class="ca-note">' +
+          '<div class="ca-note-date">最新備註 ' + caEsc(c.lastNoteDate || '') + '</div>' +
+          caEsc(c.lastNote) +
+        '</div>' +
+      '</div>';
+  }
+  html += '</div>';
+
+  // ── 版面現況 ──
+  var disps = c.activeDisplays || [];
+  html +=
+    '<div class="ca-card">' +
+      '<div class="ca-card-title"><span>🖼️ 版面現況</span>' +
+        '<span class="ca-sub">' + (c.activeDisplayCount || 0) + ' 項上架中</span>' +
+      '</div>';
+  if (disps.length) {
+    disps.forEach(function (d) {
+      html +=
+        '<div class="ca-list-item">' +
+          '<div class="ca-list-main">' + caEsc(d.sku || d.code || '') +
+            (d.series ? ' <span style="opacity:0.5;font-weight:400;">' + caEsc(d.series) + '</span>' : '') +
+          '</div>' +
+          '<div class="ca-list-side">' + (d.days !== undefined && d.days !== null ? d.days + ' 天' : '') + '</div>' +
+        '</div>';
+    });
+  } else {
+    html += '<div style="font-size:12.5px; color:rgba(255,255,255,0.35); padding:6px 0;">目前沒有上架中的版面</div>';
+  }
+  html += '</div>';
+
+  // ── 合約（有才顯示）──
+  if (c.contractHealth || c.contractBalance !== null) {
+    html +=
+      '<div class="ca-card">' +
+        '<div class="ca-card-title"><span>📄 合約</span></div>' +
+        '<div class="ca-grid g3">' +
+          '<div class="ca-cell"><div class="ca-cell-label">狀態</div>' +
+            '<div class="ca-cell-value" style="font-size:14px;">' + caEsc(c.contractHealth || '—') + '</div></div>' +
+          '<div class="ca-cell"><div class="ca-cell-label">餘額</div>' +
+            '<div class="ca-cell-value" style="font-size:14px;">' +
+            (c.contractBalance !== null && c.contractBalance !== undefined ? caMoney(c.contractBalance) : '—') +
+            '</div></div>' +
+          '<div class="ca-cell"><div class="ca-cell-label">到期</div>' +
+            '<div class="ca-cell-value" style="font-size:13px;">' + caEsc(c.contractExpiry || '—') + '</div></div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // ── 低毛利成交（敏感，預設收合）──
+  var deals = c.lowMarginDeals || [];
+  if (deals.length) {
+    html +=
+      '<div class="ca-toggle" onclick="caToggle(\'ca-lowmargin\')">' +
+        '<span>⚠️ 低毛利成交 ' + deals.length + ' 筆</span><span id="ca-lowmargin-icon">▼</span>' +
+      '</div>' +
+      '<div id="ca-lowmargin" style="display:none;" class="ca-card">';
+    deals.forEach(function (d) {
+      html +=
+        '<div class="ca-list-item">' +
+          '<div class="ca-list-main">' + caEsc(d.sku || '') +
+            '<span style="opacity:0.45;font-weight:400;"> ' + caEsc(d.date || '') + '</span></div>' +
+          '<div class="ca-list-side" style="color:#f87171;">' + d.marginPct + '%　' + caMoney(d.amount) + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+  }
+
+  html +=
+    '<div class="ca-source">' +
+      '數字來源：睡美人戰情室（' + caEsc(res.fetchedAt || '') + ' 讀取）<br>' +
+      '與戰情室畫面為同一份計算，數字必然一致' +
+    '</div>';
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function caToggle(id) {
+  var el = document.getElementById(id);
+  var icon = document.getElementById(id + '-icon');
+  if (!el) return;
+  var show = el.style.display === 'none';
+  el.style.display = show ? 'block' : 'none';
+  if (icon) icon.textContent = show ? '▲' : '▼';
+}
+
+/** 切換客戶時清掉快取，避免看到上一個客戶的數字 */
+function caResetCache() {
+  _caCache = {};
+}
+</script>

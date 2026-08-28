@@ -198,7 +198,10 @@ function getCustomerAnalysisSnapshot(customerName, forceRefresh) {
   const list = all.data || [];
   let hit = null;
   for (let i = 0; i < list.length; i++) {
-    if (list[i] && list[i].name === key) { hit = list[i]; break; }
+    // 一定要轉字串再比：戰情室回傳的 name 有一部分是數字型別
+    //（試算表裡有整欄週期日期被誤當客戶名讀進去，例如 1226、1219），
+    // 直接用 === 比對會因為型別不同而失配。
+    if (list[i] && String(list[i].name) === key) { hit = list[i]; break; }
   }
 
   if (!hit) {

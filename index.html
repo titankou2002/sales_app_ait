@@ -9,6 +9,7 @@
   <?!= include('CSS_Effects'); ?>
   <?!= include('CSS_Components'); ?>
   <?!= include('UI_CustomerManager'); ?>
+  <?!= include('UI_CustomerAnalysis'); ?>
   <?!= include('style'); ?>
   <!-- 🟢 LINE LIFF SDK & EXIF.js -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -370,6 +371,7 @@
       <div class="album-tabs-container">
         <div class="album-tab active" onclick="switchAlbumTab('layout')" id="tab-layout">陳列牆</div>
         <div class="album-tab" onclick="switchAlbumTab('reserved')" id="tab-reserved">保留單</div>
+        <div class="album-tab" onclick="switchAlbumTab('analysis')" id="tab-analysis">分析</div>
       </div>
 
       <div class="album-scroll-area">
@@ -393,6 +395,13 @@
           <div id="reserved-content-area" style="display: none; padding: 10px 16px;">
             <div id="reserved-list" class="reserved-list">
                <!-- 由 JS 生成 -->
+            </div>
+          </div>
+
+          <!-- 📊 客戶分析內容容器 (預設隱藏；數字直接來自睡美人戰情室) -->
+          <div id="analysis-content-area" style="display: none;">
+            <div id="analysis-list">
+               <!-- 由 JS_CustomerAnalysis 生成 -->
             </div>
           </div>
         </div>
@@ -866,6 +875,7 @@
   <?!= include('Client_Inventory_UI'); ?>
   <?!= include('JS_Client'); ?>
   <?!= include('JS_CustomerManager'); ?>
+  <?!= include('JS_CustomerAnalysis'); ?>
   <?!= include('JS_ShelfTrack'); ?>
   <?!= include('JS_IncomingCargo'); ?>
   <?!= include('script'); ?>
