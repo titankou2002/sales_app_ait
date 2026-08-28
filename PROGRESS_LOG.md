@@ -73,6 +73,107 @@
 
 ---
 
+## 🚀 [2026-08-28] 整合版客戶分析上線：直接讀睡美人戰情室 API (版本 531)
+
+### 架構決定：不重算，直接讀戰情室
+
+需求是「客戶分析，數字要跟戰情室一模一樣」。一開始評估過三條路：兩邊各寫一套照規格對齊、
+建共用快取表由單一端計算、或手機直接讀戰情室現成 API。
+
+**最後選第三條，因為戰情室本來就有現成端點**，`api.php` 已經有 `customer-analysis`、
+`customer-timeline`、`customer-warroom`、`customer-sales-breakdown` 四支。手機直接打這些
+API 把結果畫出來即可——**數字一致是結構保證（同一份計算），不是靠對帳維持**。
+
+這條路同時繞開了三個原本以為必須先解決的問題：
+- **不必碰客戶名稱正規化**。原本擔心 A/B/C 三個專案的正規化規則不一致（A 的 `mergeCustomer`
+  取前 2 字、戰情室 `displayCustomerName` 取前 4 字，且 滿財/東春 兩邊歸戶方向相反）。
+  但既然分析資料整包來自戰情室、也由它歸好戶，手機只需要把自己的原始客戶名轉成戰情室的 key
+  去查表就好，不需要改動任何既有呼叫點。
+- **不必動獎金金額口徑**。手機現有畫面的業績是 `getAdjustedAmt()` 加權過的（今友利 ×2、
+  睡美人最高 ×3、同行價 6 折），跟戰情室的實收金額天生不同。但新分頁的數字整包來自戰情室，
+  本來就是實收，不受影響。（註：加權金額同時是 `_computeAdminBonusReport` 的獎金基數，
+  改動會直接影響業務實領，屬於另一個獨立議題。）
+- **不必建共用快取表**，少一套要維護的資料管線。
+
+### 戰情室端改動（commit 8d03195 / 169f2c8）
+
+- `auth.php` 新增 `$appReadActions` 唯讀白名單，只放行上述四支讀取用 action。
+- 刻意**不共用 `CRON_TOKEN`**：那把鑰匙能觸發 `cron-rebuild-all`、`send-daily-email` 等
+  寫入動作，且已明文寫死在有版控的 `config.php`。改用獨立的 `APP_READ_TOKEN`，外洩時可
+  單獨換掉。實測帶正確 token 打 `cron-rebuild-all` 一樣回 401，白名單有效。
+- token 走 **`X-App-Token` 標頭**而非 query string，避免出現在伺服器存取記錄；用
+  `hash_equals` 定時比較。token 留空時整段不成立＝功能關閉（安全預設）。
+- `config.php` 的 `define` 必須放在 `config.local.php` require **之後**並加 `!defined`
+  保護（與 `GEMINI_API_KEY` 同理），否則本機設定檔蓋不過去。
+
+### 過程中發現並修掉的三個問題
+
+**1. 部署腳本從來沒有上傳 `config.local.php`（重大）**
+
+`deploy.yml` 的 lftp 段落是**逐一 `put` 指定檔案**（index/login/api/config/auth/reps
+＋ mirror classes），不是整包 mirror，而 `config.local.php` 不在清單裡。結果 workflow
+在 runner 上產生了它卻從未送出，伺服器一直沿用舊版本 → 新增的 `APP_READ_TOKEN` 永遠讀不到，
+API 一直回 401。
+
+**連帶影響**：`GEMINI_API_KEY` 也一樣從未被部署上去，一直是靠伺服器上那份舊檔在撐，
+workflow 產生它的那一步其實是空轉。已補 `put config.local.php`。
+
+覆蓋安全性：事前靜態掃描確認沒有任何程式使用的常數只存在於 `config.local.php`
+（它實際只供應 `GEMINI_API_KEY`，而該值由 workflow 重新產生），因此覆蓋不會遺失設定。
+
+**2. 戰情室有 255 筆假客戶（資料品質，尚未處理）**
+
+`customer-analysis` 回傳 822 筆客戶，其中 **255 筆的 `name` 是數字**：`1226`、`1219`、
+`1212`、`1128`、`1121`、`1114`、`117`、`1031`……全部是**每週間隔的日期**。研判某處把一整欄
+週期日期當成客戶名稱讀進去。
+
+不影響手機功能（假客戶永遠不會被查到），但讓客戶清單從約 567 家灌水成 822 家。
+**這是戰情室既有問題，待追是哪個迴圈吃錯欄位。**
+
+**3. 名稱比對的型別陷阱**
+
+因為上述 255 筆是數字型別，`list[i].name === key` 會因型別不同而失配。
+已改成 `String(list[i].name) === key`。
+
+### 名稱移植的兩個隱蔽陷阱（已處理）
+
+`caDisplayCustomerName_()` 是戰情室 `displayCustomerName()`（SleeperService.php:56-103）
+的逐行移植。移植時有兩個會**默默算錯**的地方：
+
+- **`\s` 不能照抄**。PHP 端是 `preg_replace('/[...\s]+/u', ...)`，而 PCRE 在 `/u` 模式下
+  `\s` **仍只匹配 ASCII 空白**（要另外開 `PCRE_UCP` 才涵蓋 Unicode，PHP 預設沒開）；
+  JS 的 `\s` 卻會把全形空格 U+3000、NBSP 一起吃掉。中文客戶名很常有全形空格，照抄會讓
+  「滿　財」被誤併成「滿財」。已改成明列 ASCII 空白。
+- **`.trim()` 同理**。PHP `trim()` 預設只剝 `" \t\n\r\0\x0B"`，JS 的 `.trim()` 會連
+  Unicode 空白一起剝。已改用 `caPhpTrim_()`。
+
+寫了 35 個涵蓋每個分支的測試（含 東春/滿財、專岩、禾昇、春發磁磚、全形空格、
+後綴迴圈順序），逐行對照 PHP 推導期望值後 **35/35 通過**；並對真實 API 資料實測，
+東春→滿財、專岩、禾昇、漢樺、伊特、德思特尼皆正確對到。
+
+### 手機端
+
+- 新增 `CustomerAnalysis.js`（資料層，**不做任何計算**）、`JS_CustomerAnalysis.html`（渲染）、
+  `UI_CustomerAnalysis.html`（樣式，沿用 `--ait-gold` 與既有卡片語彙，不另立色系）。
+- 相簿頁分頁列加第三格「分析」（`.album-tab { flex:1 }` 所以是免 CSS 的改動），
+  `switchAlbumTab` 分頁陣列擴成 `['layout','reserved','analysis']`。
+- 快取：全客戶總表 30 分鐘（戰情室端要掃整份銷售報表，較貴）、單客戶細項 10 分鐘，
+  皆走 `CacheManager.getLarge/putLarge`。前端另有以客戶名為 key 的記憶體快取，
+  切分頁不重打；換客戶時由 `resetCustomerTabs()` 清掉。
+- 金鑰放指令碼屬性 `WARROOM_APP_READ_TOKEN`，不寫進程式碼。
+- `caSelfTest()` 供編輯器直接執行做連線自我檢查。
+
+### 已知待辦
+
+- **分析分頁尚未擋 `state.isClientView`** — 客戶分享連結目前會看到毛利率與低毛利成交明細。**下一步優先補**。
+- 常賣商品／時間軸端點已接（`getCustomerAnalysisDetail`）但畫面未做。
+- 回購週期、版面效益（上架前後對比）三個系統都還沒有，需在戰情室新寫，寫一處手機自動有。
+- 戰情室 255 筆假客戶待清。
+
+**部署**：`clasp push -f` → 版本 531 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @531`（網址不變）。
+
+---
+
 ## 🐛 [2026-08-28] 跑馬燈縮短 + 修正「產品年度銷售快取」分頁名抓錯 (版本 530)
 
 ### 1. 跑馬燈：新品分類縮寫、坪數去小數
