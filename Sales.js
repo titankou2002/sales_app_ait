@@ -2094,14 +2094,14 @@ function recalcAwardsBySettleAmount(salesName, monthIdx, settleAmount) {
 function getSalesPerformanceData(sales, key, targetCustomer, timeRange) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
-    const cacheSheet = ss.getSheetByName("年度銷售快取");
+    const cacheSheet = ss.getSheetByName("產品年度銷售快取");
     if (!cacheSheet) {
-      return { success: false, msg: "找不到年度銷售快取工作表" };
+      return { success: false, msg: "找不到產品年度銷售快取工作表" };
     }
 
     const cacheData = cacheSheet.getDataRange().getValues();
     if (cacheData.length < 2) {
-      return { success: false, msg: "年度銷售快取尚無數據" };
+      return { success: false, msg: "產品年度銷售快取尚無數據" };
     }
 
     const now = new Date();

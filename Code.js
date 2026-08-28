@@ -6359,8 +6359,21 @@ const CacheManager = {
  * 📡 取得最近三筆缺貨新進榜（跑馬燈用）
  * 讀保留系統維護的新版欄位：品編號 / 產品編號 + 入榜日期/首日進榜日，排除已結案/出清結案
  */
+/**
+ * 🏷 跑馬燈用的缺貨分類縮寫
+ * 「缺貨進榜追蹤」表的缺貨分類欄是保留系統寫入的原文，像「全新產品觀察」這種
+ * 六個字在手機跑馬燈上會把整行擠爆。這裡只做顯示層縮短，不動原始值，
+ * 所以下面判斷嚴重度的 /完全|嚴重|預防/ 仍然是比對未縮短的 e.cat，行為不變。
+ */
+function shortenStockoutCat_(cat) {
+  const s = String(cat || '').trim();
+  if (!s) return '';
+  if (s.indexOf('全新產品觀察') !== -1 || s.indexOf('新品觀察') !== -1) return '新品';
+  return s;
+}
+
 function getLatestStockoutEntries() {
-  const cacheKey = 'latest_stockout_v3';
+  const cacheKey = 'latest_stockout_v4';
   try {
     const cached = CacheManager.get(cacheKey);
     if (cached) return JSON.parse(cached);
@@ -6435,9 +6448,10 @@ function getLatestStockoutEntries() {
 
       let extraInfo = '';
       if (!isNaN(stockVal) || !isNaN(reserveVal)) {
-        const sText = !isNaN(stockVal) ? `${stockVal}坪` : '-';
-        const rText = !isNaN(reserveVal) ? `${reserveVal}坪` : '-';
-        extraInfo = ` (庫存${sText}/保留${rText})`;
+        // 手機跑馬燈一行塞不下：坪數取整數不留小數，標籤縮成「庫/保」並拿掉括號
+        const sText = !isNaN(stockVal) ? `${Math.round(stockVal)}坪` : '-';
+        const rText = !isNaN(reserveVal) ? `${Math.round(reserveVal)}坪` : '-';
+        extraInfo = ` 庫${sText}/保${rText}`;
       }
 
       entries.push({
@@ -6456,7 +6470,7 @@ function getLatestStockoutEntries() {
     entries.sort((a, b) => (b.ts - a.ts) || (b.rowIdx - a.rowIdx));
 
     const top3 = entries.slice(0, 3).map(e => ({
-      text: e.dateStr + " " + (e.cat || "新進榜缺貨") + "：" + e.code + e.extraInfo,
+      text: e.dateStr + " " + (shortenStockoutCat_(e.cat) || "新進榜缺貨") + "：" + e.code + e.extraInfo,
       severe: /完全|嚴重|預防/.test(e.cat)
     }));
 
