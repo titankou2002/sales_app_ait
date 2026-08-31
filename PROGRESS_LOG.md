@@ -73,6 +73,67 @@
 
 ---
 
+## 🔧 [2026-08-28] 客戶分析改為完整移植戰情室卡片 + 修好長期壞掉的戰情室部署 (版本 532)
+
+### 1. 客戶分析改為完整照搬戰情室
+
+v531 的版型是我自己設計的，使用者要的是「直接從戰情室完整搬過來」。改成逐項移植
+戰情室 `index.php` 的 `renderCustomerCard()` 及其輔助函式：
+
+- `HEALTH_INFO`（半年+未下單／90天未下單／業績衰退／成長中／無銷售記錄／正常）與色票
+- `CAT_COLOR`、`CONTRACT_HEALTH_COLOR`、等級色（特 #ff2a85／A 綠／B 藍／C 灰）
+- `fmt()`：未滿五萬顯示一位小數，否則無條件進位
+- `_daysAgo()`、`_contractStatus()`（逾期 X 月／X 月後到期）
+- 統計欄位：當月業績／年度業績／YOY／最後下單／最近到訪／版面數／合約狀況
+- 年度目標達成率進度條（含貢獻度）、`renderYoyBar()`（今年 vs 去年同期）
+- `renderCatBreakdown()`、`renderContractBadge()`、`renderLowMarginDeals()`
+
+**唯一的排版調整**：桌機那一整排統計在手機改成三欄網格。
+
+**⚠️ 一個我先前做錯、照搬後才修正的地方**：YoY 配色。戰情室用的是台股慣例
+**紅漲綠跌**（`yoyPct > 0` 用 `var(--red)`、`< 0` 用 `var(--green)`），我 v531 自己
+設計那版用綠色代表成長，跟使用者習慣**完全相反**。程式碼已加註記提醒別再「修正」回去。
+
+CSS 變數整組沿用戰情室 `:root`（其 `--gold` 就是 `#c29d66`，與手機既有的 `--ait-gold`
+相同，設計語言本來就一致），讓移植過來的標記可以逐字照用、顏色完全相同。
+
+### 2. 補上 client-view 權限漏洞
+
+v531 遺留：客戶分享連結（`?view=client`）會看到毛利率、低毛利成交明細與合約餘額。
+改為 `body.client-view` 隱藏分頁與內容區，`loadCustomerAnalysis()` 內另加一道
+`state.isClientView` 防線。
+
+### 3. 修好戰情室長期壞掉的部署（跨專案，但影響本專案的資料來源）
+
+**症狀**：戰情室客戶分析分頁拋 `Cannot read properties of undefined (reading '客訴')`。
+
+**診斷方式**：反推堆疊行號。線上 `order.forEach` 在第 2515 行、拋錯的 callback 在
+2519，**相距 4 行**；本機對應的是 2523 與 2527，**也相距 4 行**。所以拋錯的是
+`CAT_COLOR['客訴']`，`CAT_COLOR` 在線上為 undefined。線上行號比本機少 8 行，且與
+最近 8 個 commit 的行號**全都對不上**——線上跑的 `index.php` 比任何近期版本都舊。
+
+**根因**：`deploy.yml` 的 lftp 是逐檔 `put`，任何一檔失敗都不會中止後續指令、
+step 仍回 0，形成「**綠勾但檔案沒更新**」。`index.php` 151KB 是最大檔，在 60 秒
+timeout 下最容易失敗。先前發現的「`config.local.php` 從未上傳」是同一個病灶的另一個表現。
+
+**修正**（分兩次提交）：
+- `set cmd:fail-exit yes`：任何一步失敗即中止並回非 0。timeout 60→120、重試 3→5。
+- 第一次改動同時把診斷用的多檔 `ls -la a b c…` 也納入嚴格模式，FTP 伺服器的 LIST
+  未必支援一次列多個檔名，導致部署在 24 秒紅掉。**設計上應該是：`put` 失敗要中止，
+  診斷用的 `ls` 失敗不該弄垮部署**。第二次改動把遠端列表拆成獨立一段 lftp、不套嚴格模式。
+- 日誌改為輸出本機 `wc -c` 與遠端列表對照，之後哪個檔沒傳成功一眼可見。
+
+**意義**：從此「部署成功」才真的代表每一個檔案都上傳成功了。
+
+**尚未處理**：`mirror --reverse ./classes /classes` 的目標是絕對路徑（FTP 根目錄）
+而非 `$FTP_DIR` 底下。照字面看會傳到錯的位置，但實際上 `classes/` 確實有更新到
+（API 回傳欄位與現行 `CustomerTrait.php` 吻合），研判是 FTP 帳號家目錄結構使然。
+在看不到日誌、也不確定家目錄結構的情況下改它風險較高，暫時留著。
+
+**部署**：`clasp push -f` → 版本 532 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @532`（網址不變）。
+
+---
+
 ## 🚀 [2026-08-28] 整合版客戶分析上線：直接讀睡美人戰情室 API (版本 531)
 
 ### 架構決定：不重算，直接讀戰情室
