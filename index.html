@@ -176,10 +176,10 @@
           <div class="dash-label">上架追蹤</div>
           <div class="dash-desc">SHELF TRACKING</div>
         </div>
-        <div class="dash-card" onclick="openIncomingCargoModule()">
+        <div class="dash-card" onclick="openCustomerAnalysisModule()">
           <div class="card-glow"></div>
-          <div class="dash-label">到貨明細</div>
-          <div class="dash-desc">INCOMING</div>
+          <div class="dash-label">客戶分析</div>
+          <div class="dash-desc">CUSTOMER</div>
         </div>
       </div>
 
@@ -221,16 +221,27 @@
     </div>
 
     <!-- 🚢 到貨明細模組 -->
-    <div id="page-incoming-cargo" class="page" style="display:none; flex-direction:column; height:100vh; overflow:hidden;">
+    <!-- 📊 客戶分析（原到貨明細的位置）：業務 → 客戶 → 分析 -->
+    <div id="page-customer-analysis" class="page" style="display:none; flex-direction:column; height:100vh; overflow:hidden;">
       <div class="navbar" style="position:relative; z-index:1000;">
-        <button class="nav-back" onclick="showPage('page-dashboard')">←</button>
-        <div class="nav-title">到貨明細</div>
-        <button onclick="loadIncomingCargo(true)" style="width:40px; background:transparent; border:none; color:rgba(255,255,255,0.5); font-size:18px; cursor:pointer;">⟳</button>
+        <button class="nav-back" onclick="caGoBack()">←</button>
+        <div class="nav-title" id="ca-nav-title">客戶分析</div>
+        <button id="ca-refresh-btn" onclick="caRefreshCurrent()" style="width:40px; background:transparent; border:none; color:rgba(255,255,255,0.5); font-size:18px; cursor:pointer; visibility:hidden;">⟳</button>
       </div>
-      <!-- 分公司篩選 tab -->
-      <div id="cargo-branch-tabs" style="display:flex; gap:6px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.3); overflow-x:auto; -webkit-overflow-scrolling:touch;"></div>
-      <div id="cargo-container-list" style="flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 12px 60px;">
-        <div style="text-align:center; opacity:0.4; padding:40px 0;">載入中…</div>
+
+      <!-- 業務籤（依業務分類，跟選客戶流程一致） -->
+      <div id="ca-biz-chips" style="display:flex; gap:6px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.25); overflow-x:auto; -webkit-overflow-scrolling:touch; flex:none;"></div>
+
+      <!-- 客戶搜尋（只在清單模式顯示） -->
+      <div id="ca-search-wrap" style="padding:10px 12px 0; flex:none;">
+        <div class="search-box" style="position:relative; width:100%;">
+          <span>🔍</span>
+          <input type="text" id="ca-customer-search" class="search-input" placeholder="搜尋客戶名稱..." oninput="caFilterCustomerList()">
+        </div>
+      </div>
+
+      <div id="ca-body" style="flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;">
+        <div style="text-align:center; opacity:0.4; padding:40px 0; font-size:13px;">請先選擇業務</div>
       </div>
     </div>
 
@@ -248,6 +259,8 @@
                 style="flex:1; padding:10px; background:rgba(250,204,21,0.12); border:none; border-radius:8px; color:#facc15; font-weight:900; font-size:14px; cursor:pointer;">每日總覽</button>
         <button id="admin-godtab-btn-ranking" onclick="adminGodSwitchTab('ranking')"
                 style="flex:1; padding:10px; background:transparent; border:none; border-radius:8px; color:rgba(255,255,255,0.5); font-weight:900; font-size:14px; cursor:pointer;">客戶到訪紀錄</button>
+        <button id="admin-godtab-btn-cargo" onclick="adminGodSwitchTab('cargo')"
+                style="flex:1; padding:10px; background:transparent; border:none; border-radius:8px; color:rgba(255,255,255,0.5); font-weight:900; font-size:14px; cursor:pointer;">到貨明細</button>
       </div>
 
       <!-- Tab 1: 每日總覽（原有功能） -->
@@ -270,6 +283,18 @@
         </div>
         <div id="admin-visit-ranking-content" style="padding:6px 15px 60px;">
           <div style="text-align:center; opacity:0.35; padding:40px 0; font-size:13px;">請先選擇業務</div>
+        </div>
+      </div>
+
+      <!-- Tab 3: 到貨明細（原本是儀表板上的獨立入口，改放進智能報表） -->
+      <div id="admin-godtab-cargo" style="display:none; flex-direction:column; flex:1; overflow:hidden;">
+        <div style="display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.3); flex:none;">
+          <div id="cargo-branch-tabs" style="display:flex; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; flex:1;"></div>
+          <button onclick="loadIncomingCargo(true)" title="重新整理"
+                  style="flex:none; width:34px; background:transparent; border:none; color:rgba(255,255,255,0.5); font-size:18px; cursor:pointer;">⟳</button>
+        </div>
+        <div id="cargo-container-list" style="flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 12px 60px;">
+          <div style="text-align:center; opacity:0.4; padding:40px 0;">載入中…</div>
         </div>
       </div>
     </div>
@@ -371,7 +396,6 @@
       <div class="album-tabs-container">
         <div class="album-tab active" onclick="switchAlbumTab('layout')" id="tab-layout">陳列牆</div>
         <div class="album-tab" onclick="switchAlbumTab('reserved')" id="tab-reserved">保留單</div>
-        <div class="album-tab" onclick="switchAlbumTab('analysis')" id="tab-analysis">分析</div>
       </div>
 
       <div class="album-scroll-area">
@@ -395,13 +419,6 @@
           <div id="reserved-content-area" style="display: none; padding: 10px 16px;">
             <div id="reserved-list" class="reserved-list">
                <!-- 由 JS 生成 -->
-            </div>
-          </div>
-
-          <!-- 📊 客戶分析內容容器 (預設隱藏；數字直接來自睡美人戰情室) -->
-          <div id="analysis-content-area" style="display: none;">
-            <div id="analysis-list">
-               <!-- 由 JS_CustomerAnalysis 生成 -->
             </div>
           </div>
         </div>

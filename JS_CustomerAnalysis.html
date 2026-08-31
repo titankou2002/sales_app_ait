@@ -12,6 +12,14 @@
 var _caCache = {};
 var _caLoading = false;
 
+// 客戶分析已從相簿頁拉出來，成為儀表板上的獨立入口（原到貨明細的位置），
+// 所以自己維護「目前業務／目前客戶」，不再依賴相簿頁的 state.currentCustomer。
+var _caBiz = '';            // 目前選取的業務
+var _caBizList = [];        // 業務名單
+var _caCustomerList = [];   // 該業務的客戶清單
+var _caCustomer = '';       // 目前分析中的客戶
+var _caMode = 'list';       // 'list' | 'detail'
+
 /** 對應戰情室 fmt()：未滿五萬顯示一位小數，否則無條件進位 */
 function caFmt(n) {
   n = n || 0;
@@ -74,8 +82,8 @@ function caContractStatus(c) {
 // ─────────────────────────────────────────────────────────
 
 function loadCustomerAnalysis(forceRefresh) {
-  var container = document.getElementById('analysis-list');
-  var customerName = state.currentCustomer;
+  var container = document.getElementById('ca-body');
+  var customerName = _caCustomer;
   if (!container || !customerName) return;
 
   // 🔒 第二道防線：客戶分享連結絕不能看到毛利、低毛利成交與合約餘額
@@ -115,7 +123,7 @@ function loadCustomerAnalysis(forceRefresh) {
 }
 
 function caRender(res) {
-  var container = document.getElementById('analysis-list');
+  var container = document.getElementById('ca-body');
   if (!container) return;
 
   if (!res || !res.success) {
@@ -379,7 +387,7 @@ function caLoadDetail() {
   if (_caDetailLoaded) return;
   var box = document.getElementById('ca-detail');
   var btn = document.getElementById('ca-detail-btn');
-  var name = state.currentCustomer;
+  var name = _caCustomer;
   if (!box || !name) return;
   _caDetailLoaded = true;
   if (btn) btn.style.display = 'none';
@@ -580,6 +588,146 @@ function caRenderTimeline(data) {
   });
   return html + '</div>';
 }
+
+// ─────────────────────────────────────────────────────────
+// 頁面導覽：業務 → 客戶 → 分析
+// ─────────────────────────────────────────────────────────
+
+window.openCustomerAnalysisModule = function () {
+  showPage('page-customer-analysis');
+  caRenderBizChips();
+  caShowListMode();
+  // 業務用自己的金鑰進來時已有身分，直接帶入省一步
+  if (!_caBiz && state.currentSales) caSelectBiz(state.currentSales);
+};
+
+function caRenderBizChips() {
+  var box = document.getElementById('ca-biz-chips');
+  if (!box || box.dataset.inited === '1') return;
+  box.innerHTML = '<div style="opacity:0.4; font-size:12px; padding:5px 2px;">讀取業務名單…</div>';
+  google.script.run
+    .withSuccessHandler(function (res) {
+      _caBizList = (res && res.success && res.data) ? res.data : [];
+      box.dataset.inited = '1';
+      box.innerHTML = _caBizList.map(function (n, i) {
+        return '<div class="ca-biz-chip" data-idx="' + i + '" onclick="caSelectBiz(_caBizList[' + i + '])">' +
+               caEsc(n) + '</div>';
+      }).join('');
+      caHighlightBiz();
+    })
+    .withFailureHandler(function () {
+      box.innerHTML = '<div style="opacity:0.4; font-size:12px; padding:5px 2px;">業務名單讀取失敗</div>';
+    })
+    .getSalesList(true);
+}
+
+function caHighlightBiz() {
+  var box = document.getElementById('ca-biz-chips');
+  if (!box) return;
+  Array.prototype.forEach.call(box.querySelectorAll('.ca-biz-chip'), function (el) {
+    var idx = parseInt(el.getAttribute('data-idx'), 10);
+    el.classList.toggle('on', _caBizList[idx] === _caBiz);
+  });
+}
+
+window.caSelectBiz = function (name) {
+  if (!name) return;
+  _caBiz = name;
+  caHighlightBiz();
+  caShowListMode();
+  var body = document.getElementById('ca-body');
+  if (body) {
+    body.innerHTML = '<div class="ca-empty" style="padding:36px 0">' +
+      '<div class="ai-query-spinner"></div>' +
+      '<div style="margin-top:12px">讀取 ' + caEsc(name) + ' 的客戶…</div></div>';
+  }
+  google.script.run
+    .withSuccessHandler(function (res) {
+      _caCustomerList = (res && res.success && res.data) ? res.data : [];
+      caRenderCustomerList();
+    })
+    .withFailureHandler(function (err) {
+      if (body) body.innerHTML = '<div class="ca-empty">客戶清單讀取失敗<br>' +
+        '<span style="font-size:11.5px;opacity:0.7">' + caEsc(err) + '</span></div>';
+    })
+    .getCustomerList(name);
+};
+
+window.caFilterCustomerList = function () { caRenderCustomerList(); };
+
+function caRenderCustomerList() {
+  var body = document.getElementById('ca-body');
+  if (!body) return;
+  var input = document.getElementById('ca-customer-search');
+  var kw = input ? String(input.value || '').trim() : '';
+
+  var list = _caCustomerList.filter(function (c) { return c && c.name && !c.hidden; });
+  if (kw) list = list.filter(function (c) { return c.name.indexOf(kw) !== -1; });
+
+  if (!list.length) {
+    body.innerHTML = '<div class="ca-empty">' + (kw ? '找不到符合的客戶' : '這位業務底下沒有客戶') + '</div>';
+    return;
+  }
+
+  var gradeColor = { '特': '#ff2a85', 'A': '#22c55e', 'B': '#3b82f6', 'C': 'rgba(255,255,255,0.45)' };
+  body.innerHTML = '<div class="ca-cust-list">' + list.map(function (c, i) {
+    var gc = gradeColor[c.level] || 'rgba(255,255,255,0.35)';
+    var badge = c.level
+      ? '<span style="background:' + gc + '20;color:' + gc + ';border:1px solid ' + gc +
+        '40;border-radius:4px;padding:1px 6px;font-size:10.5px;font-weight:800;flex:none">' + caEsc(c.level) + '</span>'
+      : '';
+    return '<div class="ca-cust-item" onclick="caSelectCustomer(this.getAttribute(\'data-name\'))" data-name="' +
+      caEsc(c.name) + '">' +
+      '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + caEsc(c.name) + '</span>' +
+      badge + '</div>';
+  }).join('') + '</div>';
+}
+
+window.caSelectCustomer = function (name) {
+  if (!name) return;
+  _caCustomer = name;
+  _caMode = 'detail';
+  _caDetailLoaded = false;
+
+  var title = document.getElementById('ca-nav-title');
+  var chips = document.getElementById('ca-biz-chips');
+  var search = document.getElementById('ca-search-wrap');
+  var refresh = document.getElementById('ca-refresh-btn');
+  if (title) title.textContent = name;
+  if (chips) chips.style.display = 'none';
+  if (search) search.style.display = 'none';
+  if (refresh) refresh.style.visibility = 'visible';
+
+  loadCustomerAnalysis();
+};
+
+function caShowListMode() {
+  _caMode = 'list';
+  var title = document.getElementById('ca-nav-title');
+  var chips = document.getElementById('ca-biz-chips');
+  var search = document.getElementById('ca-search-wrap');
+  var refresh = document.getElementById('ca-refresh-btn');
+  if (title) title.textContent = _caBiz ? ('客戶分析・' + _caBiz) : '客戶分析';
+  if (chips) chips.style.display = 'flex';
+  if (search) search.style.display = _caBiz ? 'block' : 'none';
+  if (refresh) refresh.style.visibility = 'hidden';
+}
+
+window.caGoBack = function () {
+  if (_caMode === 'detail') {
+    caShowListMode();
+    caRenderCustomerList();
+  } else {
+    showPage('page-dashboard');
+  }
+};
+
+window.caRefreshCurrent = function () {
+  if (_caMode === 'detail' && _caCustomer) {
+    _caDetailLoaded = false;
+    loadCustomerAnalysis(true);
+  }
+};
 
 /** 換客戶時清掉快取 */
 function caResetCache() { _caCache = {}; _caDetailLoaded = false; }

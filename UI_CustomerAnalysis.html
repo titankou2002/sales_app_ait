@@ -21,8 +21,7 @@
 
 /* 🔒 客戶分享連結（?view=client）不得看到毛利率、低毛利成交明細、合約餘額等內部數字，
    整個分析分頁在 client-view 下隱藏。JS 端 loadCustomerAnalysis() 另有一道防線。 */
-body.client-view #tab-analysis,
-body.client-view #analysis-content-area { display: none !important; }
+body.client-view #page-customer-analysis { display: none !important; }
 
 /* 卡片外殼（對應戰情室 .product-card） */
 .ca-card {
@@ -67,6 +66,28 @@ body.client-view #analysis-content-area { display: none !important; }
 .ca-lmd-table th { text-align: left; padding: 3px 5px; color: var(--wr-text2); font-weight: 700; }
 .ca-lmd-table td { padding: 3px 5px; border-top: 1px solid rgba(194,157,102,0.12); }
 .ca-lmd-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 6px; }
+
+/* 業務籤（客戶分析頁的業務分類） */
+.ca-biz-chip {
+  flex-shrink: 0; border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.6);
+  border-radius: 18px; padding: 7px 16px; font-size: 13.5px; font-weight: 800;
+  cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent;
+}
+.ca-biz-chip.on {
+  background: rgba(194,157,102,0.16); border-color: #c29d66; color: #c29d66;
+}
+
+/* 客戶清單 */
+.ca-cust-list { padding: 10px 14px 60px; }
+.ca-cust-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px; padding: 14px 15px; margin-bottom: 8px;
+  font-size: 15px; font-weight: 800; color: #fff;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ca-cust-item:active { background: rgba(255,255,255,0.08); }
 
 /* 版面陳列牆照片格（移植自戰情室 renderWarRoomDisplays 的 grid） */
 .ca-wall-grid {

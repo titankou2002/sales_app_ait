@@ -52,9 +52,13 @@
   let cargoData = null;
   let cargoCurrentBranch = '高雅瓷';
 
+  // 到貨明細已改為「智能報表」裡的一個分頁（原本儀表板上的位置讓給客戶分析）。
+  // 進入與載入由 adminGodSwitchTab('cargo') 負責，這裡保留一個相容入口，
+  // 萬一還有舊的呼叫點會被導到報表頁而不是壞掉。
   window.openIncomingCargoModule = function() {
-    showPage('page-incoming-cargo');
-    loadIncomingCargo(false);
+    if (typeof openAdminGodView === 'function') openAdminGodView();
+    else showPage('page-admin-godview');
+    if (typeof adminGodSwitchTab === 'function') adminGodSwitchTab('cargo');
   };
 
   window.loadIncomingCargo = function(force) {

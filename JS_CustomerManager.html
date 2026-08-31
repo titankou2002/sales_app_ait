@@ -12,7 +12,7 @@ var _selectedReservedRows = []; // 目前選取的列號 (用於 LINE/更新)
  * 切換分頁 (陳列牆 vs 保留單)
  */
 function switchAlbumTab(tabId) {
-  var tabs = ['layout', 'reserved', 'analysis'];
+  var tabs = ['layout', 'reserved'];
   
   for (var i = 0; i < tabs.length; i++) {
     var t = tabs[i];
@@ -29,8 +29,6 @@ function switchAlbumTab(tabId) {
   
   if (tabId === 'reserved') {
     loadReservedOrders();
-  } else if (tabId === 'analysis') {
-    loadCustomerAnalysis();
   }
 }
 
@@ -242,11 +240,6 @@ function resetCustomerTabs() {
   var rList = document.getElementById('reserved-list');
   if (rList) rList.innerHTML = '';
   _selectedReservedRows = [];
-
-  // 換客戶時清掉分析快取與畫面，避免看到上一位客戶殘留的內容
-  var aList = document.getElementById('analysis-list');
-  if (aList) aList.innerHTML = '';
-  if (typeof caResetCache === 'function') caResetCache();
 }
 
 /**
