@@ -133,6 +133,12 @@ function caRender(res) {
 
   try {
     container.innerHTML = '<div class="ca-root">' + caRenderCard(res.customer) +
+      // 明細跟戰情室一樣採點擊展開：這三支 API 在戰情室端要逐一掃銷售報表，
+      // 一進頁面就全抓會讓第一次顯示等很久。
+      '<div class="ca-toggle" onclick="caLoadDetail()" id="ca-detail-btn">' +
+        '<span>📊 看完整明細（銷售品項・版面陳列牆・互動紀錄）</span><span>▾</span>' +
+      '</div>' +
+      '<div id="ca-detail"></div>' +
       '<div class="ca-source">數字來源：睡美人戰情室（' + caEsc(res.fetchedAt || '') + ' 讀取）<br>' +
       '與戰情室畫面為同一份計算，數字必然一致</div></div>';
   } catch (e) {
@@ -361,6 +367,220 @@ function caToggleEl(id) {
   if (el) el.style.display = (el.style.display === 'none' ? 'block' : 'none');
 }
 
+// ─────────────────────────────────────────────────────────
+// 展開明細：完整移植戰情室 loadCustomerExpand() 的四個區塊
+//   renderCatPie / renderSalesBreakdown / renderWarRoomDisplays / 時間軸
+// 不含 AI 對話（customer-ai-chat 不在唯讀白名單內，手機端本來就有自己的 AI 查詢）
+// ─────────────────────────────────────────────────────────
+
+var _caDetailLoaded = false;
+
+function caLoadDetail() {
+  if (_caDetailLoaded) return;
+  var box = document.getElementById('ca-detail');
+  var btn = document.getElementById('ca-detail-btn');
+  var name = state.currentCustomer;
+  if (!box || !name) return;
+  _caDetailLoaded = true;
+  if (btn) btn.style.display = 'none';
+
+  box.innerHTML = '<div class="ca-empty" style="padding:30px 0">' +
+                  '<div class="ai-query-spinner"></div>' +
+                  '<div style="margin-top:12px">讀取明細中…</div></div>';
+
+  var cust = (_caCache[name] && _caCache[name].customer) || null;
+  var parts = { breakdown: undefined, warroom: undefined, timeline: undefined };
+
+  function done() {
+    if (parts.breakdown === undefined || parts.warroom === undefined || parts.timeline === undefined) return;
+    var html = '';
+    if (cust) {
+      var pie = caRenderCatPie(cust.catCounts);
+      if (pie) {
+        html += '<div class="ca-card"><div class="ca-card-title">🤝 互動類型分布</div>' + pie + '</div>';
+      }
+    }
+    html += parts.breakdown + parts.warroom;
+    if (parts.timeline) {
+      html += '<div class="ca-toggle" onclick="caToggleEl(\'ca-timeline\')">' +
+              '<span>📜 互動紀錄明細</span><span>▾</span></div>' +
+              '<div id="ca-timeline" style="display:none" class="ca-card">' + parts.timeline + '</div>';
+    }
+    box.innerHTML = html || '<div class="ca-empty" style="padding:24px 0">這家客戶沒有更多明細</div>';
+  }
+
+  function fetchPart(key, renderer) {
+    google.script.run
+      .withSuccessHandler(function (res) {
+        try { parts[key] = (res && res.success) ? (renderer(res.data) || '') : ''; }
+        catch (e) { parts[key] = ''; }
+        done();
+      })
+      .withFailureHandler(function () { parts[key] = ''; done(); })
+      .getCustomerAnalysisDetail(name, key);
+  }
+
+  fetchPart('breakdown', caRenderSalesBreakdown);
+  fetchPart('warroom', caRenderWarRoomDisplays);
+  fetchPart('timeline', caRenderTimeline);
+}
+
+/** 移植自戰情室 renderCatPie()：conic-gradient 圓餅 + 圖例 */
+function caRenderCatPie(catCounts) {
+  if (!catCounts) return '';
+  var order = ['客訴', '送樣', '帳款', '版面', '送貨退貨', '案件', '客情', '其他'];
+  var total = 0;
+  order.forEach(function (cat) { total += (catCounts[cat] || 0); });
+  if (total === 0) return '';
+  var gradParts = [], acc = 0, legend = '';
+  order.forEach(function (cat) {
+    var n = catCounts[cat] || 0;
+    if (n === 0) return;
+    var color = CA_CAT_COLOR[cat] || 'rgba(255,255,255,0.45)';
+    var pct = n / total * 100;
+    gradParts.push(color + ' ' + acc + '% ' + (acc + pct) + '%');
+    acc += pct;
+    legend += '<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--wr-text2)">' +
+      '<span style="width:8px;height:8px;border-radius:2px;background:' + color + ';display:inline-block"></span>' +
+      cat + ' ' + n + ' (' + Math.round(n / total * 100) + '%)</div>';
+  });
+  return '<div style="display:flex;align-items:center;gap:14px">' +
+    '<div style="width:80px;height:80px;border-radius:50%;background:conic-gradient(' + gradParts.join(',') + ');flex-shrink:0"></div>' +
+    '<div style="display:flex;flex-direction:column;gap:3px">' + legend + '</div>' +
+  '</div>';
+}
+
+/** 移植自戰情室 renderSalesBreakdown()：時段總額 + 分頁 SKU 排行 */
+function caRenderSalesBreakdown(data) {
+  if (!data || !data.skus || data.skus.length === 0) return '';
+  var periods = [
+    { key: 'month', label: '當月' },
+    { key: 'quarter', label: '當季' },
+    { key: 'half', label: '近半年' },
+    { key: 'prevYear', label: data.prevYearLabel || '前年全年' }
+  ];
+  var totals = data.totals || {};
+  var skus = data.skus;
+  var maxByPeriod = {};
+  periods.forEach(function (p) {
+    maxByPeriod[p.key] = Math.max.apply(null, skus.map(function (s) { return s[p.key] || 0; })) || 1;
+  });
+
+  var html = '<div class="ca-card"><div class="ca-card-title">📦 銷售品項分析</div>';
+
+  html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
+  periods.forEach(function (p) {
+    html += '<div style="background:var(--wr-bg2);border:1px solid var(--wr-border);border-radius:8px;padding:6px 10px;flex:1;min-width:72px">' +
+      '<div style="font-size:10px;color:var(--wr-text2)">' + caEsc(p.label) + '</div>' +
+      '<div style="font-size:14px;font-weight:800;color:var(--wr-gold)">' + caFmt(totals[p.key] || 0) + '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+
+  var tabId = 'ca-sb-' + Math.random().toString(36).slice(2, 6);
+  html += '<div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap">';
+  periods.forEach(function (p, i) {
+    html += '<button class="ca-btn" ' +
+      (i === 2 ? 'style="border-color:var(--wr-gold);color:var(--wr-gold)" ' : '') +
+      'onclick="caShowSalesTab(\'' + tabId + '\',\'' + p.key + '\',this)">' + caEsc(p.label) + '</button>';
+  });
+  html += '</div>';
+
+  periods.forEach(function (p, i) {
+    var sorted = skus.slice().sort(function (a, b) { return b[p.key] - a[p.key]; })
+                     .filter(function (s) { return s[p.key] > 0; });
+    html += '<div id="' + tabId + '-' + p.key + '" style="display:' + (i === 2 ? 'block' : 'none') + '">';
+    if (sorted.length === 0) html += '<div style="font-size:12px;color:var(--wr-text2)">此時段無銷售記錄</div>';
+    sorted.slice(0, 10).forEach(function (s, si) {
+      var pct = Math.round(s[p.key] / maxByPeriod[p.key] * 100);
+      var color = si === 0 ? 'var(--wr-gold)' : (si <= 2 ? '#60a5fa' : 'var(--wr-text2)');
+      var medal = si === 0 ? '🥇' : si === 1 ? '🥈' : si === 2 ? '🥉' : (si + 1);
+      html += '<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:5px">' +
+        '<span style="width:18px;text-align:right;color:var(--wr-text2);font-size:10px;flex-shrink:0">' + medal + '</span>' +
+        '<span style="width:78px;flex-shrink:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + caEsc(s.sku) + '</span>' +
+        '<div style="flex:1;background:var(--wr-bg2);border-radius:3px;height:8px;overflow:hidden;min-width:20px">' +
+          '<div style="width:' + pct + '%;height:100%;background:' + color + '"></div></div>' +
+        '<span style="width:46px;text-align:right;flex-shrink:0;font-weight:800">' + caFmt(s[p.key]) + '</span>' +
+        '<span style="width:32px;text-align:right;flex-shrink:0;color:var(--wr-text2);font-size:10px">' + (s[p.key + 'Ping'] || 0) + '坪</span>' +
+      '</div>';
+    });
+    html += '</div>';
+  });
+
+  return html + '</div>';
+}
+
+function caShowSalesTab(tabId, key, btn) {
+  ['month', 'quarter', 'half', 'prevYear'].forEach(function (k) {
+    var el = document.getElementById(tabId + '-' + k);
+    if (el) el.style.display = (k === key ? 'block' : 'none');
+  });
+  if (btn && btn.parentNode) {
+    Array.prototype.forEach.call(btn.parentNode.children, function (b) {
+      b.style.borderColor = ''; b.style.color = '';
+    });
+    btn.style.borderColor = 'var(--wr-gold)';
+    btn.style.color = 'var(--wr-gold)';
+  }
+}
+
+/** 移植自戰情室 renderWarRoomDisplays()：版面陳列牆照片格 */
+function caRenderWarRoomDisplays(data) {
+  if (!data || !data.displays || data.displays.length === 0) return '';
+  var html = '<div class="ca-card">' +
+    '<div class="ca-card-title"><span>🏪 版面陳列牆</span>' +
+    '<span class="ca-sub">' + data.displayCount + ' SKU / ' + data.displays.length + ' 版</span></div>' +
+    '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:10px">近一年銷售 ' +
+      caFmt(data.totalAmt) + '・' + data.totalPing + ' 坪</div>' +
+    '<div class="ca-wall-grid">';
+
+  data.displays.forEach(function (g) {
+    var daysText = (g.days !== null && g.days !== undefined) ? ('已上架 ' + g.days + ' 天') : '';
+    var imgHtml = g.photoUrl
+      ? '<div class="ca-wall-img" style="background-image:url(\'' + caEsc(g.photoUrl) + '\')"></div>'
+      : '<div class="ca-wall-img ca-wall-noimg">無照片</div>';
+    html += '<div class="ca-wall-card">' + imgHtml + '<div style="padding:7px">' +
+      '<div style="font-size:12px;font-weight:800">' + caEsc(g.series) + '</div>' +
+      '<div style="font-size:11px;color:var(--wr-text2)">' + daysText + '</div>' +
+      '<div style="font-size:12px;color:var(--wr-gold);font-weight:800;margin-top:2px">' +
+        caFmt(g.totalAmt) + '・' + (g.totalPing || 0).toFixed(1) + ' 坪</div>' +
+      '<div style="margin-top:4px;display:flex;flex-direction:column;gap:2px">' +
+        (g.items || []).map(function (it) {
+          var crown = (it.sku === g.topSku && g.totalAmt > 0) ? ' 👑' : '';
+          var stockColor = it.stockPing <= 0 ? 'var(--wr-red)' : (it.stockPing < 5 ? '#f5a623' : 'var(--wr-text2)');
+          return '<div style="font-size:10px;color:var(--wr-text2)">' + caEsc(it.sku) + crown +
+            '　餘 <span style="color:' + stockColor + '">' + it.stockPing + ' 坪</span>' +
+            (it.reservedQty > 0 ? '　保留 ' + it.reservedQty + ' 片' : '') + '</div>';
+        }).join('') +
+      '</div></div></div>';
+  });
+
+  return html + '</div></div>';
+}
+
+/** 移植自戰情室 loadCustomerExpand() 裡的時間軸區塊 */
+function caRenderTimeline(data) {
+  var rows = (data && data.timeline) || [];
+  if (!rows.length) return '<div style="color:var(--wr-text2);font-size:12px">無歷史記錄</div>';
+  var typeColor = { '銷售': '#3ecf8e', '拜訪': '#60a5fa', '備註': 'var(--wr-gold)' };
+  var html = '<div style="display:flex;flex-direction:column;gap:8px">';
+  rows.forEach(function (r) {
+    var col = typeColor[r.type] || 'var(--wr-text2)';
+    var cc = CA_CAT_COLOR[r.category] || 'rgba(255,255,255,0.45)';
+    var catBadge = (r.type === '拜訪' && r.category)
+      ? '<span style="font-size:10px;color:' + cc + ';border:1px solid ' + cc +
+        '40;border-radius:4px;padding:1px 5px;margin-right:6px">' + caEsc(r.category) + '</span>'
+      : '';
+    html += '<div style="display:flex;gap:8px;border-top:1px solid var(--wr-border);padding-top:6px;font-size:12px">' +
+      '<div style="width:74px;color:var(--wr-text2);flex-shrink:0">' + caEsc(r.date) + '</div>' +
+      '<div style="width:36px;flex-shrink:0;color:' + col + ';font-weight:800">' + caEsc(r.type) + '</div>' +
+      '<div style="flex:1;min-width:0">' + catBadge + caEsc(r.desc || '') +
+        (r.sales ? '　<span style="color:var(--wr-text2)">（' + caEsc(r.sales) + '）</span>' : '') +
+      '</div></div>';
+  });
+  return html + '</div>';
+}
+
 /** 換客戶時清掉快取 */
-function caResetCache() { _caCache = {}; }
+function caResetCache() { _caCache = {}; _caDetailLoaded = false; }
 </script>

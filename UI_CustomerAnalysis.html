@@ -68,6 +68,23 @@ body.client-view #analysis-content-area { display: none !important; }
 .ca-lmd-table td { padding: 3px 5px; border-top: 1px solid rgba(194,157,102,0.12); }
 .ca-lmd-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 6px; }
 
+/* 版面陳列牆照片格（移植自戰情室 renderWarRoomDisplays 的 grid） */
+.ca-wall-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+}
+.ca-wall-card {
+  border: 1px solid var(--wr-border); border-radius: 8px;
+  overflow: hidden; background: var(--wr-bg2);
+}
+.ca-wall-img {
+  width: 100%; aspect-ratio: 1;
+  background-size: cover; background-position: center;
+}
+.ca-wall-noimg {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--wr-text2); font-size: 11px;
+}
+
 .ca-empty { text-align: center; padding: 50px 20px; color: var(--wr-text2); font-size: 13px; }
 .ca-empty-icon { font-size: 44px; margin-bottom: 14px; opacity: 0.5; }
 
