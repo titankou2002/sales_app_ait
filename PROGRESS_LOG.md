@@ -134,6 +134,127 @@ timeout 下最容易失敗。先前發現的「`config.local.php` 從未上傳�
 
 ---
 
+## 🔧 [2026-08-31] 客戶分析：完整移植戰情室範本 + 升為儀表板獨立入口 (版本 533、534)
+
+### 版本 533：把戰情室的展開明細也搬過來
+
+v532 只搬了卡片本體，這次把戰情室 `index.php` 的 `loadCustomerExpand()` 四個區塊完整移植：
+
+- `renderCatPie()` — conic-gradient 互動類型圓餅 + 圖例
+- `renderSalesBreakdown()` — 當月／當季／近半年／前年全年 的時段總額，加分頁切換的
+  SKU 排行條（金銀銅牌、坪數）
+- `renderWarRoomDisplays()` — 版面陳列牆照片格，含上架天數、近一年銷售、每個 SKU 的
+  餘量與保留（庫存 ≤0 紅、<5 坪橘）、最佳 SKU 皇冠標記
+- 互動紀錄時間軸 — 銷售／拜訪／備註三色 + 拜訪類型徽章
+
+**跟戰情室一樣採點擊展開**，不在進頁面時就抓：那三支 API 在戰情室端要各自掃一次
+銷售報表，全部預抓會讓第一次顯示等很久。
+
+**未移植**：AI 對話（`customer-ai-chat` 不在唯讀白名單內，且手機端本來就有自己的
+AI 智慧查詢入口）。排版差異只有一處：桌機照片格是 `auto-fill minmax(150px)`，手機固定兩欄。
+
+### 版本 534：版面位置調整
+
+1. **儀表板「到貨明細」的位置改成「客戶分析」**（CUSTOMER）。
+2. **客戶分析從相簿頁的分頁拉出來**，成為獨立頁 `page-customer-analysis`，
+   流程改為 **業務 → 客戶 → 分析**：
+   - 業務籤走既有的 `getSalesList(true)`；業務用自己金鑰進來時直接帶入
+     `state.currentSales`，省一步
+   - 客戶清單走既有的 `getCustomerList(業務)`，含等級色標（特/A/B/C）與搜尋
+   - 返回鍵兩段式：分析 → 客戶清單 → 儀表板
+   - 自己維護 `_caCustomer`，不再依賴相簿頁的 `state.currentCustomer`
+3. **到貨明細改成「智能報表」的第三個分頁**。`adminGodSwitchTab` 從寫死兩分頁改寫成
+   通用三分頁版本；只在第一次切進來時載入，之後按分頁列右邊的 ⟳ 更新。
+4. 相簿頁分頁列還原成 陳列牆／保留單 兩個。
+
+**相容性**：`openIncomingCargoModule()` 保留為相容入口，會導向報表頁的到貨明細分頁，
+舊呼叫點不會壞掉。
+
+**client-view 防護跟著調整**：原本擋相簿頁的分析分頁，改為擋 `page-customer-analysis`；
+`loadCustomerAnalysis()` 內的 `isClientView` 防線維持不變。
+
+**部署**：版本 533、534 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @534`（網址不變）。
+
+---
+
+## 🐛 [2026-08-31] 跨專案：修好戰情室「客戶分析」的載入期崩潰與部署可靠性
+
+手機端的客戶分析數字全部來自戰情室，所以戰情室壞掉會直接影響這裡，一併記錄。
+
+### 症狀
+
+戰情室客戶分析分頁固定噴 `Cannot read properties of undefined (reading '客訴')`。
+
+### 真正的根因（跟前兩次的推測都不同）
+
+錯誤不在客戶分析，而是**頁面載入時就先爆掉了**。`index.php` 原始檔 646-647 行是**頂層程式碼**：
+
+```js
+document.getElementById('filter-month').value = currentMonth;
+```
+
+`#filter-month` / `#filter-year` 這兩個下拉在 `d06e0da`「移除業績概況」時已從 HTML 拿掉，
+但這兩行留了下來。對 `null` 設 `.value` 會拋出未捕捉的例外，**整份 script 的頂層執行就此中斷**，
+後面約 2300 行的初始化全部沒跑，包含 `var CAT_COLOR = {...}`。函式宣告會提升所以仍可呼叫，
+於是 `renderCatBreakdown` 讀到的 `CAT_COLOR` 是 `undefined`，而 `order` 陣列第一個元素正是
+`'客訴'`，錯誤訊息才會長成那樣。
+
+### 診斷過程的兩個誤導點（記錄下來避免重蹈）
+
+1. **堆疊行號比原始檔少 8 行**，一度誤判成「線上跑的是舊版檔案」。實際上是 `index.php`
+   開頭那段不產生輸出的 PHP，使**瀏覽器看到的 HTML 比原始檔少 8 行**。
+2. 先用 `filesize` 比對，出現「大小相同但行號對不上」的矛盾，反而更混淆；
+   **改用 `md5` 才一刀切開**，證明線上與本機逐位元組相同。
+
+為此在 `api.php` 的 `clear-opcache` 回應加上主要檔案的 `size`/`mtime`/`md5`/`lines`，
+之後可以從外部直接驗證部署結果（`index.php` 需登入，無法直接抓內容比對）。
+
+### 順帶修好的真實部署問題
+
+`deploy.yml` 的 lftp 是逐檔 `put`，任何一檔失敗都不會中止後續指令、step 仍回 0，
+形成「**綠勾但檔案沒更新**」。具體災情：
+
+- `config.local.php` **從未被上傳**（它根本不在 put 清單裡），所以 `GEMINI_API_KEY`
+  一直是靠伺服器上某次手動上傳的舊檔在撐，workflow 產生它的那步是空轉
+- 補上 `set cmd:fail-exit yes` 後才真正能偵測失敗
+
+過程中我自己也踩了兩次坑，一併記錄：
+- 第一次把診斷用的多檔 `ls -la a b c…` 也納入嚴格模式，FTP 伺服器的 LIST 未必支援
+  一次列多個檔名 → 部署 24 秒紅掉。**正確設計是：`put` 失敗要中止，診斷用的 `ls` 失敗不該
+  弄垮部署**，已拆成兩段 lftp。
+- 第二次把 `set cmd:fail-exit yes` 放在 `set ftp:force UTF-8 true` **之前**。`ftp:force`
+  不是合法的 lftp 設定名，這行一直都在失敗、只是以前被忽略；嚴格模式一先開啟，下一行就
+  踩雷直接中止，連 FTP 都還沒連上。**時間是決定性線索**：job 只跑 12 秒，扣掉裝 lftp 約
+  8 秒，lftp 只活了 2-4 秒。已把它移到所有 `set` 之後。
+
+另加：失敗時把 lftp 最後 40 行寫進 `GITHUB_STEP_SUMMARY`，不必展開 step 就能在 Summary
+頁看到是哪個指令死的。
+
+### 安全處理（同日一併完成）
+
+repo 原為 **Public**，而 `config.php` 有進版控，明文含戰情密碼、`CRON_TOKEN`、
+Telegram bot token。已轉 Private；`CRON_TOKEN` 換新值並改走 GitHub Secret，
+部署時寫入 `config.local.php`。
+
+依使用者決定：**戰情密碼與 Telegram token 維持不變**（其評估風險可接受）。
+
+`CRON_TOKEN` 的處理牽涉四處，其中兩處原本會讓「換 token」失效：
+- `group_meeting.php` 用 `<?= CRON_TOKEN ?>` **把密鑰印進網頁原始碼** → 改為不帶 token，
+  由 `api.php` 接受已登入 session（`auth.php` 新增 `$isSessionUser`）
+- `cron-email.php` **硬寫字串**且檢查在 `require config.php` 之前 → 改為先載入設定再用常數比對
+- `auth.php` 與 `api.php` 四處驗證改為「**留空即拒絕** + `hash_equals`」。留空必須拒絕，
+  否則 `token=` 空值會與空常數比對成功
+- `deploy.yml` 的 Clear OPcache 改吃 Secret
+
+實測：新 token 回 200、舊 token 401、空 token 401、帶新 token 打非白名單的
+`cron-rebuild-all` 也是 401。
+
+**尚未處理**：`analysis.php`、`daily.php`、`meeting.php`、`group_meeting.php`、
+`cron-email.php`、`clear-cache.php` **從來不在部署清單裡**，伺服器上是某次手動上傳的版本；
+以及 `mirror --reverse ./classes /classes` 的目標是絕對路徑。兩者都需要先比對差異再決定。
+
+---
+
 ## 🚀 [2026-08-28] 整合版客戶分析上線：直接讀睡美人戰情室 API (版本 531)
 
 ### 架構決定：不重算，直接讀戰情室
