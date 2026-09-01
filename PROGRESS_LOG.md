@@ -134,7 +134,7 @@ timeout 下最容易失敗。先前發現的「`config.local.php` 從未上傳�
 
 ---
 
-## 🔧 [2026-08-31] 客戶分析：完整移植戰情室範本 + 升為儀表板獨立入口 (版本 533、534)
+## 🔧 [2026-08-31] 客戶分析：完整移植戰情室範本 + 升為儀表板獨立入口 (版本 533、534、535)
 
 ### 版本 533：把戰情室的展開明細也搬過來
 
@@ -163,8 +163,15 @@ AI 智慧查詢入口）。排版差異只有一處：桌機照片格是 `auto-f
    - 客戶清單走既有的 `getCustomerList(業務)`，含等級色標（特/A/B/C）與搜尋
    - 返回鍵兩段式：分析 → 客戶清單 → 儀表板
    - 自己維護 `_caCustomer`，不再依賴相簿頁的 `state.currentCustomer`
-3. **到貨明細改成「智能報表」的第三個分頁**。`adminGodSwitchTab` 從寫死兩分頁改寫成
-   通用三分頁版本；只在第一次切進來時載入，之後按分頁列右邊的 ⟳ 更新。
+3. **到貨明細改成「智能報表」的分頁**。只在第一次切進來時載入，之後按分頁右邊的 ⟳ 更新。
+
+   > ⚠️ **v534 放錯頁面，v535 修正**：專案裡有兩個容易混淆的「報表」頁面——
+   > 儀表板上「智能報表」卡片實際指向 `openFieldWorkModule()` → `page-fieldwork`
+   > （分頁為 日誌／行駛／保養），而 `page-admin-godview` 是「全知視角 (Admin)」
+   > （分頁為 每日總覽／客戶到訪紀錄），兩者不同。v534 誤加在後者，使用者點智能報表
+   > 看不到到貨明細。v535 已撤回 `page-admin-godview` 的改動（`adminGodSwitchTab`
+   > 還原成原本的兩分頁），改加在 `page-fieldwork` 的 `.fw-tab-bar`，
+   > 內容區為 `#fw-cargo`，由 `switchFwTab('fw-cargo')` 觸發載入。
 4. 相簿頁分頁列還原成 陳列牆／保留單 兩個。
 
 **相容性**：`openIncomingCargoModule()` 保留為相容入口，會導向報表頁的到貨明細分頁，
@@ -173,7 +180,7 @@ AI 智慧查詢入口）。排版差異只有一處：桌機照片格是 `auto-f
 **client-view 防護跟著調整**：原本擋相簿頁的分析分頁，改為擋 `page-customer-analysis`；
 `loadCustomerAnalysis()` 內的 `isClientView` 防線維持不變。
 
-**部署**：版本 533、534 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @534`（網址不變）。
+**部署**：版本 533、534、535 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @535`（網址不變）。
 
 ---
 

@@ -238,6 +238,14 @@
     if (target) target.classList.add('active');
 
     if (tabId === 'fw-dashboard') refreshFwDashboard();
+    if (tabId === 'fw-cargo' && typeof loadIncomingCargo === 'function') {
+      // 只在第一次切進來時抓，之後沿用（要更新按分頁右邊的 ⟳）
+      const box = document.getElementById('fw-cargo');
+      if (box && box.dataset.loaded !== '1') {
+        box.dataset.loaded = '1';
+        loadIncomingCargo(false);
+      }
+    }
     if (tabId === 'fw-log') {
       getFwCustomers();
 
@@ -1702,40 +1710,19 @@
   /**
    * 🔄 全知視角子分頁切換：每日總覽 ↔ 客戶到訪紀錄
    */
-  // 三個分頁：每日總覽 / 客戶到訪紀錄 / 到貨明細
-  //（到貨明細原本是儀表板上的獨立入口，改放進這裡；它原本的位置讓給客戶分析）
   window.adminGodSwitchTab = function (tab) {
-    const boxes = {
-      daily: document.getElementById('admin-godtab-daily'),
-      ranking: document.getElementById('admin-godtab-ranking'),
-      cargo: document.getElementById('admin-godtab-cargo')
-    };
-    const btns = {
-      daily: document.getElementById('admin-godtab-btn-daily'),
-      ranking: document.getElementById('admin-godtab-btn-ranking'),
-      cargo: document.getElementById('admin-godtab-btn-cargo')
-    };
-    // daily 用預設 display（區塊內部自己排版），另外兩個要 flex 才會撐滿高度
-    const displayFor = { daily: '', ranking: 'flex', cargo: 'flex' };
+    const dailyBox = document.getElementById('admin-godtab-daily');
+    const rankBox = document.getElementById('admin-godtab-ranking');
+    const btnDaily = document.getElementById('admin-godtab-btn-daily');
+    const btnRank = document.getElementById('admin-godtab-btn-ranking');
+    const isDaily = tab === 'daily';
 
-    Object.keys(boxes).forEach(function (k) {
-      const on = (k === tab);
-      if (boxes[k]) boxes[k].style.display = on ? displayFor[k] : 'none';
-      if (btns[k]) {
-        btns[k].style.background = on ? 'rgba(250,204,21,0.12)' : 'transparent';
-        btns[k].style.color = on ? '#facc15' : 'rgba(255,255,255,0.5)';
-      }
-    });
+    if (dailyBox) dailyBox.style.display = isDaily ? '' : 'none';
+    if (rankBox) rankBox.style.display = isDaily ? 'none' : 'flex';
+    if (btnDaily) { btnDaily.style.background = isDaily ? 'rgba(250,204,21,0.12)' : 'transparent'; btnDaily.style.color = isDaily ? '#facc15' : 'rgba(255,255,255,0.5)'; }
+    if (btnRank) { btnRank.style.background = isDaily ? 'transparent' : 'rgba(250,204,21,0.12)'; btnRank.style.color = isDaily ? 'rgba(255,255,255,0.5)' : '#facc15'; }
 
-    if (tab === 'ranking') initAdminVisitRankingTab();
-    if (tab === 'cargo' && typeof loadIncomingCargo === 'function') {
-      // 只在第一次切進來時抓，之後沿用（要更新可按分頁列右邊的 ⟳）
-      const list = boxes.cargo;
-      if (list && list.dataset.loaded !== '1') {
-        list.dataset.loaded = '1';
-        loadIncomingCargo(false);
-      }
-    }
+    if (!isDaily) initAdminVisitRankingTab();
   };
 
   let adminVisitCurrentBiz = '';

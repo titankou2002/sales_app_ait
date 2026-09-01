@@ -56,9 +56,10 @@
   // 進入與載入由 adminGodSwitchTab('cargo') 負責，這裡保留一個相容入口，
   // 萬一還有舊的呼叫點會被導到報表頁而不是壞掉。
   window.openIncomingCargoModule = function() {
-    if (typeof openAdminGodView === 'function') openAdminGodView();
-    else showPage('page-admin-godview');
-    if (typeof adminGodSwitchTab === 'function') adminGodSwitchTab('cargo');
+    if (typeof openFieldWorkModule === 'function') openFieldWorkModule();
+    else showPage('page-fieldwork');
+    const tab = document.querySelector('.fw-tab-bar .fw-tab:last-child');
+    if (typeof switchFwTab === 'function') switchFwTab('fw-cargo', tab);
   };
 
   window.loadIncomingCargo = function(force) {
