@@ -3,7 +3,11 @@
    色票整組沿用戰情室 index.php :root，讓移植過來的標記可以逐字照用、顏色完全一致。
    （戰情室的 --gold 就是 #c29d66，與手機既有的 --ait-gold 相同，設計語言本來就一致。） */
 
-.ca-root {
+/* ⚠️ 這組變數必須定義在「頁面」層級，不能只放 .ca-root。
+   客戶清單（排序列、清單項目）是直接塞進 #ca-body 的，外層沒有 .ca-root，
+   放在 .ca-root 上會讓清單畫面所有 var(--wr-*) 變成未定義：
+   邊框消失、文字沒顏色，整片變黑。 */
+#page-customer-analysis, .ca-root {
   --wr-text2: rgba(255,255,255,0.45);
   --wr-border: rgba(194,157,102,0.15);
   --wr-bg2: rgba(255,255,255,0.04);
@@ -57,9 +61,18 @@ body.client-view #page-customer-analysis { display: none !important; }
 }
 
 .ca-btn {
-  background: transparent; border: 1px solid var(--wr-border);
-  border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 800;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(194,157,102,0.3);
+  color: rgba(255,255,255,0.75);          /* 明確指定，不靠繼承 */
+  border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 800;
   cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ca-btn:active { background: rgba(255,255,255,0.1); }
+/* 選中的排序／時段按鈕，對比要夠明顯 */
+.ca-btn.on {
+  background: rgba(194,157,102,0.18);
+  border-color: #c29d66;
+  color: #e0c48f;
 }
 
 .ca-lmd-table { font-size: 11px; border-collapse: collapse; width: 100%; }
@@ -118,7 +131,13 @@ body.client-view #page-customer-analysis { display: none !important; }
 .ca-tx-row .t-amt { width: 48px; flex: none; text-align: right; color: #fff; font-weight: 700; }
 
 /* 客戶清單排序列 */
-.ca-sort-bar { display: flex; gap: 6px; padding: 10px 14px 0; flex-wrap: wrap; }
+.ca-sort-bar {
+  display: flex; gap: 6px; padding: 10px 14px; flex-wrap: wrap;
+  align-items: center;
+}
+.ca-sort-bar .ca-sort-label {
+  font-size: 11px; color: rgba(255,255,255,0.4); font-weight: 700; margin-right: 2px;
+}
 
 /* 業務籤（客戶分析頁的業務分類） */
 .ca-biz-chip {

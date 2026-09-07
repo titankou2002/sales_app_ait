@@ -644,9 +644,8 @@ function caRenderTopSkus() {
     '<div class="ca-card-title"><span>📦 常銷商品 前 10 名</span></div>' +
     '<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">';
   periods.forEach(function (p, i) {
-    html += '<button class="ca-btn ca-period-btn" data-key="' + p.key + '" ' +
-      (i === 2 ? 'style="border-color:var(--wr-gold);color:var(--wr-gold)" ' : '') +
-      'onclick="caShowTopSkuPeriod(\'' + p.key + '\')">' + caEsc(p.label) +
+    html += '<button class="ca-btn ca-period-btn' + (i === 2 ? ' on' : '') +
+      '" data-key="' + p.key + '" onclick="caShowTopSkuPeriod(\'' + p.key + '\')">' + caEsc(p.label) +
       '<br><span style="font-size:10px;opacity:0.7">' + caFmt(totals[p.key] || 0) + '</span></button>';
   });
   html += '</div>';
@@ -692,9 +691,7 @@ window.caShowTopSkuPeriod = function (key) {
     el.style.display = (el.getAttribute('data-key') === key) ? 'block' : 'none';
   });
   Array.prototype.forEach.call(box.querySelectorAll('.ca-period-btn'), function (b) {
-    var on = b.getAttribute('data-key') === key;
-    b.style.borderColor = on ? 'var(--wr-gold)' : '';
-    b.style.color = on ? 'var(--wr-gold)' : '';
+    b.classList.toggle('on', b.getAttribute('data-key') === key);
   });
 };
 
@@ -1024,11 +1021,11 @@ function caRenderCustomerList() {
     { k: 'tier', label: '狀態' }, { k: 'grade', label: '分級' },
     { k: 'amount', label: '年度業績' }, { k: 'name', label: '名稱' }
   ];
-  var html = '<div class="ca-sort-bar">' + sorts.map(function (o) {
-    return '<button class="ca-btn" onclick="caSetListSort(\'' + o.k + '\')"' +
-      (o.k === _caListSort ? ' style="border-color:var(--wr-gold);color:var(--wr-gold)"' : '') +
-      '>' + o.label + '</button>';
-  }).join('') + '</div>';
+  var html = '<div class="ca-sort-bar"><span class="ca-sort-label">排序</span>' +
+    sorts.map(function (o) {
+      return '<button class="ca-btn' + (o.k === _caListSort ? ' on' : '') +
+        '" onclick="caSetListSort(\'' + o.k + '\')">' + o.label + '</button>';
+    }).join('') + '</div>';
 
   var gradeColor = { '特': '#ff2a85', 'A': '#22c55e', 'B': '#3b82f6', 'C': 'rgba(255,255,255,0.45)' };
   html += '<div class="ca-cust-list">' + list.map(function (o) {
