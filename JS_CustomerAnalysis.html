@@ -143,12 +143,15 @@ function caRender(res) {
     container.innerHTML = '<div class="ca-root">' + caRenderCard(res.customer) +
       // 明細跟戰情室一樣採點擊展開：這三支 API 在戰情室端要逐一掃銷售報表，
       // 一進頁面就全抓會讓第一次顯示等很久。
+      // 常銷商品改成預設就顯示（不再藏在「看完整明細」後面）
+      '<div id="ca-topskus"><div class="ca-card"><div class="ca-dim" style="padding:8px 0">讀取常銷商品…</div></div></div>' +
       '<div class="ca-toggle" onclick="caLoadDetail()" id="ca-detail-btn">' +
-        '<span>📊 看完整明細（銷售品項・版面陳列牆・互動紀錄）</span><span>▾</span>' +
+        '<span>📊 看更多明細（版面陳列牆・互動紀錄）</span><span>▾</span>' +
       '</div>' +
       '<div id="ca-detail"></div>' +
       '<div class="ca-source">數字來源：睡美人戰情室（' + caEsc(res.fetchedAt || '') + ' 讀取）<br>' +
       '與戰情室畫面為同一份計算，數字必然一致</div></div>';
+    caLoadBreakdown();
   } catch (e) {
     // 比照戰情室的做法：渲染出錯要看得到堆疊，不要只留白畫面
     container.innerHTML =
@@ -205,18 +208,38 @@ function caRenderCard(c) {
       : '');
 
   // 統計格（欄位與戰情室完全相同）
+  // 可下探的統計格：多一行副標，點擊展開明細（明細內容等 breakdown 回來才填）
+  function statDrill(label, val, sub, drill, color) {
+    return '<div class="ca-stat ca-stat-drill" onclick="caToggleEl(\'' + drill + '\')">' +
+      '<div class="ca-stat-label">' + label + ' <span style="opacity:0.55">▾</span></div>' +
+      '<div class="ca-stat-value"' + (color ? ' style="color:' + color + '"' : '') + '>' + val + '</div>' +
+      '<div class="ca-stat-sub" id="' + drill + '-sub">' + sub + '</div>' +
+    '</div>';
+  }
+
   html +=
     '<div class="ca-stats">' +
-      stat('當月業績', caFmt(c.thisMonthAmount || 0)) +
-      stat('年度業績', caFmt(c.thisYearAmount)) +
+      statDrill('當月業績', caFmt(c.thisMonthAmount || 0),
+                '<span class="ca-dim">去年同期 讀取中…</span>', 'ca-drill-month') +
+      statDrill('年度業績', caFmt(c.thisYearAmount),
+                '<span class="ca-dim">近三年平均 讀取中…</span>', 'ca-drill-year') +
       stat('YOY', yoyText, yoyColor) +
       stat('最後下單', lastOrderText) +
       stat('最近到訪', visitText) +
-      stat('版面數', (c.activeDisplayCount || 0) + ' 版') +
+      '<div class="ca-stat ca-stat-drill" onclick="caToggleEl(\'ca-drill-wall\'); caLoadWallDrill();">' +
+        '<div class="ca-stat-label">版面數 <span style="opacity:0.55">▾</span></div>' +
+        '<div class="ca-stat-value">' + ((c.activeDisplayCount || 0) + ' 版') + '</div>' +
+        '<div class="ca-stat-sub"><span class="ca-dim">點看哪些版面有賣</span></div>' +
+      '</div>' +
       stat('合約狀況', cs || '—', csColor) +
       stat('交易筆數', (c.saleCount || 0) + ' 筆') +
       stat('歷年累計', caFmt(c.totalAmount)) +
-    '</div>';
+    '</div>' +
+    // 三個下探區塊（預設收合，內容由各自的載入流程填入）
+    '<div id="ca-drill-month" style="display:none" class="ca-drill"></div>' +
+    '<div id="ca-drill-year" style="display:none" class="ca-drill"></div>' +
+    '<div id="ca-drill-wall" style="display:none" class="ca-drill">' +
+      '<div class="ca-dim" style="padding:8px 0">讀取版面銷售…</div></div>';
 
   // 年度目標達成率
   if (c.target) {
@@ -248,28 +271,8 @@ function caRenderCard(c) {
 
   html += caRenderLowMarginDeals(c.lowMarginDeals);
 
-  // 版面陳列
-  if (c.activeDisplayCount > 0) {
-    html += '<div class="ca-section-label">版面陳列</div>' +
-            '<div style="margin-top:4px;font-size:12px;color:var(--wr-text2)">現正陳列 ' +
-            c.activeDisplayCount + ' 個 SKU</div>';
-    var disps = c.activeDisplays || [];
-    if (disps.length) {
-      html += '<div style="margin-top:6px">';
-      disps.forEach(function (d) {
-        html +=
-          '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid rgba(194,157,102,0.12);font-size:12px">' +
-            '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
-              caEsc(d.sku || d.code || '') +
-              (d.series ? ' <span style="color:var(--wr-text2)">' + caEsc(d.series) + '</span>' : '') +
-            '</span>' +
-            '<span style="color:var(--wr-text2);flex-shrink:0">' +
-              (d.days !== undefined && d.days !== null ? d.days + ' 天' : '') + '</span>' +
-          '</div>';
-      });
-      html += '</div>';
-    }
-  }
+  // 版面陳列的 SKU 清單已移除（天數欄位資料有問題且資訊量低），
+  // 改由「版面數」統計格下探看哪些版面有賣／沒賣，照片牆仍保留在下方展開明細。
 
   // 互動紀錄
   html += '<div class="ca-section-label">互動紀錄</div>';
@@ -590,6 +593,294 @@ function caRenderTimeline(data) {
 }
 
 // ─────────────────────────────────────────────────────────
+// 常銷商品 + 統計格下探（資料都來自 customer-sales-breakdown）
+// ─────────────────────────────────────────────────────────
+
+var _caBreakdown = null;
+
+function caLoadBreakdown() {
+  _caBreakdown = null;
+  var name = _caCustomer;
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res || !res.success) { caBreakdownFailed(); return; }
+      _caBreakdown = res.data || null;
+      caRenderTopSkus();
+      caFillYearDrill();
+      caFillMonthDrill();
+    })
+    .withFailureHandler(caBreakdownFailed)
+    .getCustomerAnalysisDetail(name, 'breakdown');
+}
+
+function caBreakdownFailed() {
+  var box = document.getElementById('ca-topskus');
+  if (box) box.innerHTML = '<div class="ca-card"><div class="ca-dim">常銷商品讀取失敗</div></div>';
+  ['ca-drill-year', 'ca-drill-month'].forEach(function (id) {
+    var sub = document.getElementById(id + '-sub');
+    if (sub) sub.innerHTML = '<span class="ca-dim">讀取失敗</span>';
+  });
+}
+
+/** 常銷商品前 10 名：時段分頁 + 編號/系列/金額/佔比，可下探看交易明細 */
+function caRenderTopSkus() {
+  var box = document.getElementById('ca-topskus');
+  if (!box) return;
+  var d = _caBreakdown;
+  if (!d || !d.skus || !d.skus.length) {
+    box.innerHTML = '<div class="ca-card"><div class="ca-dim">沒有銷售品項資料</div></div>';
+    return;
+  }
+
+  var periods = [
+    { key: 'month', label: '當月' },
+    { key: 'quarter', label: '當季' },
+    { key: 'half', label: '近半年' },
+    { key: 'prevYear', label: d.prevYearLabel || '前年全年' }
+  ];
+  var totals = d.totals || {};
+
+  var html = '<div class="ca-card">' +
+    '<div class="ca-card-title"><span>📦 常銷商品 前 10 名</span></div>' +
+    '<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">';
+  periods.forEach(function (p, i) {
+    html += '<button class="ca-btn ca-period-btn" data-key="' + p.key + '" ' +
+      (i === 2 ? 'style="border-color:var(--wr-gold);color:var(--wr-gold)" ' : '') +
+      'onclick="caShowTopSkuPeriod(\'' + p.key + '\')">' + caEsc(p.label) +
+      '<br><span style="font-size:10px;opacity:0.7">' + caFmt(totals[p.key] || 0) + '</span></button>';
+  });
+  html += '</div>';
+
+  periods.forEach(function (p, i) {
+    var sorted = d.skus.slice()
+      .filter(function (x) { return (x[p.key] || 0) > 0; })
+      .sort(function (a, b) { return b[p.key] - a[p.key]; })
+      .slice(0, 10);
+    var tot = totals[p.key] || 0;
+
+    html += '<div class="ca-topsku-pane" data-key="' + p.key + '" style="display:' + (i === 2 ? 'block' : 'none') + '">';
+    if (!sorted.length) {
+      html += '<div class="ca-dim">此時段無銷售記錄</div>';
+    } else {
+      html += '<div class="ca-sku-head">' +
+        '<span class="c-rank"></span><span class="c-sku">編號</span><span class="c-series">系列</span>' +
+        '<span class="c-amt">金額</span><span class="c-share">佔比</span></div>';
+      sorted.forEach(function (x, si) {
+        var share = tot > 0 ? Math.round(x[p.key] / tot * 1000) / 10 : 0;
+        var medal = si === 0 ? '🥇' : si === 1 ? '🥈' : si === 2 ? '🥉' : (si + 1);
+        var rowId = 'ca-tx-' + p.key + '-' + si;
+        html += '<div class="ca-sku-row" onclick="caToggleSkuTx(\'' + rowId + '\',\'' + caEsc(x.sku) + '\')">' +
+            '<span class="c-rank">' + medal + '</span>' +
+            '<span class="c-sku">' + caEsc(x.sku) + '</span>' +
+            '<span class="c-series">' + caEsc(x.series || '') + '</span>' +
+            '<span class="c-amt">' + caFmt(x[p.key]) + '</span>' +
+            '<span class="c-share">' + share + '%</span>' +
+          '</div>' +
+          '<div class="ca-sku-tx" id="' + rowId + '" style="display:none"></div>';
+      });
+    }
+    html += '</div>';
+  });
+
+  box.innerHTML = html + '</div>';
+}
+
+window.caShowTopSkuPeriod = function (key) {
+  var box = document.getElementById('ca-topskus');
+  if (!box) return;
+  Array.prototype.forEach.call(box.querySelectorAll('.ca-topsku-pane'), function (el) {
+    el.style.display = (el.getAttribute('data-key') === key) ? 'block' : 'none';
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('.ca-period-btn'), function (b) {
+    var on = b.getAttribute('data-key') === key;
+    b.style.borderColor = on ? 'var(--wr-gold)' : '';
+    b.style.color = on ? 'var(--wr-gold)' : '';
+  });
+};
+
+/** 品項下探：交易明細（日期／案名／負責業務／金額），只抓一次 */
+var _caTxCache = {};
+window.caToggleSkuTx = function (rowId, sku) {
+  var el = document.getElementById(rowId);
+  if (!el) return;
+  var opening = (el.style.display === 'none');
+  el.style.display = opening ? 'block' : 'none';
+  if (!opening || el.dataset.loaded === '1') return;
+  el.dataset.loaded = '1';
+
+  if (_caTxCache[_caCustomer]) { caRenderSkuTx(el, sku); return; }
+  el.innerHTML = '<div class="ca-dim" style="padding:6px 0">讀取交易明細…</div>';
+  google.script.run
+    .withSuccessHandler(function (res) {
+      _caTxCache[_caCustomer] = (res && res.success) ? (res.data || []) : [];
+      caRenderSkuTx(el, sku);
+    })
+    .withFailureHandler(function () {
+      el.innerHTML = '<div class="ca-dim" style="padding:6px 0">交易明細讀取失敗</div>';
+    })
+    .getCustomerAnalysisDetail(_caCustomer, 'detail');
+};
+
+function caRenderSkuTx(el, sku) {
+  var all = _caTxCache[_caCustomer] || [];
+  var rows = all.filter(function (r) { return String(r.sku) === String(sku); })
+                .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  if (!rows.length) { el.innerHTML = '<div class="ca-dim" style="padding:6px 0">查無交易明細</div>'; return; }
+  el.innerHTML = rows.slice(0, 40).map(function (r) {
+    return '<div class="ca-tx-row">' +
+      '<span class="t-date">' + caEsc(r.date) + '</span>' +
+      '<span class="t-note">' + caEsc(r.note || '—') + '</span>' +
+      '<span class="t-sales">' + caEsc(r.sales || '') + '</span>' +
+      '<span class="t-amt">' + caFmt(r.amt) + '</span>' +
+    '</div>';
+  }).join('') + (rows.length > 40
+    ? '<div class="ca-dim" style="padding:4px 0">（只顯示最近 40 筆，共 ' + rows.length + ' 筆）</div>' : '');
+}
+
+/** 年度業績下探：近 5 年 + 三年平均 */
+function caFillYearDrill() {
+  var d = _caBreakdown;
+  var sub = document.getElementById('ca-drill-year-sub');
+  var box = document.getElementById('ca-drill-year');
+  if (!d || !box) return;
+  var years = (d.years || []).slice();
+  if (!years.length) { if (sub) sub.innerHTML = '<span class="ca-dim">無年度資料</span>'; return; }
+
+  // 三年平均只取「完整年度」（今年尚未過完，計入會被腰斬的數字拉低）
+  var full = years.filter(function (y) { return !y.isPartial; });
+  var last3 = full.slice(-3);
+  var avg3 = last3.length ? Math.round(last3.reduce(function (a, y) { return a + y.amount; }, 0) / last3.length) : null;
+  if (sub) {
+    sub.innerHTML = avg3 !== null
+      ? '近三年平均 <b style="color:var(--wr-gold)">' + caFmt(avg3) + '</b>'
+      : '<span class="ca-dim">完整年度不足三年</span>';
+  }
+
+  var show = years.slice(-5);
+  var max = Math.max.apply(null, show.map(function (y) { return y.amount; })) || 1;
+  var html = '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:6px">近 5 年（三年平均以完整年度計算，不含今年）</div>';
+  show.forEach(function (y) {
+    var pct = Math.round(y.amount / max * 100);
+    // 台股慣例：成長紅、衰退綠
+    var yc = (y.yoyPct === null || y.yoyPct === undefined) ? 'var(--wr-text2)'
+           : (y.yoyPct > 0 ? 'var(--wr-red)' : (y.yoyPct < 0 ? 'var(--wr-green)' : 'var(--wr-text2)'));
+    var yt = (y.yoyPct === null || y.yoyPct === undefined) ? '—'
+           : ((y.yoyPct > 0 ? '▲+' : '▼') + y.yoyPct + '%');
+    html += '<div class="ca-bar-row">' +
+      '<span class="b-label">' + y.year + (y.isPartial ? '<span class="ca-dim">(至今)</span>' : '') + '</span>' +
+      '<div class="b-track"><div class="b-fill" style="width:' + pct + '%"></div></div>' +
+      '<span class="b-val">' + caFmt(y.amount) + '</span>' +
+      '<span class="b-yoy" style="color:' + yc + '">' + yt + '</span>' +
+    '</div>';
+  });
+  box.innerHTML = html;
+}
+
+/** 當月業績下探：近一年逐月 + 去年同期 YoY */
+function caFillMonthDrill() {
+  var d = _caBreakdown;
+  var sub = document.getElementById('ca-drill-month-sub');
+  var box = document.getElementById('ca-drill-month');
+  if (!d || !box) return;
+  var monthly = d.monthly || {};
+  var cy = d.curYear, cm = d.curMonth;
+  var cur = monthly['y' + cy] || [];
+  var prev = monthly['y' + (cy - 1)] || [];
+
+  var lastYearSame = prev[cm - 1] || 0;
+  if (sub) {
+    sub.innerHTML = '去年同期 <b>' + caFmt(lastYearSame) + '</b>';
+  }
+
+  // 近 12 個月（跨年往回推）
+  var rows = [];
+  for (var i = 11; i >= 0; i--) {
+    var m = cm - i;
+    var y = cy;
+    if (m <= 0) { m += 12; y -= 1; }
+    var a = (monthly['y' + y] || [])[m - 1] || 0;
+    var b = (monthly['y' + (y - 1)] || [])[m - 1] || 0;
+    rows.push({ label: (y % 100) + '/' + m, amt: a, prev: b });
+  }
+  var max = Math.max.apply(null, rows.map(function (r) { return Math.max(r.amt, r.prev); })) || 1;
+
+  var html = '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:6px">近 12 個月（金色=當月，灰色=去年同月）</div>';
+  rows.forEach(function (r) {
+    var yoy = r.prev > 0 ? Math.round((r.amt - r.prev) / r.prev * 1000) / 10 : null;
+    var yc = yoy === null ? 'var(--wr-text2)' : (yoy > 0 ? 'var(--wr-red)' : (yoy < 0 ? 'var(--wr-green)' : 'var(--wr-text2)'));
+    var yt = yoy === null ? '—' : ((yoy > 0 ? '▲+' : '▼') + yoy + '%');
+    html += '<div class="ca-bar-row">' +
+      '<span class="b-label">' + r.label + '</span>' +
+      '<div class="b-track">' +
+        '<div class="b-fill" style="width:' + Math.round(r.amt / max * 100) + '%"></div>' +
+        '<div class="b-fill-prev" style="width:' + Math.round(r.prev / max * 100) + '%"></div>' +
+      '</div>' +
+      '<span class="b-val">' + caFmt(r.amt) + '</span>' +
+      '<span class="b-yoy" style="color:' + yc + '">' + yt + '</span>' +
+    '</div>';
+  });
+  box.innerHTML = html;
+}
+
+/** 版面數下探：哪些版面有賣、哪些完全沒賣（資料來自 customer-warroom） */
+var _caWallLoaded = false;
+function caLoadWallDrill() {
+  if (_caWallLoaded) return;
+  _caWallLoaded = true;
+  var box = document.getElementById('ca-drill-wall');
+  if (!box) return;
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res || !res.success || !res.data) {
+        box.innerHTML = '<div class="ca-dim" style="padding:8px 0">版面資料讀取失敗</div>';
+        return;
+      }
+      caRenderWallDrill(box, res.data);
+    })
+    .withFailureHandler(function () {
+      box.innerHTML = '<div class="ca-dim" style="padding:8px 0">版面資料讀取失敗</div>';
+    })
+    .getCustomerAnalysisDetail(_caCustomer, 'warroom');
+}
+
+function caRenderWallDrill(box, data) {
+  var walls = (data.displays || []).slice();
+  if (!walls.length) { box.innerHTML = '<div class="ca-dim" style="padding:8px 0">沒有版面資料</div>'; return; }
+
+  var sold = walls.filter(function (w) { return (w.totalAmt || 0) > 0; })
+                  .sort(function (a, b) { return (b.totalAmt || 0) - (a.totalAmt || 0); });
+  var dead = walls.filter(function (w) { return (w.totalAmt || 0) <= 0; });
+  var max = sold.length ? (sold[0].totalAmt || 1) : 1;
+
+  var html = '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:8px">' +
+    '共 ' + walls.length + ' 版，近一年有銷售 ' + sold.length + ' 版、掛零 ' + dead.length + ' 版</div>';
+
+  if (sold.length) {
+    html += '<div class="ca-sub-title">有銷售（依金額排序）</div>';
+    sold.forEach(function (w) {
+      html += '<div class="ca-bar-row">' +
+        '<span class="b-label" style="width:88px">' + caEsc(w.series || '未命名') + '</span>' +
+        '<div class="b-track"><div class="b-fill" style="width:' + Math.round((w.totalAmt || 0) / max * 100) + '%"></div></div>' +
+        '<span class="b-val">' + caFmt(w.totalAmt) + '</span>' +
+        '<span class="b-yoy" style="color:var(--wr-text2)">' + (w.totalPing || 0).toFixed(1) + '坪</span>' +
+      '</div>';
+    });
+  }
+
+  if (dead.length) {
+    html += '<div class="ca-sub-title" style="color:var(--wr-red)">近一年掛零（' + dead.length + ' 版）</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px">' +
+      dead.map(function (w) {
+        return '<span style="font-size:11px;color:var(--wr-text2);border:1px solid var(--wr-border);' +
+          'border-radius:6px;padding:3px 8px">' + caEsc(w.series || '未命名') +
+          (w.days !== null && w.days !== undefined ? ' <span class="ca-dim">' + w.days + '天</span>' : '') + '</span>';
+      }).join('') + '</div>';
+  }
+
+  box.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────
 // 頁面導覽：業務 → 客戶 → 分析
 // ─────────────────────────────────────────────────────────
 
@@ -650,10 +941,44 @@ window.caSelectBiz = function (name) {
       if (body) body.innerHTML = '<div class="ca-empty">客戶清單讀取失敗<br>' +
         '<span style="font-size:11.5px;opacity:0.7">' + caEsc(err) + '</span></div>';
     })
-    .getCustomerList(name);
+    .getCustomerAnalysisListForSales(name);
 };
 
 window.caFilterCustomerList = function () { caRenderCustomerList(); };
+
+/**
+ * 客戶健康度分級。戰情室原本只有 growth/decline/warning/dormant/normal，
+ * 這裡依 YoY 再細分出「嚴重衰退」與「退步請留意」兩級，讓業務一眼看出輕重。
+ * 門檻：≤-50% 嚴重衰退｜-50~-30% 衰退｜-30~-10% 退步請留意｜≥+10% 成長中
+ * （-30% 這條沿用戰情室 decline 的定義，其餘為新增分級）
+ */
+var CA_TIER = [
+  { key: 'critical', label: '嚴重衰退',   color: '#ef4444', order: 0 },
+  { key: 'decline',  label: '業績衰退',   color: '#f87171', order: 1 },
+  { key: 'slip',     label: '退步請留意', color: '#f5a623', order: 2 },
+  { key: 'dormant',  label: '沉睡',       color: '#94a3b8', order: 3 },
+  { key: 'growth',   label: '成長中',     color: '#22c55e', order: 4 },
+  { key: 'normal',   label: '正常',       color: 'rgba(255,255,255,0.45)', order: 5 },
+  { key: 'unknown',  label: '無資料',     color: 'rgba(255,255,255,0.25)', order: 6 }
+];
+function caTierOf(a) {
+  if (!a) return CA_TIER[6];
+  if (a.health === 'dormant' || a.health === 'no_sales') return CA_TIER[3];
+  var y = a.yoyPct;
+  if (y === null || y === undefined) return CA_TIER[5];
+  if (y <= -50) return CA_TIER[0];
+  if (y <= -30) return CA_TIER[1];
+  if (y < -10)  return CA_TIER[2];
+  if (y >= 10)  return CA_TIER[4];
+  return CA_TIER[5];
+}
+
+var _caListSort = 'tier';   // 'tier' | 'grade' | 'amount' | 'name'
+
+window.caSetListSort = function (mode) {
+  _caListSort = mode;
+  caRenderCustomerList();
+};
 
 function caRenderCustomerList() {
   var body = document.getElementById('ca-body');
@@ -669,18 +994,70 @@ function caRenderCustomerList() {
     return;
   }
 
+  // 伺服器端已經把健康度 join 好（正規化在那邊做），這裡直接用
+  list = list.map(function (c) {
+    var a = (c.health || c.yoyPct !== null || c.thisYearAmount !== null) ? c : null;
+    return { raw: c, a: a, tier: caTierOf(a) };
+  });
+
+  var gradeOrder = { '特': 0, 'A': 1, 'B': 2, 'C': 3 };
+  if (_caListSort === 'tier') {
+    list.sort(function (x, y) {
+      return (x.tier.order - y.tier.order) ||
+             ((x.a && x.a.yoyPct !== null ? x.a.yoyPct : 999) - (y.a && y.a.yoyPct !== null ? y.a.yoyPct : 999));
+    });
+  } else if (_caListSort === 'grade') {
+    list.sort(function (x, y) {
+      var gx = gradeOrder[x.raw.level] !== undefined ? gradeOrder[x.raw.level] : 9;
+      var gy = gradeOrder[y.raw.level] !== undefined ? gradeOrder[y.raw.level] : 9;
+      return (gx - gy) || (x.tier.order - y.tier.order);
+    });
+  } else if (_caListSort === 'amount') {
+    list.sort(function (x, y) {
+      return ((y.a ? y.a.thisYearAmount : 0) || 0) - ((x.a ? x.a.thisYearAmount : 0) || 0);
+    });
+  } else {
+    list.sort(function (x, y) { return x.raw.name.localeCompare(y.raw.name, 'zh-TW'); });
+  }
+
+  var sorts = [
+    { k: 'tier', label: '狀態' }, { k: 'grade', label: '分級' },
+    { k: 'amount', label: '年度業績' }, { k: 'name', label: '名稱' }
+  ];
+  var html = '<div class="ca-sort-bar">' + sorts.map(function (o) {
+    return '<button class="ca-btn" onclick="caSetListSort(\'' + o.k + '\')"' +
+      (o.k === _caListSort ? ' style="border-color:var(--wr-gold);color:var(--wr-gold)"' : '') +
+      '>' + o.label + '</button>';
+  }).join('') + '</div>';
+
   var gradeColor = { '特': '#ff2a85', 'A': '#22c55e', 'B': '#3b82f6', 'C': 'rgba(255,255,255,0.45)' };
-  body.innerHTML = '<div class="ca-cust-list">' + list.map(function (c, i) {
+  html += '<div class="ca-cust-list">' + list.map(function (o) {
+    var c = o.raw, a = o.a, t = o.tier;
     var gc = gradeColor[c.level] || 'rgba(255,255,255,0.35)';
-    var badge = c.level
+    var gradeBadge = c.level
       ? '<span style="background:' + gc + '20;color:' + gc + ';border:1px solid ' + gc +
         '40;border-radius:4px;padding:1px 6px;font-size:10.5px;font-weight:800;flex:none">' + caEsc(c.level) + '</span>'
       : '';
+    var tierBadge = '<span style="background:' + t.color + '15;color:' + t.color + ';border:1px solid ' + t.color +
+      '35;border-radius:4px;padding:1px 6px;font-size:10.5px;font-weight:800;flex:none">' + t.label + '</span>';
+    var amtText = a ? (caFmt(a.thisYearAmount) +
+      (a.yoyPct !== null && a.yoyPct !== undefined
+        ? ' <span style="color:' + (a.yoyPct > 0 ? 'var(--wr-red)' : (a.yoyPct < 0 ? 'var(--wr-green)' : 'var(--wr-text2)')) + '">' +
+          (a.yoyPct > 0 ? '▲+' : (a.yoyPct < 0 ? '▼' : '')) + a.yoyPct + '%</span>'
+        : '')) : '<span class="ca-dim">無銷售資料</span>';
+
     return '<div class="ca-cust-item" onclick="caSelectCustomer(this.getAttribute(\'data-name\'))" data-name="' +
       caEsc(c.name) + '">' +
-      '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + caEsc(c.name) + '</span>' +
-      badge + '</div>';
+      '<div style="min-width:0;flex:1">' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+          '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + caEsc(c.name) + '</span>' +
+          gradeBadge + tierBadge +
+        '</div>' +
+        '<div style="font-size:11.5px;font-weight:600;color:var(--wr-text2);margin-top:4px">' + amtText + '</div>' +
+      '</div></div>';
   }).join('') + '</div>';
+
+  body.innerHTML = html;
 }
 
 window.caSelectCustomer = function (name) {
@@ -688,6 +1065,8 @@ window.caSelectCustomer = function (name) {
   _caCustomer = name;
   _caMode = 'detail';
   _caDetailLoaded = false;
+  _caBreakdown = null;
+  _caWallLoaded = false;
 
   var title = document.getElementById('ca-nav-title');
   var chips = document.getElementById('ca-biz-chips');
@@ -730,5 +1109,8 @@ window.caRefreshCurrent = function () {
 };
 
 /** 換客戶時清掉快取 */
-function caResetCache() { _caCache = {}; _caDetailLoaded = false; }
+function caResetCache() {
+  _caCache = {}; _caDetailLoaded = false;
+  _caBreakdown = null; _caWallLoaded = false; _caTxCache = {};
+}
 </script>

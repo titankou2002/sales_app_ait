@@ -236,7 +236,8 @@ function getCustomerAnalysisDetail(customerName, part) {
   const actionMap = {
     timeline: 'customer-timeline',
     warroom: 'customer-warroom',
-    breakdown: 'customer-sales-breakdown'
+    breakdown: 'customer-sales-breakdown',
+    detail: 'customer-detail'   // 常銷商品下探用的逐筆交易明細
   };
   const action = actionMap[part];
   if (!action) return { success: false, msg: '未知的分析項目：' + part };
@@ -255,6 +256,50 @@ function getCustomerAnalysisDetail(customerName, part) {
     try { CacheManager.putLarge(cacheKey, res, CA_CONFIG.CACHE_TTL_ONE); } catch (e) {}
   }
   return res;
+}
+
+/**
+ * 🎯 客戶清單（含健康度）：給客戶分析頁的清單畫面用。
+ * 正規化刻意放在伺服器端做——前端若自己再實作一份 displayCustomerName，
+ * 就會變成第二個會漂移的複本（這個專案群已經吃過這種虧）。
+ * @param {string} salesName 業務姓名
+ */
+function getCustomerAnalysisListForSales(salesName) {
+  const name = String(salesName || '').trim();
+  if (!name) return { success: false, msg: '沒有指定業務' };
+
+  let customers = [];
+  try {
+    const listRes = getCustomerList(name);
+    customers = (listRes && listRes.success && listRes.data) ? listRes.data : [];
+  } catch (e) {
+    return { success: false, msg: '客戶清單讀取失敗：' + e };
+  }
+
+  // 分析資料拿不到也不該讓清單開不出來，降級成只有名字與等級
+  const map = {};
+  try {
+    const all = caGetAllCustomersCached_(false);
+    if (all && all.success) {
+      (all.data || []).forEach(function (a) { map[String(a.name)] = a; });
+    }
+  } catch (e) {}
+
+  return {
+    success: true,
+    data: customers.map(function (c) {
+      const a = map[caDisplayCustomerName_(c.name)] || null;
+      return {
+        name: c.name,
+        level: c.level || '',
+        hidden: !!c.hidden,
+        health: a ? a.health : null,
+        yoyPct: a ? a.yoyPct : null,
+        thisYearAmount: a ? a.thisYearAmount : null,
+        daysSinceLastOrder: a ? a.daysSinceLastOrder : null
+      };
+    })
+  };
 }
 
 /**
