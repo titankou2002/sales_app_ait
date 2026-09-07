@@ -1001,6 +1001,13 @@ function caTierOf(a) {
 
 var _caListSort = 'tier';   // 'tier' | 'grade' | 'amount' | 'name'
 var _caTierFilter = '';     // '' = 全部；否則為 CA_TIER 的 key
+var _caGradeOff = {};       // 被關掉的分級，例如 { C: true }；空物件 = 全看
+
+window.caToggleGrade = function (g) {
+  if (_caGradeOff[g]) delete _caGradeOff[g];
+  else _caGradeOff[g] = true;
+  caRenderCustomerList();
+};
 
 window.caSetTierFilter = function (k) {
   _caTierFilter = (_caTierFilter === k) ? '' : k;
@@ -1031,6 +1038,19 @@ function caRenderCustomerList() {
     var a = (c.health || c.yoyPct !== null || c.thisYearAmount !== null) ? c : null;
     return { raw: c, a: a, tier: caTierOf(a) };
   });
+
+  // ⚠️ 兩排籤的筆數都必須用「套用該篩選之前」的清單來算，否則籤會自己消失：
+  //   - 分級籤用全量算，不然關掉 C 之後 C 的筆數變 0、籤被過濾掉就再也點不回來
+  //   - 狀態籤用「已套分級、未套狀態」的清單算，不然選了某個狀態後其他狀態全消失
+  var gradeAll = list.slice();
+
+  var offKeys = Object.keys(_caGradeOff);
+  if (offKeys.length) {
+    var keptG = list.filter(function (o) { return !_caGradeOff[o.raw.level || '未分級']; });
+    if (keptG.length) list = keptG;
+  }
+
+  var tierPool = list.slice();
 
   if (_caTierFilter) {
     var kept = list.filter(function (o) { return o.tier.key === _caTierFilter; });
@@ -1069,7 +1089,7 @@ function caRenderCustomerList() {
 
   // 狀態篩選：點一下只看該狀態，再點一下取消
   var counts = {};
-  list.forEach(function (o) { counts[o.tier.key] = (counts[o.tier.key] || 0) + 1; });
+  tierPool.forEach(function (o) { counts[o.tier.key] = (counts[o.tier.key] || 0) + 1; });
   html += '<div class="ca-sort-bar" style="padding-top:0"><span class="ca-sort-label">狀態</span>' +
     CA_TIER.filter(function (t) { return counts[t.key]; }).map(function (t) {
       var on = _caTierFilter === t.key;
@@ -1077,6 +1097,25 @@ function caRenderCustomerList() {
         '" style="color:' + t.color + ';border-color:' + t.color + '55' +
         (on ? ';background:' + t.color + '25' : '') + '" ' +
         'onclick="caSetTierFilter(\'' + t.key + '\')">' + t.label + ' ' + counts[t.key] + '</button>';
+    }).join('') + '</div>';
+
+  // 分級篩選：多選，點掉不想看的（例如 C 級本來業績就低，看了礙眼）
+  var gradeColorMap = { '特': '#ff2a85', 'A': '#22c55e', 'B': '#3b82f6', 'C': 'rgba(255,255,255,0.5)', '未分級': 'rgba(255,255,255,0.3)' };
+  var gCounts = {};
+  gradeAll.forEach(function (o) {
+    var g = o.raw.level || '未分級';
+    gCounts[g] = (gCounts[g] || 0) + 1;
+  });
+  var gradeKeys = ['特', 'A', 'B', 'C', '未分級'].filter(function (g) { return gCounts[g]; });
+  html += '<div class="ca-sort-bar" style="padding-top:0"><span class="ca-sort-label">分級</span>' +
+    gradeKeys.map(function (g) {
+      var on = !_caGradeOff[g];
+      var col = gradeColorMap[g] || 'rgba(255,255,255,0.4)';
+      return '<button class="ca-tier-chip' + (on ? ' on' : ' off') +
+        '" style="color:' + (on ? col : 'rgba(255,255,255,0.25)') +
+        ';border-color:' + (on ? col + '55' : 'rgba(255,255,255,0.12)') +
+        (on ? ';background:' + col + '20' : '') + '" ' +
+        'onclick="caToggleGrade(\'' + g + '\')">' + g + ' ' + gCounts[g] + '</button>';
     }).join('') + '</div>';
 
   var gradeColor = { '特': '#ff2a85', 'A': '#22c55e', 'B': '#3b82f6', 'C': 'rgba(255,255,255,0.45)' };
