@@ -139,6 +139,35 @@ body.client-view #page-customer-analysis { display: none !important; }
   font-size: 11px; color: rgba(255,255,255,0.4); font-weight: 700; margin-right: 2px;
 }
 
+/* 狀態分級籤／徽章。嚴重衰退用紫色並閃爍，讓它在清單裡跳出來 */
+.ca-tier-chip {
+  background: transparent; border: 1px solid; border-radius: 14px;
+  padding: 5px 11px; font-size: 11.5px; font-weight: 800;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; white-space: nowrap;
+}
+.ca-tier-chip.on { box-shadow: 0 0 0 1px currentColor inset; }
+.ca-tier-badge {
+  border-radius: 4px; padding: 1px 6px; font-size: 10.5px; font-weight: 800; flex: none;
+}
+@keyframes caBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.ca-tier-chip.blink, .ca-tier-badge.blink { animation: caBlink 1.1s ease-in-out infinite; }
+/* 使用者若偏好減少動態效果就不閃 */
+@media (prefers-reduced-motion: reduce) {
+  .ca-tier-chip.blink, .ca-tier-badge.blink { animation: none; }
+}
+
+/* 年度下探：數字在上、長條在下 */
+.ca-year-row { margin-bottom: 10px; }
+.ca-year-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 13px; }
+.ca-year-head .y-year { width: 62px; flex: none; font-weight: 800; color: var(--wr-text2); }
+.ca-year-head .y-amt { font-weight: 900; color: #fff; }
+.ca-year-head .y-yoy { font-weight: 800; font-size: 12px; }
+
+/* 遺忘產品欄位 */
+.ca-sku-row .c-size, .ca-sku-head .c-size { width: 54px; flex: none; color: var(--wr-text2); font-size: 10.5px; }
+.ca-sku-row .c-last, .ca-sku-head .c-last { width: 74px; flex: none; text-align: right; font-size: 10.5px; }
+.ca-forgot-tag { font-size: 9px; opacity: 0.85; }
+
 /* 業務籤（客戶分析頁的業務分類） */
 .ca-biz-chip {
   flex-shrink: 0; border: 1px solid rgba(255,255,255,0.22);
