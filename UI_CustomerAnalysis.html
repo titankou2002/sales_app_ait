@@ -192,6 +192,18 @@ body.client-view #page-customer-analysis { display: none !important; }
 }
 .ca-cust-item:active { background: rgba(255,255,255,0.08); }
 
+/* 常銷商品與遺忘產品：手機維持上下，電腦寬度夠時左右並排。
+   align-items:start 讓兩張卡各自照內容高度，不會被對方拉長。 */
+.ca-two-col { display: block; }
+@media (min-width: 900px) {
+  .ca-two-col {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 12px; align-items: start;
+  }
+  /* 並排時卡片本身的下方間距交給 grid gap，避免多一層空白 */
+  .ca-two-col > div > .ca-card { margin-bottom: 0; }
+}
+
 /* 版面陳列牆照片格（移植自戰情室 renderWarRoomDisplays 的 grid） */
 .ca-wall-grid {
   display: grid; gap: 8px;

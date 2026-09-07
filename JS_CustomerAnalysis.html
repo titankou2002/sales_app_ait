@@ -144,8 +144,11 @@ function caRender(res) {
       // 明細跟戰情室一樣採點擊展開：這三支 API 在戰情室端要逐一掃銷售報表，
       // 一進頁面就全抓會讓第一次顯示等很久。
       // 常銷商品改成預設就顯示（不再藏在「看完整明細」後面）
-      '<div id="ca-topskus"><div class="ca-card"><div class="ca-dim" style="padding:8px 0">讀取常銷商品…</div></div></div>' +
-      '<div id="ca-forgotten"></div>' +
+      // 常銷商品與遺忘產品：手機上下排、電腦左右並排
+      '<div class="ca-two-col">' +
+        '<div id="ca-topskus"><div class="ca-card"><div class="ca-dim" style="padding:8px 0">讀取常銷商品…</div></div></div>' +
+        '<div id="ca-forgotten"></div>' +
+      '</div>' +
       '<div class="ca-toggle" onclick="caLoadDetail()" id="ca-detail-btn">' +
         '<span>📊 看更多明細（版面陳列牆・互動紀錄）</span><span>▾</span>' +
       '</div>' +
