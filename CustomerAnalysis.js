@@ -340,12 +340,19 @@ function getSkuImageMap() {
 // 但業務要知道「這家有沒有拿過樣、多久前」，只能自己掃一次原始報表。
 // ─────────────────────────────────────────────────────────
 
-/** 判斷是否為樣品列：編號 -S/-S1 結尾，或備註/品名含樣品類關鍵字 */
-function caIsSampleRow_(sku, note) {
-  const s = String(sku || '').trim().toUpperCase();
-  if (/-S\d*$/.test(s)) return true;
-  const t = String(note || '');
-  return /樣品|送樣|樣板|SAMPLE|扣帶|陳列/i.test(t);
+/**
+ * 判斷是否為「樣品列」。
+ * ⚠️ 標記在客戶身上，不是在產品編號上（先前誤判成 SKU 尾碼，已更正）：
+ *   - 客戶編號以 -S / -S1 結尾，例如 A135-S、A147-S1、C012-S1
+ *   - 客戶名稱以 -樣品 / -計價樣品 結尾，例如 顧信企業有限公司-樣品
+ * 這類列在正規化後（displayCustomerName 會先依 - 切段）仍會歸到同一個客戶，
+ * 所以可以直接拿來當「這家拿過哪些樣品」。
+ */
+function caIsSampleRow_(custCode, custName) {
+  const code = String(custCode || '').trim().toUpperCase();
+  if (/-S\d*$/.test(code)) return true;
+  const name = String(custName || '').trim();
+  return /-\s*(計價)?樣品\s*$/.test(name);
 }
 
 /**
@@ -357,7 +364,7 @@ function getCustomerSampleInfo(customerName) {
   if (!rawName) return { success: false, msg: '沒有指定客戶' };
 
   const key = caDisplayCustomerName_(rawName);
-  const cacheKey = 'ca_sample_v1_' + key;
+  const cacheKey = 'ca_sample_v2_' + key;   // v2：判定規則改成看客戶編號/名稱
   try {
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return cached;
@@ -371,7 +378,6 @@ function getCustomerSampleInfo(customerName) {
     const lastRow = sh.getLastRow();
     const data = sh.getRange(1, 1, lastRow, sh.getLastColumn()).getValues();
 
-    // 標題列自動偵測（同 getSalesOverview 的做法：找同時有日期與金額的那列）
     let hIdx = 0;
     for (let i = 0; i < Math.min(25, data.length); i++) {
       const rowStr = data[i].join('');
@@ -379,12 +385,11 @@ function getCustomerSampleInfo(customerName) {
     }
     const h = data[hIdx];
     const idx = {
-      date: findHeaderIndex(h, ['單據日期', '銷貨日期', '日期']),
-      cust: findHeaderIndex(h, ['客戶名稱', '客戶']),
-      code: findHeaderIndex(h, ['產品編號', '編號', '品碼', '序號']),
-      note: findHeaderIndex(h, ['備註', '說明', '案名']),
-      prod: findHeaderIndex(h, ['產品名稱', '品名']),
-      qty:  findHeaderIndex(h, ['數量', '片數'])
+      date:     findHeaderIndex(h, ['單據日期', '銷貨日期', '日期']),
+      cust:     findHeaderIndex(h, ['客戶名稱', '客戶']),
+      custCode: findHeaderIndex(h, ['客戶編號', '客戶代碼', '代碼']),
+      code:     findHeaderIndex(h, ['產品編號', '編號', '品碼', '序號']),
+      qty:      findHeaderIndex(h, ['數量', '片數'])
     };
     if (idx.cust === -1 || idx.date === -1) return { success: false, msg: '經銷銷售報表格式不符' };
 
@@ -394,12 +399,10 @@ function getCustomerSampleInfo(customerName) {
     for (let i = hIdx + 1; i < data.length; i++) {
       const r = data[i];
       const custRaw = String(r[idx.cust] || '').trim();
-      if (!custRaw || caDisplayCustomerName_(custRaw) !== key) continue;
-
-      const sku = idx.code !== -1 ? String(r[idx.code] || '').trim() : '';
-      const note = (idx.note !== -1 ? String(r[idx.note] || '') : '') + ' ' +
-                   (idx.prod !== -1 ? String(r[idx.prod] || '') : '');
-      if (!caIsSampleRow_(sku, note)) continue;
+      if (!custRaw) continue;
+      const custCode = idx.custCode !== -1 ? String(r[idx.custCode] || '') : '';
+      if (!caIsSampleRow_(custCode, custRaw)) continue;
+      if (caDisplayCustomerName_(custRaw) !== key) continue;
 
       const d = parseDate(r[idx.date]);
       if (!d || isNaN(d.getTime())) continue;
@@ -408,11 +411,11 @@ function getCustomerSampleInfo(customerName) {
       total++;
       if (!lastDate || ds > lastDate) lastDate = ds;
 
-      // SKU 去掉 -S 尾碼後歸戶，讓「拿過樣的正式編號」對得起來
-      const baseSku = String(sku).trim().toUpperCase().replace(/[\s\-]/g, '').replace(/S\d*$/, '');
-      if (baseSku) {
-        if (!bySku[baseSku] || ds > bySku[baseSku].date) {
-          bySku[baseSku] = { date: ds, sku: sku, qty: idx.qty !== -1 ? (parseFloat(r[idx.qty]) || 0) : 0 };
+      const sku = idx.code !== -1 ? String(r[idx.code] || '').trim() : '';
+      const skuKey = String(sku).trim().toUpperCase().replace(/[\s\-]/g, '');
+      if (skuKey) {
+        if (!bySku[skuKey] || ds > bySku[skuKey].date) {
+          bySku[skuKey] = { date: ds, sku: sku, qty: idx.qty !== -1 ? Math.abs(parseFloat(r[idx.qty]) || 0) : 0 };
         }
       }
     }

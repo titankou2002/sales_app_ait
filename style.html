@@ -454,3 +454,22 @@
   }
 </style>
 
+/* 🏷 版面銷售狀態標記（renderAlbum 產生，相簿頁與客戶分析頁共用） */
+.wall-status-tag {
+  position: absolute; left: 8px; bottom: 8px; z-index: 6;
+  font-size: 10.5px; font-weight: 900; padding: 3px 8px;
+  border: 1px solid; border-radius: 6px; white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+/* 連樣品都沒拿：紫框閃爍，代表這面牆完全沒被推過 */
+@keyframes wallNeverPulse {
+  0%, 100% { border-color: #a855f7; box-shadow: 0 0 0 0 rgba(168,85,247,0.55); }
+  50%      { border-color: #c084fc; box-shadow: 0 0 14px 3px rgba(168,85,247,0.45); }
+}
+.album-item.wall-never-pulse {
+  border-color: #a855f7 !important;
+  animation: wallNeverPulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .album-item.wall-never-pulse { animation: none; }
+}

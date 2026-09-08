@@ -527,6 +527,17 @@ function caRenderWall(res) {
       '<span style="font-size:11px;color:var(--wr-text2);flex:1">點卡片開啟產品規格（與版面記錄同一個畫面）</span>' +
       '<span id="ca-sort-slot"></span>' +
     '</div>' +
+    '<div class="ca-quick-bar">' +
+      [['status','缺貨'],['amount','銷量'],['sample','樣品'],['days','天數']].map(function (o) {
+        return '<button class="ca-quick-btn' + (o[0] === 'amount' ? ' on' : '') +
+          '" data-v="' + o[0] + '" onclick="caQuickSort(\'' + o[0] + '\')">' + o[1] + '</button>';
+      }).join('') +
+      '<span class="ca-legend">' +
+        '<span style="color:#f5a623">■ 遺忘</span>' +
+        '<span style="color:#60a5fa">■ 拿樣未成交</span>' +
+        '<span style="color:#a855f7">■ 連樣品都沒拿</span>' +
+      '</span>' +
+    '</div>' +
     '<div id="ca-album-grid" class="album-grid"></div>' +
   '</div>';
 }
@@ -643,6 +654,7 @@ function caLoadBreakdown() {
     .withSuccessHandler(function (res) {
       if (!res || !res.success) { caBreakdownFailed(); return; }
       _caBreakdown = res.data || null;
+      if (caBuildSkuStatus()) caReloadWall();
       caLoadImgMap(function () {
         caRenderTopSkus();
         caRenderForgotten();
@@ -1156,6 +1168,7 @@ function caLoadSample() {
   google.script.run
     .withSuccessHandler(function (res) {
       _caSample = (res && res.success) ? res : null;
+      if (caBuildSkuStatus()) caReloadWall();   // 樣品到齊，重畫版面讓狀態標記出現
       if (!el) return;
       if (!_caSample) {
         el.innerHTML = '<div class="ca-stat-label">樣品</div><div class="ca-stat-value muted" style="font-size:13px">—</div>';
@@ -1334,6 +1347,40 @@ window.submitDisplayNote = function () {
       if (typeof showToast === 'function') showToast('寫入失敗：' + err);
     })
     .addDisplayNote(cust, photo, series, state.currentSales || '', text);
+};
+
+/**
+ * 組出 SKU 狀態表給共用的 renderAlbum 判斷版面狀態。
+ * 銷售面來自 breakdown（half=近半年、total=歷年），樣品面來自 getCustomerSampleInfo。
+ * 兩邊都齊了才設定，避免 renderAlbum 拿到半套資料標錯。
+ */
+function caBuildSkuStatus() {
+  if (!_caBreakdown || !_caSample) return false;
+  var st = {};
+  (_caBreakdown.skus || []).forEach(function (x) {
+    var k = String(x.sku || '').trim().toUpperCase().replace(/[\s\-]/g, '');
+    if (!k) return;
+    st[k] = { half: x.half || 0, total: x.total || 0, sampled: false, lastSale: x.lastDate || '' };
+  });
+  var bySku = (_caSample && _caSample.bySku) || {};
+  Object.keys(bySku).forEach(function (k) {
+    if (!st[k]) st[k] = { half: 0, total: 0, sampled: true, lastSale: '' };
+    else st[k].sampled = true;
+    st[k].lastSample = bySku[k].date;
+  });
+  window._caSkuStatus = st;
+  return true;
+}
+
+/** 快捷篩選按鈕：把下拉裡最常用的幾個拉到外面 */
+window.caQuickSort = function (v) {
+  var sel = document.getElementById('ca-sort-select');
+  if (!sel) return;
+  sel.value = v;
+  renderAlbum(false, 'ca-album-grid', 'ca-sort-select');
+  Array.prototype.forEach.call(document.querySelectorAll('.ca-quick-btn'), function (b) {
+    b.classList.toggle('on', b.getAttribute('data-v') === v);
+  });
 };
 
 // ─────────────────────────────────────────────────────────

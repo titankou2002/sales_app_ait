@@ -284,6 +284,25 @@ body.client-view #page-customer-analysis { display: none !important; }
   .ca-skel-row { animation: none; }
 }
 
+/* 版面快捷篩選列 */
+.ca-quick-bar {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.ca-quick-btn {
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(194,157,102,0.3);
+  color: rgba(255,255,255,0.75); border-radius: 16px; padding: 5px 14px;
+  font-size: 12px; font-weight: 800; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ca-quick-btn.on {
+  background: rgba(194,157,102,0.2); border-color: #c29d66; color: #e0c48f;
+}
+.ca-legend {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  font-size: 10px; margin-left: auto; opacity: 0.75;
+}
+
 /* 業務籤（客戶分析頁的業務分類） */
 .ca-biz-chip {
   flex-shrink: 0; border: 1px solid rgba(255,255,255,0.22);

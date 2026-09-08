@@ -1144,6 +1144,29 @@
    *        客戶分析頁用這個參數共用同一份渲染與同一個詳情彈窗，
    *        避免兩邊各寫一套卡片、改一邊忘了另一邊。
    */
+  /**
+   * 🏷 版面銷售狀態：曾賣過但半年沒賣＝遺忘；沒賣過但拿過樣＝拿樣未成交；
+   * 沒賣過也沒拿過樣＝連樣品都沒拿（紫框閃爍，代表這面牆完全沒被推過）。
+   * 資料由客戶分析頁灌進 window._caSkuStatus；沒有資料時整段跳過不影響原本畫面。
+   */
+  function getWallStatus(group) {
+    var st = window._caSkuStatus;
+    if (!st) return null;
+    var soldRecent = 0, soldEver = 0, sampled = 0;
+    group.items.forEach(function (it) {
+      var k = String(it.sku || '').trim().toUpperCase().replace(/[\s\-]/g, '');
+      var v = st[k];
+      if (!v) return;
+      if (v.half > 0) soldRecent++;
+      if (v.total > 0) soldEver++;
+      if (v.sampled) sampled++;
+    });
+    if (soldRecent > 0) return null;                     // 半年內有賣，不標
+    if (soldEver > 0) return { label: '遺忘', color: '#f5a623' };
+    if (sampled > 0) return { label: '拿樣未成交', color: '#60a5fa' };
+    return { label: '連樣品都沒拿', color: '#a855f7', blink: true };
+  }
+
   function renderAlbum(isHistory = false, gridIdOverride, sortSelectId) {
     var targetGridId = gridIdOverride || (isHistory ? 'history-grid' : 'album-grid');
     var grid = document.getElementById(targetGridId);
@@ -1210,6 +1233,19 @@
         var getWorst = function (g) { return Math.min.apply(null, g.items.map(function (i) { return i.stockLevel || 3; })); };
         var res = getWorst(a) - getWorst(b);
         if (res !== 0) return res;
+        return b.totalSalesAmt - a.totalSalesAmt;
+      }
+      // 按樣品：連樣品都沒拿的排最前，其次拿樣未成交、遺忘，最後才是正常有賣的
+      if (albumSortMethod === 'sample') {
+        var rank = function (g) {
+          var w = getWallStatus(g);
+          if (!w) return 3;
+          if (w.label === '連樣品都沒拿') return 0;
+          if (w.label === '拿樣未成交') return 1;
+          return 2;
+        };
+        var ra = rank(a), rb = rank(b);
+        if (ra !== rb) return ra - rb;
         return b.totalSalesAmt - a.totalSalesAmt;
       }
       if (albumSortMethod === 'frequency') return b.totalFrequency - a.totalFrequency;
@@ -1285,7 +1321,15 @@
 
       var durationStr = formatDaysToDuration(group.items[0].daysOnDisplay);
 
+      var wallStatus = getWallStatus(group);
+      if (wallStatus && wallStatus.blink) borderClass += ' wall-never-pulse';
+
       html += '<div class="album-item ' + borderClass + '" onclick="showGroupDetail(' + gIdx + ', ' + isHistory + ')">' +
+        (wallStatus
+          ? '<div class="wall-status-tag" style="color:' + wallStatus.color +
+            ';border-color:' + wallStatus.color + '66;background:' + wallStatus.color + '22">' +
+            wallStatus.label + '</div>'
+          : '') +
         '<img src="' + imgUrl + '" class="album-thumb" ' +
         'onerror="this.onerror=null; this.src=\'https://placehold.co/800x800/1a1a1a/666?text=載入失敗\'" ' +
         'loading="lazy">' +
