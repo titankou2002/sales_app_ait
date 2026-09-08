@@ -161,6 +161,7 @@ function caRender(res) {
           '<div class="ca-skel-row w55"></div>' +
         '</div>' + '</div>' +
       '</div>' +
+      '<div id="ca-should-display"></div>' +
       '<div class="ca-toggle" onclick="caLoadDetail()" id="ca-detail-btn">' +
         '<span>📊 看更多明細（版面陳列牆・互動紀錄）</span><span>▾</span>' +
       '</div>' +
@@ -449,6 +450,7 @@ function caLoadDetail() {
     }
     box.innerHTML = html || '<div class="ca-empty" style="padding:24px 0">這家客戶沒有更多明細</div>';
     caPaintWall();
+    caRenderShouldDisplay();
   }
 
   function fetchPart(key, renderer) {
@@ -1168,7 +1170,7 @@ function caLoadSample() {
   google.script.run
     .withSuccessHandler(function (res) {
       _caSample = (res && res.success) ? res : null;
-      if (caBuildSkuStatus()) caReloadWall();   // 樣品到齊，重畫版面讓狀態標記出現
+      if (caBuildSkuStatus()) { caReloadWall(); caRenderShouldDisplay(); }
       if (!el) return;
       if (!_caSample) {
         el.innerHTML = '<div class="ca-stat-label">樣品</div><div class="ca-stat-value muted" style="font-size:13px">—</div>';
@@ -1360,16 +1362,134 @@ function caBuildSkuStatus() {
   (_caBreakdown.skus || []).forEach(function (x) {
     var k = String(x.sku || '').trim().toUpperCase().replace(/[\s\-]/g, '');
     if (!k) return;
-    st[k] = { half: x.half || 0, total: x.total || 0, sampled: false, lastSale: x.lastDate || '' };
+    st[k] = {
+      half: x.half || 0, total: x.total || 0,
+      sampled: false, displayed: false,
+      lastSale: x.lastDate || '', firstSale: x.firstDate || ''
+    };
   });
   var bySku = (_caSample && _caSample.bySku) || {};
   Object.keys(bySku).forEach(function (k) {
-    if (!st[k]) st[k] = { half: 0, total: 0, sampled: true, lastSale: '' };
-    else st[k].sampled = true;
-    st[k].lastSample = bySku[k].date;
+    var rec = bySku[k];
+    if (!st[k]) st[k] = { half: 0, total: 0, lastSale: '', firstSale: '' };
+    st[k].sampled = !!rec.sampleDate;
+    st[k].displayed = !!rec.displayDate;
+    st[k].sampleDate = rec.sampleDate || '';
+    st[k].sampleQty = rec.sampleQty || 0;
+    st[k].firstSampleDate = rec.firstSampleDate || '';
   });
   window._caSkuStatus = st;
   return true;
+}
+
+/**
+ * 拿樣轉換天數：對「有拿樣、之後也真的賣出」的品項，算首次拿樣→首次成交的天數。
+ * 有了中位數，「該追誰」就從感覺變成數字：超過常態天數還沒成交的才是該追的。
+ */
+function caSampleConversion() {
+  var st = window._caSkuStatus;
+  if (!st) return null;
+  var gaps = [];
+  Object.keys(st).forEach(function (k) {
+    var v = st[k];
+    if (!v.firstSampleDate || !v.firstSale) return;
+    var a = new Date(v.firstSampleDate), b = new Date(v.firstSale);
+    if (isNaN(a.getTime()) || isNaN(b.getTime())) return;
+    var d = Math.floor((b - a) / 86400000);
+    if (d >= 0 && d < 1095) gaps.push(d);   // 超過三年的視為無關聯，不納入
+  });
+  if (gaps.length < 3) return null;          // 樣本太少不給結論
+  gaps.sort(function (x, y) { return x - y; });
+  var mid = Math.floor(gaps.length / 2);
+  var median = gaps.length % 2 ? gaps[mid] : Math.round((gaps[mid - 1] + gaps[mid]) / 2);
+
+  // 已拿樣但還沒成交、且已超過常態天數的
+  var overdue = [];
+  Object.keys(st).forEach(function (k) {
+    var v = st[k];
+    if (!v.sampleDate || v.total > 0) return;
+    var d = Math.floor((Date.now() - new Date(v.sampleDate).getTime()) / 86400000);
+    if (d > median) overdue.push({ sku: k, days: d, qty: v.sampleQty || 0 });
+  });
+  overdue.sort(function (a, b) { return b.days - a.days; });
+  return { median: median, count: gaps.length, overdue: overdue };
+}
+
+/**
+ * 「該上版」清單：這家賣得好、但目前沒有掛在任何一面牆上的品項。
+ * 前面幾個功能都在看「上了牆卻沒賣」，這個是反過來——現成的上架機會，
+ * 比清理呆版面更直接帶生意。
+ */
+function caRenderShouldDisplay() {
+  var box = document.getElementById('ca-should-display');
+  if (!box) return;
+  if (!_caBreakdown || !state.currentDisplays) { box.innerHTML = ''; return; }
+
+  // 目前掛在牆上的 SKU
+  var onWall = {};
+  (state.currentDisplays || []).forEach(function (d) {
+    var k = String(d.sku || '').trim().toUpperCase().replace(/[\s\-]/g, '');
+    if (k) onWall[k] = true;
+  });
+
+  var cy = _caBreakdown.curYear;
+  var list = (_caBreakdown.skus || []).filter(function (x) {
+    var k = String(x.sku || '').trim().toUpperCase().replace(/[\s\-]/g, '');
+    if (!k || onWall[k]) return false;
+    if (x.isSleeper || x.isDiscontinued) return false;      // 不打算再賣的不建議上架
+    var recent = (x['y' + cy] || 0) + (x['y' + (cy - 1)] || 0);
+    return recent > 0 && (x.half || 0) > 0;                 // 近兩年有賣、且近半年還在賣
+  }).sort(function (a, b) { return (b.half || 0) - (a.half || 0); });
+
+  if (!list.length) {
+    box.innerHTML = '<div class="ca-card"><div class="ca-card-title">📌 該上版</div>' +
+      '<div class="ca-dim">賣得好的品項都已經在牆上了</div></div>';
+    return;
+  }
+
+  var show = list.slice(0, 10);
+  var conv = caSampleConversion();
+  var html = '<div class="ca-card">' +
+    '<div class="ca-card-title"><span>📌 該上版</span>' +
+    '<span class="ca-sub">共 ' + list.length + ' 項</span></div>' +
+    '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:8px">' +
+      '近半年還在賣、但目前沒掛在任何一面牆上（已排除睡美人與不續辦）</div>' +
+    '<div class="ca-sku-head">' +
+      '<span class="c-thumb"></span><span class="c-sku">編號</span><span class="c-series">系列</span>' +
+      '<span class="c-size">尺寸</span><span class="c-amt">近半年</span></div>';
+  show.forEach(function (x) {
+    html += '<div class="ca-sku-row" style="cursor:default">' +
+      '<span class="c-thumb">' + caThumb(x.sku) + '</span>' +
+      '<span class="c-sku">' + caEsc(x.sku) + '</span>' +
+      '<span class="c-series">' + caEsc(x.series || '') + '</span>' +
+      '<span class="c-size">' + caEsc(x.size || '—') + '</span>' +
+      '<span class="c-amt">' + caFmt(x.half) + '</span>' +
+    '</div>';
+  });
+  if (list.length > 10) {
+    html += '<div class="ca-dim" style="padding:6px 0;font-size:11px">（只顯示前 10 項，共 ' + list.length + ' 項）</div>';
+  }
+
+  // 拿樣轉換：把「該追誰」變成數字
+  if (conv) {
+    html += '<div class="ca-conv">' +
+      '<div class="ca-conv-head">🎯 拿樣轉換：這家平均 <b>' + conv.median + ' 天</b> 成交' +
+        '<span class="ca-dim">（' + conv.count + ' 個成交樣本的中位數）</span></div>';
+    if (conv.overdue.length) {
+      html += '<div class="ca-conv-sub">已超過常態天數還沒成交，優先追這 ' +
+        Math.min(conv.overdue.length, 5) + ' 項：</div>';
+      conv.overdue.slice(0, 5).forEach(function (o) {
+        html += '<div class="ca-conv-row"><span>' + caEsc(o.sku) + '</span>' +
+          (o.qty ? '<span class="ca-dim">拿 ' + o.qty + ' 片</span>' : '<span></span>') +
+          '<span style="color:#f5a623;font-weight:800">' + o.days + ' 天</span></div>';
+      });
+    } else {
+      html += '<div class="ca-conv-sub ca-dim">目前沒有超過常態天數還沒成交的品項</div>';
+    }
+    html += '</div>';
+  }
+
+  box.innerHTML = html + '</div>';
 }
 
 /** 快捷篩選按鈕：把下拉裡最常用的幾個拉到外面 */

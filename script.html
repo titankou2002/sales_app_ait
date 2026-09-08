@@ -1152,19 +1152,50 @@
   function getWallStatus(group) {
     var st = window._caSkuStatus;
     if (!st) return null;
-    var soldRecent = 0, soldEver = 0, sampled = 0;
+    var soldRecent = 0, soldEver = 0, sampled = 0, displayed = 0;
+    var newestSample = null, lastSale = null;
     group.items.forEach(function (it) {
       var k = String(it.sku || '').trim().toUpperCase().replace(/[\s\-]/g, '');
       var v = st[k];
       if (!v) return;
       if (v.half > 0) soldRecent++;
       if (v.total > 0) soldEver++;
-      if (v.sampled) sampled++;
+      if (v.sampled) {
+        sampled++;
+        if (!newestSample || v.sampleDate > newestSample) newestSample = v.sampleDate;
+      }
+      if (v.displayed) displayed++;
+      if (v.lastSale && (!lastSale || v.lastSale > lastSale)) lastSale = v.lastSale;
     });
+
     if (soldRecent > 0) return null;                     // 半年內有賣，不標
-    if (soldEver > 0) return { label: '遺忘', color: '#f5a623' };
-    if (sampled > 0) return { label: '拿樣未成交', color: '#60a5fa' };
-    return { label: '連樣品都沒拿', color: '#a855f7', blink: true };
+
+    var daysOf = function (d) {
+      if (!d) return null;
+      var t = new Date(d);
+      return isNaN(t.getTime()) ? null : Math.floor((Date.now() - t.getTime()) / 86400000);
+    };
+
+    if (soldEver > 0) {
+      var dl = daysOf(lastSale);
+      return { label: '遺忘' + (dl !== null ? '・' + dl + '天' : ''), color: '#f5a623' };
+    }
+    if (sampled > 0) {
+      var dsmp = daysOf(newestSample);
+      // 拿樣三個月沒下單跟兩年沒下單是完全不同的處境，天數一定要標出來
+      return { label: '拿樣未成交' + (dsmp !== null ? '・' + dsmp + '天' : ''), color: '#60a5fa' };
+    }
+    if (displayed > 0) {
+      return { label: '僅門市陳列', color: '#94a3b8' };
+    }
+    // 連樣品都沒拿：只有「上架夠久」才閃紫框。
+    // 新上架的版面本來就還沒開始推，全部閃只會變成雜訊、反而失去警示作用。
+    var onDisplay = (group.items[0] && group.items[0].daysOnDisplay) || 0;
+    return {
+      label: '連樣品都沒拿' + (onDisplay ? '・上架' + Math.round(onDisplay / 30) + '個月' : ''),
+      color: '#a855f7',
+      blink: onDisplay > 365
+    };
   }
 
   function renderAlbum(isHistory = false, gridIdOverride, sortSelectId) {
@@ -1240,9 +1271,10 @@
         var rank = function (g) {
           var w = getWallStatus(g);
           if (!w) return 3;
-          if (w.label === '連樣品都沒拿') return 0;
-          if (w.label === '拿樣未成交') return 1;
-          return 2;
+          if (w.label.indexOf('連樣品都沒拿') === 0) return 0;
+          if (w.label.indexOf('拿樣未成交') === 0) return 1;
+          if (w.label === '僅門市陳列') return 2;
+          return 3;
         };
         var ra = rank(a), rb = rank(b);
         if (ra !== rb) return ra - rb;

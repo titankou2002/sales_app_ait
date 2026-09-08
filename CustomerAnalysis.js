@@ -345,8 +345,6 @@ function getSkuImageMap() {
  * ⚠️ 標記在客戶身上，不是在產品編號上（先前誤判成 SKU 尾碼，已更正）：
  *   - 客戶編號以 -S / -S1 結尾，例如 A135-S、A147-S1、C012-S1
  *   - 客戶名稱以 -樣品 / -計價樣品 結尾，例如 顧信企業有限公司-樣品
- * 這類列在正規化後（displayCustomerName 會先依 - 切段）仍會歸到同一個客戶，
- * 所以可以直接拿來當「這家拿過哪些樣品」。
  */
 function caIsSampleRow_(custCode, custName) {
   const code = String(custCode || '').trim().toUpperCase();
@@ -355,19 +353,61 @@ function caIsSampleRow_(custCode, custName) {
   return /-\s*(計價)?樣品\s*$/.test(name);
 }
 
+/** 尺寸字串（59.8x119.8 / 60X120 / 60*120）→ 面積 cm²，解析不出回 0 */
+function caSizeArea_(sizeStr) {
+  const t = String(sizeStr || '').toUpperCase().replace(/CM|㎝/g, '').replace(/[＊*×]/g, 'X').trim();
+  const m = t.match(/(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)/);
+  if (!m) return 0;
+  return (parseFloat(m[1]) || 0) * (parseFloat(m[2]) || 0);
+}
+
 /**
- * 🎯 某客戶的樣品紀錄：整體最後拿樣時間 + 每個 SKU 的最後拿樣時間
- * @param {string} customerName 原始客戶名稱
+ * 樣品列再分類：真的是「客戶拿樣評估」，還是「門市/店內陳列上架」。
+ * 業務給的判斷依據：
+ *   - 備註出現「扣」（扣帶）＝店內上架，一定是陳列
+ *   - 大尺寸（60x120 以上）只要超過 1 片，通常就是店內上架
+ *   - 小磚頂多 3~6 片，超過 6 片大多是門市陳列
+ * 這個分類很重要：門市陳列不該被算成「客戶拿了樣卻沒下單」。
+ * 60x120 實際尺寸是 59.8x119.8＝7164，60x60 是 3600、45x90 是 4050，
+ * 所以用 6000 當大尺寸門檻可以正確切開（80x80＝6400 也算大尺寸）。
+ */
+function caClassifySample_(qty, sizeStr, note) {
+  const n = Math.abs(Number(qty) || 0);
+  if (/扣/.test(String(note || ''))) return 'display';
+  const area = caSizeArea_(sizeStr);
+  const isBig = area >= 6000;
+  if (isBig && n > 1) return 'display';
+  if (!isBig && n > 6) return 'display';
+  return 'sample';
+}
+
+/**
+ * 🎯 某客戶的樣品紀錄
+ * 回傳 bySku：每個 SKU 最後一次「真樣品」與「門市陳列」的日期與數量，
+ * 以及整體的最後拿樣時間。
  */
 function getCustomerSampleInfo(customerName) {
   const rawName = String(customerName || '').trim();
   if (!rawName) return { success: false, msg: '沒有指定客戶' };
 
   const key = caDisplayCustomerName_(rawName);
-  const cacheKey = 'ca_sample_v2_' + key;   // v2：判定規則改成看客戶編號/名稱
+  const cacheKey = 'ca_sample_v3_' + key;   // v3：加入真樣品/門市陳列分類
   try {
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return cached;
+  } catch (e) {}
+
+  // 尺寸表：分類需要知道是不是大尺寸
+  const sizeMap = {};
+  try {
+    const inv = getAggregatedInventory();
+    if (inv && inv.success && inv.data) {
+      inv.data.forEach(function (p) {
+        if (!p || !p.sku) return;
+        const k = String(p.sku).trim().toUpperCase().replace(/[\s\-]/g, '');
+        if (k && !sizeMap[k]) sizeMap[k] = p.size || '';
+      });
+    }
   } catch (e) {}
 
   try {
@@ -389,11 +429,13 @@ function getCustomerSampleInfo(customerName) {
       cust:     findHeaderIndex(h, ['客戶名稱', '客戶']),
       custCode: findHeaderIndex(h, ['客戶編號', '客戶代碼', '代碼']),
       code:     findHeaderIndex(h, ['產品編號', '編號', '品碼', '序號']),
-      qty:      findHeaderIndex(h, ['數量', '片數'])
+      qty:      findHeaderIndex(h, ['數量', '片數']),
+      note:     findHeaderIndex(h, ['備註', '說明', '案名']),
+      prod:     findHeaderIndex(h, ['產品名稱', '品名'])
     };
     if (idx.cust === -1 || idx.date === -1) return { success: false, msg: '經銷銷售報表格式不符' };
 
-    let lastDate = null, total = 0;
+    let lastSampleDate = null, sampleCount = 0, displayCount = 0;
     const bySku = {};
 
     for (let i = hIdx + 1; i < data.length; i++) {
@@ -408,26 +450,40 @@ function getCustomerSampleInfo(customerName) {
       if (!d || isNaN(d.getTime())) continue;
       const ds = Utilities.formatDate(d, 'Asia/Taipei', 'yyyy-MM-dd');
 
-      total++;
-      if (!lastDate || ds > lastDate) lastDate = ds;
-
       const sku = idx.code !== -1 ? String(r[idx.code] || '').trim() : '';
       const skuKey = String(sku).trim().toUpperCase().replace(/[\s\-]/g, '');
-      if (skuKey) {
-        if (!bySku[skuKey] || ds > bySku[skuKey].date) {
-          bySku[skuKey] = { date: ds, sku: sku, qty: idx.qty !== -1 ? Math.abs(parseFloat(r[idx.qty]) || 0) : 0 };
-        }
+      const qty = idx.qty !== -1 ? Math.abs(parseFloat(r[idx.qty]) || 0) : 0;
+      const note = (idx.note !== -1 ? String(r[idx.note] || '') : '') + ' ' +
+                   (idx.prod !== -1 ? String(r[idx.prod] || '') : '');
+      const kind = caClassifySample_(qty, sizeMap[skuKey] || '', note);
+
+      if (kind === 'sample') {
+        sampleCount++;
+        if (!lastSampleDate || ds > lastSampleDate) lastSampleDate = ds;
+      } else {
+        displayCount++;
+      }
+
+      if (!skuKey) continue;
+      if (!bySku[skuKey]) bySku[skuKey] = { sku: sku };
+      const rec = bySku[skuKey];
+      if (kind === 'sample') {
+        if (!rec.sampleDate || ds > rec.sampleDate) { rec.sampleDate = ds; rec.sampleQty = qty; }
+        if (!rec.firstSampleDate || ds < rec.firstSampleDate) rec.firstSampleDate = ds;
+      } else {
+        if (!rec.displayDate || ds > rec.displayDate) { rec.displayDate = ds; rec.displayQty = qty; }
       }
     }
 
-    const daysSince = lastDate
-      ? Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000) : null;
+    const daysSince = lastSampleDate
+      ? Math.floor((Date.now() - new Date(lastSampleDate).getTime()) / 86400000) : null;
 
     const out = {
       success: true,
-      hasSample: total > 0,
-      count: total,
-      lastDate: lastDate,
+      hasSample: sampleCount > 0,
+      count: sampleCount,
+      displayCount: displayCount,
+      lastDate: lastSampleDate,
       daysSince: daysSince,
       bySku: bySku
     };
