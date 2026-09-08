@@ -303,6 +303,38 @@ function getCustomerAnalysisListForSales(salesName) {
 }
 
 /**
+ * 🖼 SKU → 單片縮圖對照表。
+ * 圖片來源是本專案自己的「編號價目表」（getAggregatedInventory 已有 img 欄位），
+ * 不必向戰情室要，也不用多開一支 API 權限。
+ * key 用 normalizeIncomingSkuKey_ 正規化過的編號，因為戰情室回傳的編號
+ * 是 cleanSku() 處理過的（大寫去空白），兩邊要對得起來。
+ */
+function getSkuImageMap() {
+  const cacheKey = 'ca_sku_img_v1';
+  try {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return { success: true, data: cached };
+  } catch (e) {}
+
+  const map = {};
+  try {
+    const inv = getAggregatedInventory();
+    if (inv && inv.success && inv.data) {
+      inv.data.forEach(function (p) {
+        if (!p || !p.sku || !p.img) return;
+        const key = String(p.sku).trim().toUpperCase().replace(/[\s\-]/g, '');
+        if (key && !map[key]) map[key] = p.img;
+      });
+    }
+  } catch (e) {
+    return { success: false, msg: '庫存資料讀取失敗：' + e };
+  }
+
+  try { CacheManager.putLarge(cacheKey, map, 1800); } catch (e) {}
+  return { success: true, data: map };
+}
+
+/**
  * 🔧 連線自我檢查：在 Apps Script 編輯器直接執行這支，確認金鑰與連線是否正常
  */
 function caSelfTest() {

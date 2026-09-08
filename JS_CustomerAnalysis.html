@@ -532,6 +532,51 @@ function caRenderTimeline(data) {
 }
 
 // ─────────────────────────────────────────────────────────
+// 單片縮圖：來源是本專案的編號價目表（不經戰情室）
+// ─────────────────────────────────────────────────────────
+
+var _caImgMap = null;
+
+function caLoadImgMap(cb) {
+  if (_caImgMap) { if (cb) cb(); return; }
+  google.script.run
+    .withSuccessHandler(function (res) {
+      _caImgMap = (res && res.success && res.data) ? res.data : {};
+      if (cb) cb();
+    })
+    .withFailureHandler(function () { _caImgMap = {}; if (cb) cb(); })
+    .getSkuImageMap();
+}
+
+/** 編號正規化成圖片表的 key（大寫、去空白與連字號），與伺服器端一致 */
+function caImgKey(sku) {
+  return String(sku == null ? '' : sku).trim().toUpperCase().replace(/[\s\-]/g, '');
+}
+
+function caThumb(sku) {
+  var url = _caImgMap ? _caImgMap[caImgKey(sku)] : null;
+  if (!url) return '<span class="ca-thumb ca-thumb-none">—</span>';
+  return '<img class="ca-thumb" src="' + caEsc(url) + '" loading="lazy" ' +
+         'onclick="event.stopPropagation(); caOpenImage(\'' + caEsc(url) + '\',\'' + caEsc(sku) + '\')" ' +
+         'onerror="this.outerHTML=\'<span class=\\\'ca-thumb ca-thumb-none\\\'>—</span>\'">';
+}
+
+window.caOpenImage = function (url, sku) {
+  var m = document.getElementById('ca-img-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'ca-img-modal';
+    m.onclick = function () { m.style.display = 'none'; };
+    document.body.appendChild(m);
+  }
+  m.innerHTML = '<div class="ca-img-box">' +
+    '<img src="' + caEsc(url) + '">' +
+    '<div class="ca-img-cap">' + caEsc(sku) + '</div>' +
+    '<div class="ca-img-hint">點任一處關閉</div></div>';
+  m.style.display = 'flex';
+};
+
+// ─────────────────────────────────────────────────────────
 // 常銷商品 + 統計格下探（資料都來自 customer-sales-breakdown）
 // ─────────────────────────────────────────────────────────
 
@@ -544,8 +589,10 @@ function caLoadBreakdown() {
     .withSuccessHandler(function (res) {
       if (!res || !res.success) { caBreakdownFailed(); return; }
       _caBreakdown = res.data || null;
-      caRenderTopSkus();
-      caRenderForgotten();
+      caLoadImgMap(function () {
+        caRenderTopSkus();
+        caRenderForgotten();
+      });
       caFillYearDrill();
       caFillMonthDrill();
     })
@@ -602,7 +649,8 @@ function caRenderTopSkus() {
       html += '<div class="ca-dim">此時段無銷售記錄</div>';
     } else {
       html += '<div class="ca-sku-head">' +
-        '<span class="c-rank"></span><span class="c-sku">編號</span><span class="c-series">系列</span>' +
+        '<span class="c-rank"></span><span class="c-thumb"></span>' +
+        '<span class="c-sku">編號</span><span class="c-series">系列</span>' +
         '<span class="c-amt">金額</span><span class="c-share">佔比</span></div>';
       sorted.forEach(function (x, si) {
         var share = tot > 0 ? Math.round(x[p.key] / tot * 1000) / 10 : 0;
@@ -610,6 +658,7 @@ function caRenderTopSkus() {
         var rowId = 'ca-tx-' + p.key + '-' + si;
         html += '<div class="ca-sku-row" onclick="caToggleSkuTx(\'' + rowId + '\',\'' + caEsc(x.sku) + '\')">' +
             '<span class="c-rank">' + medal + '</span>' +
+            '<span class="c-thumb">' + caThumb(x.sku) + '</span>' +
             '<span class="c-sku">' + caEsc(x.sku) + '</span>' +
             '<span class="c-series">' + caEsc(x.series || '') + '</span>' +
             '<span class="c-amt">' + caFmt(x[p.key]) + '</span>' +
@@ -865,6 +914,27 @@ function caComputeForgotten() {
   return out;
 }
 
+var _caForgottenSort = 'days';   // 'days'（前次銷售由久到近） | 'amount' | 'sku'
+
+window.caSetForgottenSort = function (k) {
+  _caForgottenSort = k;
+  caRenderForgotten();
+};
+
+/**
+ * 停售天數色帶（依使用者指定）：
+ *   120~200 天 黃　｜　200~300 天 紅　｜　300 天以上 紫
+ * 120 天以下不上色。原始需求只寫到「120~180 黃、200~300 紅」，
+ * 180~200 這段沒指定，這裡併入黃色讓區間連續、不會有沒顏色的空窗。
+ */
+function caDaysBand(d) {
+  if (d === null || d === undefined) return null;
+  if (d >= 300) return { color: '#a855f7', label: '300天+' };
+  if (d >= 200) return { color: '#ef4444', label: '200-300天' };
+  if (d >= 120) return { color: '#f5a623', label: '120-200天' };
+  return null;
+}
+
 function caRenderForgotten() {
   var box = document.getElementById('ca-forgotten');
   if (!box) return;
@@ -874,27 +944,69 @@ function caRenderForgotten() {
       '<div class="ca-dim">沒有符合的品項（近兩年賣過但近半年掛零）</div></div>';
     return;
   }
+
+  if (_caForgottenSort === 'amount') {
+    list.sort(function (a, b) { return (b.recentAmt || 0) - (a.recentAmt || 0); });
+  } else if (_caForgottenSort === 'days') {
+    // 久沒賣的排前面
+    list.sort(function (a, b) { return (b.days === null ? -1 : b.days) - (a.days === null ? -1 : a.days); });
+  } else {
+    list.sort(function (a, b) { return String(a.sku).localeCompare(String(b.sku)); });
+  }
+
+  var sorts = [
+    { k: 'days', label: '最久沒賣' },
+    { k: 'amount', label: '金額' },
+    { k: 'sku', label: '編號' }
+  ];
+
   var show = list.slice(0, 10);
   var html = '<div class="ca-card">' +
     '<div class="ca-card-title"><span>💤 遺忘產品 前 10 名</span>' +
     '<span class="ca-sub">共 ' + list.length + ' 項</span></div>' +
     '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:8px">' +
       '近兩年賣過、近半年完全沒賣（已排除睡美人與不續辦）</div>' +
+    '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center">' +
+      '<span class="ca-sort-label">排序</span>' +
+      sorts.map(function (o) {
+        return '<button class="ca-btn' + (o.k === _caForgottenSort ? ' on' : '') +
+          '" onclick="caSetForgottenSort(\'' + o.k + '\')">' + o.label + '</button>';
+      }).join('') +
+    '</div>' +
     '<div class="ca-sku-head">' +
-      '<span class="c-sku">編號</span><span class="c-series">系列</span>' +
+      '<span class="c-thumb"></span><span class="c-sku">編號</span><span class="c-series">系列</span>' +
       '<span class="c-size">尺寸</span><span class="c-last">前次銷售</span></div>';
-  show.forEach(function (o) {
-    html += '<div class="ca-sku-row" style="cursor:default">' +
+
+  show.forEach(function (o, i) {
+    var band = caDaysBand(o.days);
+    var rowId = 'ca-ftx-' + i;
+    html += '<div class="ca-sku-row" onclick="caToggleSkuTx(\'' + rowId + '\',\'' + caEsc(o.sku) + '\')"' +
+        (band ? ' style="border-left:3px solid ' + band.color + ';padding-left:5px"' : '') + '>' +
+      '<span class="c-thumb">' + caThumb(o.sku) + '</span>' +
       '<span class="c-sku">' + caEsc(o.sku) + '</span>' +
       '<span class="c-series">' + caEsc(o.series) + '</span>' +
       '<span class="c-size">' + caEsc(o.size || '—') + '</span>' +
       '<span class="c-last">' + caEsc(o.lastDate || '—') +
-        (o.days !== null ? '<br><span class="ca-dim" style="font-size:10px">' + o.days + ' 天前</span>' : '') +
-      '</span></div>';
+        (o.days !== null
+          ? '<br><span style="font-size:10px;font-weight:800;color:' +
+            (band ? band.color : 'rgba(255,255,255,0.35)') + '">' + o.days + ' 天前</span>'
+          : '') +
+      '</span></div>' +
+      '<div class="ca-sku-tx" id="' + rowId + '" style="display:none"></div>';
   });
+
   if (list.length > 10) {
     html += '<div class="ca-dim" style="padding:6px 0;font-size:11px">（只顯示前 10 項，共 ' + list.length + ' 項）</div>';
   }
+
+  // 色帶說明
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:var(--wr-text2)">' +
+    ['#f5a623 120-200天', '#ef4444 200-300天', '#a855f7 300天以上'].map(function (t) {
+      var p = t.split(' ');
+      return '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' +
+        p[0] + ';margin-right:4px"></span>' + p[1] + '</span>';
+    }).join('') + '</div>';
+
   box.innerHTML = html + '</div>';
 }
 
