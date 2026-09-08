@@ -434,6 +434,7 @@ function caLoadDetail() {
               '<div id="ca-timeline" style="display:none" class="ca-card">' + parts.timeline + '</div>';
     }
     box.innerHTML = html || '<div class="ca-empty" style="padding:24px 0">這家客戶沒有更多明細</div>';
+    caPaintWall();
   }
 
   function fetchPart(key, renderer) {
@@ -487,113 +488,44 @@ function caRenderCatPie(catCounts) {
 // renderSalesBreakdown 的移植版已移除：上方「常銷商品前 10 名」已涵蓋相同資訊。
 
 /**
- * 版面陳列牆：與「版面記錄 → 陳列牆」同一份資料（getCustomerDisplays），
- * 卡片外觀也沿用相同的 .album-item 樣式，下半部再補上每個 SKU 的庫存/保留，
- * 讓兩個入口看到的東西一致。
+ * 版面陳列牆：直接共用「版面記錄」的 renderAlbum() 與 showGroupDetail()。
+ * 這裡刻意不自己畫卡片——先前自製一套的結果就是兩邊要各改一次。
+ * 做法：把 getCustomerDisplays 的結果灌進 album 用的同一組 state，
+ * 再叫 renderAlbum 畫進本頁的容器；卡片點擊仍走原本的 showGroupDetail，
+ * 所以詳情彈窗（產品規格／新批藍框／庫存保留…）完全是同一份程式。
  */
-function caFmtDuration(days) {
-  if (!days || days < 0) return '0M';
-  var y = Math.floor(days / 365), m = Math.floor((days % 365) / 30);
-  if (y > 0 && m > 0) return y + 'Y' + m + 'M';
-  if (y > 0) return y + 'Y';
-  return m + 'M';
-}
-
 function caRenderWall(res) {
   if (!res || !res.success) return '';
   var items = res.active || [];
   if (!items.length) return '';
 
-  // 依照片分組（跟 renderAlbum 同一個 key）
-  var groups = {}, order = [];
-  items.forEach(function (d) {
-    var key = d.photoUrl || ('__nophoto_' + d.sku);
-    if (!groups[key]) {
-      groups[key] = {
-        photoUrl: d.photoUrl, items: [], seriesSet: {},
-        amt: 0, ping: 0, reserved: 0,
-        worst: 9, arrival: false, days: d.daysOnDisplay || 0
-      };
-      order.push(key);
-    }
-    var g = groups[key];
-    g.items.push(d);
-    if (d.series) g.seriesSet[d.series] = true;
-    g.amt += (d.customerSalesAmt || 0);
-    g.ping += (d.customerSalesQty || 0);
-    g.reserved += (d.customerReservedQty || 0);
-    if (d.stockLevel && d.stockLevel < g.worst) g.worst = d.stockLevel;
-    if (d.hasArrival) g.arrival = true;
-    if ((d.daysOnDisplay || 0) > g.days) g.days = d.daysOnDisplay || 0;
-  });
+  // album 那邊的渲染會讀這些 state，先補齊
+  state.selectedCustomer = _caCustomer;
+  state.currentCustomer = _caCustomer;
+  state.currentDisplays = items;
+  state.historyDisplays = res.history || [];
 
-  var list = order.map(function (k) { return groups[k]; })
-                  .sort(function (a, b) { return b.amt - a.amt; });
-
-  var totalAmt = list.reduce(function (a, g) { return a + g.amt; }, 0);
-  var totalPing = list.reduce(function (a, g) { return a + g.ping; }, 0);
-
-  var html = '<div class="ca-card" id="ca-wall-box">' +
+  // 容器先放進 DOM，renderAlbum 才找得到
+  return '<div class="ca-card" id="ca-wall-box">' +
     '<div class="ca-card-title"><span>🏪 版面陳列牆</span>' +
-    '<span class="ca-sub">' + items.length + ' SKU / ' + list.length + ' 版</span></div>' +
-    '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:10px">近一年銷售 ' +
-      caFmt(totalAmt) + '・' + Math.round(totalPing) + ' 坪</div>' +
-    '<div class="ca-wall-grid">';
+      '<span class="ca-sub">' + items.length + ' SKU</span></div>' +
+    '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:10px">' +
+      '點卡片開啟產品規格（與版面記錄同一個畫面）</div>' +
+    '<div id="ca-album-grid" class="album-grid"></div>' +
+  '</div>';
+}
 
-  list.forEach(function (g) {
-    var seriesNames = Object.keys(g.seriesSet);
-    var label = seriesNames.length ? seriesNames.join('、') : '未命名';
-    var border = g.worst === 1 ? 'border-red'
-               : (g.worst === 2 || g.worst === 3) ? 'border-yellow' : 'border-green';
-    if (g.arrival) border += ' arrival-blue-pulse';
-    var img = g.photoUrl || 'https://placehold.co/800x800/1a1a1a/666?text=無照片';
-    var noteList = (_caNotes && _caNotes[g.photoUrl || '']) || [];
-    var noteId = 'ca-note-' + Math.random().toString(36).slice(2, 7);
-
-    html += '<div class="ca-wall-card ' + border + '">' +
-      '<div class="ca-wall-photo">' +
-        '<img src="' + caEsc(img) + '" loading="lazy" ' +
-          'onclick="caOpenImage(\'' + caEsc(img) + '\',\'' + caEsc(label) + '\')" ' +
-          'onerror="this.onerror=null;this.src=\'https://placehold.co/800x800/1a1a1a/666?text=載入失敗\'">' +
-        '<div class="ca-wall-badges">' +
-          '<div class="mini-stat">' + Math.round(g.amt / 10000) + '萬 / ' + Math.round(g.ping) + '坪</div>' +
-          (g.reserved > 0
-            ? '<div class="mini-stat" style="background:rgba(234,179,8,0.35);color:#facc15;border-color:rgba(234,179,8,0.5);margin-top:4px">保留 ' + g.reserved + ' 片</div>'
-            : '') +
-        '</div>' +
-        '<div class="ca-wall-series">' + caEsc(label) + '</div>' +
-        '<div class="ca-wall-foot">' + caFmtDuration(g.days) + '</div>' +
-      '</div>' +
-      '<div class="ca-wall-note-bar">' +
-        '<button class="ca-note-btn" title="新增詢問紀錄" ' +
-          'onclick="caAddNote(\'' + caEsc(g.photoUrl || '') + '\',\'' + caEsc(label) + '\')">✏️</button>' +
-        (noteList.length
-          ? '<button class="ca-note-btn" onclick="caToggleEl(\'' + noteId + '\')">💬 ' + noteList.length + '</button>'
-          : '') +
-      '</div>' +
-      (noteList.length
-        ? '<div class="ca-wall-notes" id="' + noteId + '" style="display:none">' +
-          noteList.map(function (n) {
-            return '<div class="ca-note-row"><span class="n-time">' + caEsc(n.time) + '</span>' +
-              '<span class="n-sales">' + caEsc(n.sales) + '</span>' +
-              '<div class="n-text">' + caEsc(n.content) + '</div></div>';
-          }).join('') + '</div>'
-        : '') +
-      '<div class="ca-wall-items">' +
-        g.items.map(function (it) {
-          var forgot = _caForgottenSkuSet[String(it.sku)] ? ' <span class="ca-forgot-tag">💤</span>' : '';
-          var ping = Number(it.currentPyeong || 0);
-          var sc = ping <= 0 ? 'var(--wr-red)' : (ping < 5 ? '#f5a623' : 'var(--wr-text2)');
-          return '<div class="ca-wall-item">' + caEsc(it.sku) + forgot +
-            '　餘 <span style="color:' + sc + '">' + (Math.round(ping * 10) / 10) + ' 坪</span>' +
-            (it.customerReservedQty > 0 ? '　保留 ' + it.customerReservedQty + ' 片' : '') +
-          '</div>';
-        }).join('') +
-      '</div>' +
-    '</div>';
-  });
-
-  return html + '</div></div>';
+/** DOM 就緒後才能叫 renderAlbum 畫進去 */
+function caPaintWall() {
+  var grid = document.getElementById('ca-album-grid');
+  if (!grid || typeof renderAlbum !== 'function') return;
+  // 庫存資料是 renderSkuDetailList 需要的，沒有的話詳情會少東西
+  if (!state.inventoryData || !state.inventoryData.length) {
+    if (typeof loadInventoryData === 'function') {
+      try { loadInventoryData(); } catch (e) {}
+    }
+  }
+  renderAlbum(false, 'ca-album-grid');
 }
 
 /** 移植自戰情室 loadCustomerExpand() 裡的時間軸區塊 */
@@ -1143,9 +1075,6 @@ function caLoadNotes(cb) {
     .getDisplayNotes(_caCustomer);
 }
 
-/** 版面詢問紀錄：展開／收合 */
-window.caToggleNotes = function (id) { caToggleEl(id); };
-
 /** 開啟輸入框新增一筆詢問紀錄 */
 window.caAddNote = function (photoUrl, series) {
   var text = window.prompt('新增這個版面的詢問紀錄：\n（' + (series || '未命名') + '）');
@@ -1169,14 +1098,86 @@ window.caAddNote = function (photoUrl, series) {
 
 /** 寫完紀錄後重畫陳列牆（只重抓版面，不動其他區塊） */
 function caReloadWall() {
-  var box = document.getElementById('ca-wall-box');
-  if (!box) return;
+  if (!document.getElementById('ca-album-grid')) return;
+  caPaintWall();
+}
+
+// ─────────────────────────────────────────────────────────
+// 業務版面訪問紀錄（掛在共用的詳情彈窗上，版面記錄與客戶分析都會跑到）
+// ─────────────────────────────────────────────────────────
+
+var _dnCache = null;      // 客戶名 → { photoUrl: [紀錄...] }
+var _dnCustomer = '';
+
+/** 由 showGroupDetail 呼叫：帶入這個版面的照片連結與系列 */
+window.renderDisplayNotes = function (photoUrl, series) {
+  var box = document.getElementById('display-note-list');
+  var sec = document.getElementById('display-note-section');
+  if (!box || !sec) return;
+
+  var cust = state.selectedCustomer || state.currentCustomer || '';
+  // 客戶檢視模式不該看到內部訪問紀錄
+  if (state.isClientView) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  sec.dataset.photo = photoUrl || '';
+  sec.dataset.series = series || '';
+
+  function paint() {
+    var all = (_dnCache && _dnCache[photoUrl || '']) || [];
+    if (!all.length) {
+      box.innerHTML = '<div style="font-size:12px; opacity:0.35; padding:8px 0;">尚無紀錄，按右上角新增</div>';
+      return;
+    }
+    box.innerHTML = all.map(function (n) {
+      return '<div class="dn-row">' +
+        '<div class="dn-meta"><span class="dn-time">' + caEsc(n.time) + '</span>' +
+        (n.sales ? '<span class="dn-sales">' + caEsc(n.sales) + '</span>' : '') + '</div>' +
+        '<div class="dn-text">' + caEsc(n.content) + '</div></div>';
+    }).join('');
+  }
+
+  if (_dnCache && _dnCustomer === cust) { paint(); return; }
+  box.innerHTML = '<div style="font-size:12px; opacity:0.35; padding:8px 0;">讀取中…</div>';
   google.script.run
     .withSuccessHandler(function (res) {
-      try { box.outerHTML = caRenderWall(res); } catch (e) {}
+      _dnCustomer = cust;
+      _dnCache = (res && res.success) ? (res.byPhoto || {}) : {};
+      paint();
     })
-    .getCustomerDisplays(_caCustomer);
-}
+    .withFailureHandler(function () {
+      box.innerHTML = '<div style="font-size:12px; color:#f87171; padding:8px 0;">讀取失敗</div>';
+    })
+    .getDisplayNotes(cust);
+};
+
+window.openDisplayNoteInput = function () {
+  var sec = document.getElementById('display-note-section');
+  if (!sec) return;
+  var photo = sec.dataset.photo || '';
+  var series = sec.dataset.series || '';
+  var cust = state.selectedCustomer || state.currentCustomer || '';
+  if (!cust) return;
+
+  var text = window.prompt('新增這個版面的訪問紀錄（' + (series || '未命名') + '）：');
+  if (text === null) return;
+  text = String(text).trim();
+  if (!text) return;
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (res && res.success) {
+        if (typeof showToast === 'function') showToast('已記錄');
+        _dnCache = null;                    // 讓下次重讀
+        renderDisplayNotes(photo, series);
+      } else if (typeof showToast === 'function') {
+        showToast((res && res.msg) || '寫入失敗');
+      }
+    })
+    .withFailureHandler(function (err) {
+      if (typeof showToast === 'function') showToast('寫入失敗：' + err);
+    })
+    .addDisplayNote(cust, photo, series, state.currentSales || '', text);
+};
 
 // ─────────────────────────────────────────────────────────
 // 頁面導覽：業務 → 客戶 → 分析

@@ -598,6 +598,17 @@
           <div id="quick-add-panel" style="display:none; margin-top:12px;"></div>
         </div>
 
+        <!-- 📝 業務版面訪問紀錄：版面記錄與客戶分析共用同一個彈窗，所以兩邊都看得到、都能寫 -->
+        <div class="sku-detail-section" id="display-note-section">
+          <div class="section-title" style="display:flex; align-items:center; justify-content:space-between;">
+            <span>業務版面訪問紀錄</span>
+            <button class="ca-note-btn" onclick="openDisplayNoteInput()">✏️ 新增紀錄</button>
+          </div>
+          <div id="display-note-list">
+            <div style="font-size:12px; opacity:0.35; padding:8px 0;">讀取中…</div>
+          </div>
+        </div>
+
         <!-- 📊 數據統計區：上架日期/展示天數/累積銷售已移到每張品項卡片上顯示（逐編號各自記錄比較準確），
              這裡只留「展示方式」這個真正需要操作的設定 -->
         <div class="detail-stats-grid" id="detail-stats-grid">

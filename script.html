@@ -1137,8 +1137,14 @@
     return div.innerHTML;
   }
 
-  function renderAlbum(isHistory = false) {
-    var targetGridId = isHistory ? 'history-grid' : 'album-grid';
+  /**
+   * @param {boolean} isHistory 是否渲染歷史（下架）清單
+   * @param {string}  [gridIdOverride] 指定要畫進哪個容器。
+   *        客戶分析頁用這個參數共用同一份渲染與同一個詳情彈窗，
+   *        避免兩邊各寫一套卡片、改一邊忘了另一邊。
+   */
+  function renderAlbum(isHistory = false, gridIdOverride) {
+    var targetGridId = gridIdOverride || (isHistory ? 'history-grid' : 'album-grid');
     var grid = document.getElementById(targetGridId);
     if (!grid) return;
 
@@ -1451,6 +1457,11 @@
     document.getElementById('detail-last-update').innerText = d.lastUpdate || '';
 
     renderSkuDetailList(isHistory);
+
+    // 📝 業務版面訪問紀錄（版面記錄與客戶分析共用這個彈窗，所以兩邊都會顯示）
+    if (typeof renderDisplayNotes === 'function') {
+      renderDisplayNotes(group.photoUrl || '', group.seriesLabel || group.series || '');
+    }
 
     // 🚀 上架日期/展示天數/累積銷售已經改到每張品項卡片各自顯示（renderSkuDetailList 裡），
     // 這裡只需要設定「展示方式」下拉選單（唯一還留在 detail-stats-grid 裡的欄位）
@@ -2046,6 +2057,7 @@
   window.selectSales = selectSales;
   window.selectCustomer = selectCustomer;
   window.showGroupDetail = showGroupDetail;
+  window.renderAlbum = renderAlbum;
   window.closeDetail = closeDetail;
   window.showLoading = showLoading;
 

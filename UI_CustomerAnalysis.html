@@ -227,6 +227,68 @@ body.client-view #page-customer-analysis { display: none !important; }
     display: grid; grid-template-columns: 1fr 1fr;
     gap: 12px; align-items: start;
   }
+  .ca-two-col > div > .ca-card { margin-bottom: 0; }
+}
+
+/* 客戶分析頁裡的陳列牆用的是共用的 renderAlbum，
+   卡片樣式全部沿用 .album-item / .album-grid（style.html 提供），
+   這裡只把格子密度調得適合分析頁 */
+#ca-album-grid { margin-top: 4px; }
+@media (min-width: 700px) {
+  #ca-album-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+}
+
+/* 業務版面訪問紀錄（在共用的詳情彈窗裡） */
+.dn-row {
+  padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.07);
+}
+.dn-row:first-child { border-top: none; }
+.dn-meta { display: flex; align-items: center; gap: 8px; }
+.dn-time { font-size: 10.5px; color: rgba(255,255,255,0.4); }
+.dn-sales { font-size: 10.5px; font-weight: 800; color: #c29d66; }
+.dn-text {
+  font-size: 13px; color: rgba(255,255,255,0.88);
+  margin-top: 3px; line-height: 1.55; white-space: pre-wrap;
+}
+/* 新增紀錄按鈕在詳情彈窗裡也要看得見（那裡沒有 --wr-* 變數作用域） */
+.ca-note-btn {
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(194,157,102,0.35);
+  color: rgba(255,255,255,0.8); border-radius: 7px; padding: 4px 10px;
+  font-size: 11.5px; font-weight: 800; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ca-note-btn:active { background: rgba(255,255,255,0.12); }
+
+/* 業務籤（客戶分析頁的業務分類） */
+.ca-biz-chip {
+  flex-shrink: 0; border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.6);
+  border-radius: 18px; padding: 7px 16px; font-size: 13.5px; font-weight: 800;
+  cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent;
+}
+.ca-biz-chip.on {
+  background: rgba(194,157,102,0.16); border-color: #c29d66; color: #c29d66;
+}
+
+/* 客戶清單 */
+.ca-cust-list { padding: 10px 14px 60px; }
+.ca-cust-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px; padding: 14px 15px; margin-bottom: 8px;
+  font-size: 15px; font-weight: 800; color: #fff;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ca-cust-item:active { background: rgba(255,255,255,0.08); }
+
+/* 常銷商品與遺忘產品：手機維持上下，電腦寬度夠時左右並排。
+   align-items:start 讓兩張卡各自照內容高度，不會被對方拉長。 */
+.ca-two-col { display: block; }
+@media (min-width: 900px) {
+  .ca-two-col {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 12px; align-items: start;
+  }
   /* 並排時卡片本身的下方間距交給 grid gap，避免多一層空白 */
   .ca-two-col > div > .ca-card { margin-bottom: 0; }
 }
