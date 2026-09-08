@@ -156,6 +156,8 @@ function caRender(res) {
       '<div class="ca-source">數字來源：睡美人戰情室（' + caEsc(res.fetchedAt || '') + ' 讀取）<br>' +
       '與戰情室畫面為同一份計算，數字必然一致</div></div>';
     caLoadBreakdown();
+    caLoadSample();
+    caLoadNotes();
   } catch (e) {
     // 比照戰情室的做法：渲染出錯要看得到堆疊，不要只留白畫面
     container.innerHTML =
@@ -243,6 +245,10 @@ function caRenderCard(c) {
       stat('合約狀況', cs || '—', csColor) +
       stat('交易筆數', (c.saleCount || 0) + ' 筆') +
       stat('歷年累計', caFmt(c.totalAmount)) +
+      '<div class="ca-stat" id="ca-sample-stat">' +
+        '<div class="ca-stat-label">樣品</div>' +
+        '<div class="ca-stat-value muted" style="font-size:13px">讀取中…</div>' +
+      '</div>' +
     '</div>' +
     // 三個下探區塊（預設收合，內容由各自的載入流程填入）
     '<div id="ca-drill-month" style="display:none" class="ca-drill"></div>' +
@@ -410,10 +416,10 @@ function caLoadDetail() {
 
   var cust = (_caCache[name] && _caCache[name].customer) || null;
   // breakdown 已在上方「常銷商品」用掉，這裡不再重複顯示銷售品項分析
-  var parts = { warroom: undefined, timeline: undefined };
+  var parts = { wall: undefined, timeline: undefined };
 
   function done() {
-    if (parts.warroom === undefined || parts.timeline === undefined) return;
+    if (parts.wall === undefined || parts.timeline === undefined) return;
     var html = '';
     if (cust) {
       var pie = caRenderCatPie(cust.catCounts);
@@ -421,7 +427,7 @@ function caLoadDetail() {
         html += '<div class="ca-card"><div class="ca-card-title">🤝 互動類型分布</div>' + pie + '</div>';
       }
     }
-    html += parts.warroom;
+    html += parts.wall;
     if (parts.timeline) {
       html += '<div class="ca-toggle" onclick="caToggleEl(\'ca-timeline\')">' +
               '<span>📜 互動紀錄明細</span><span>▾</span></div>' +
@@ -441,7 +447,15 @@ function caLoadDetail() {
       .getCustomerAnalysisDetail(name, key);
   }
 
-  fetchPart('warroom', caRenderWarRoomDisplays);
+  // 版面陳列牆改用手機自己的 getCustomerDisplays（與「版面記錄→陳列牆」同一份資料），
+  // 不再走戰情室的 customer-warroom，兩邊才不會各畫一套、各自對不上
+  google.script.run
+    .withSuccessHandler(function (res) {
+      try { parts.wall = caRenderWall(res); } catch (e) { parts.wall = ''; }
+      done();
+    })
+    .withFailureHandler(function () { parts.wall = ''; done(); })
+    .getCustomerDisplays(_caCustomer);
   fetchPart('timeline', caRenderTimeline);
 }
 
@@ -472,37 +486,111 @@ function caRenderCatPie(catCounts) {
 
 // renderSalesBreakdown 的移植版已移除：上方「常銷商品前 10 名」已涵蓋相同資訊。
 
-/** 移植自戰情室 renderWarRoomDisplays()：版面陳列牆照片格 */
-function caRenderWarRoomDisplays(data) {
-  if (!data || !data.displays || data.displays.length === 0) return '';
-  var html = '<div class="ca-card">' +
+/**
+ * 版面陳列牆：與「版面記錄 → 陳列牆」同一份資料（getCustomerDisplays），
+ * 卡片外觀也沿用相同的 .album-item 樣式，下半部再補上每個 SKU 的庫存/保留，
+ * 讓兩個入口看到的東西一致。
+ */
+function caFmtDuration(days) {
+  if (!days || days < 0) return '0M';
+  var y = Math.floor(days / 365), m = Math.floor((days % 365) / 30);
+  if (y > 0 && m > 0) return y + 'Y' + m + 'M';
+  if (y > 0) return y + 'Y';
+  return m + 'M';
+}
+
+function caRenderWall(res) {
+  if (!res || !res.success) return '';
+  var items = res.active || [];
+  if (!items.length) return '';
+
+  // 依照片分組（跟 renderAlbum 同一個 key）
+  var groups = {}, order = [];
+  items.forEach(function (d) {
+    var key = d.photoUrl || ('__nophoto_' + d.sku);
+    if (!groups[key]) {
+      groups[key] = {
+        photoUrl: d.photoUrl, items: [], seriesSet: {},
+        amt: 0, ping: 0, reserved: 0,
+        worst: 9, arrival: false, days: d.daysOnDisplay || 0
+      };
+      order.push(key);
+    }
+    var g = groups[key];
+    g.items.push(d);
+    if (d.series) g.seriesSet[d.series] = true;
+    g.amt += (d.customerSalesAmt || 0);
+    g.ping += (d.customerSalesQty || 0);
+    g.reserved += (d.customerReservedQty || 0);
+    if (d.stockLevel && d.stockLevel < g.worst) g.worst = d.stockLevel;
+    if (d.hasArrival) g.arrival = true;
+    if ((d.daysOnDisplay || 0) > g.days) g.days = d.daysOnDisplay || 0;
+  });
+
+  var list = order.map(function (k) { return groups[k]; })
+                  .sort(function (a, b) { return b.amt - a.amt; });
+
+  var totalAmt = list.reduce(function (a, g) { return a + g.amt; }, 0);
+  var totalPing = list.reduce(function (a, g) { return a + g.ping; }, 0);
+
+  var html = '<div class="ca-card" id="ca-wall-box">' +
     '<div class="ca-card-title"><span>🏪 版面陳列牆</span>' +
-    '<span class="ca-sub">' + data.displayCount + ' SKU / ' + data.displays.length + ' 版</span></div>' +
+    '<span class="ca-sub">' + items.length + ' SKU / ' + list.length + ' 版</span></div>' +
     '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:10px">近一年銷售 ' +
-      caFmt(data.totalAmt) + '・' + data.totalPing + ' 坪</div>' +
+      caFmt(totalAmt) + '・' + Math.round(totalPing) + ' 坪</div>' +
     '<div class="ca-wall-grid">';
 
-  data.displays.forEach(function (g) {
-    var daysText = (g.days !== null && g.days !== undefined) ? ('已上架 ' + g.days + ' 天') : '';
-    var imgHtml = g.photoUrl
-      ? '<div class="ca-wall-img" style="background-image:url(\'' + caEsc(g.photoUrl) + '\')"></div>'
-      : '<div class="ca-wall-img ca-wall-noimg">無照片</div>';
-    html += '<div class="ca-wall-card">' + imgHtml + '<div style="padding:7px">' +
-      '<div style="font-size:12px;font-weight:800">' + caEsc(g.series) + '</div>' +
-      '<div style="font-size:11px;color:var(--wr-text2)">' + daysText + '</div>' +
-      '<div style="font-size:12px;color:var(--wr-gold);font-weight:800;margin-top:2px">' +
-        caFmt(g.totalAmt) + '・' + (g.totalPing || 0).toFixed(1) + ' 坪</div>' +
-      '<div style="margin-top:4px;display:flex;flex-direction:column;gap:2px">' +
-        (g.items || []).map(function (it) {
-          var crown = (it.sku === g.topSku && g.totalAmt > 0) ? ' 👑' : '';
-          // 遺忘商品標記：這面牆上還擺著、但近半年沒賣過的品項
+  list.forEach(function (g) {
+    var seriesNames = Object.keys(g.seriesSet);
+    var label = seriesNames.length ? seriesNames.join('、') : '未命名';
+    var border = g.worst === 1 ? 'border-red'
+               : (g.worst === 2 || g.worst === 3) ? 'border-yellow' : 'border-green';
+    if (g.arrival) border += ' arrival-blue-pulse';
+    var img = g.photoUrl || 'https://placehold.co/800x800/1a1a1a/666?text=無照片';
+    var noteList = (_caNotes && _caNotes[g.photoUrl || '']) || [];
+    var noteId = 'ca-note-' + Math.random().toString(36).slice(2, 7);
+
+    html += '<div class="ca-wall-card ' + border + '">' +
+      '<div class="ca-wall-photo">' +
+        '<img src="' + caEsc(img) + '" loading="lazy" ' +
+          'onclick="caOpenImage(\'' + caEsc(img) + '\',\'' + caEsc(label) + '\')" ' +
+          'onerror="this.onerror=null;this.src=\'https://placehold.co/800x800/1a1a1a/666?text=載入失敗\'">' +
+        '<div class="ca-wall-badges">' +
+          '<div class="mini-stat">' + Math.round(g.amt / 10000) + '萬 / ' + Math.round(g.ping) + '坪</div>' +
+          (g.reserved > 0
+            ? '<div class="mini-stat" style="background:rgba(234,179,8,0.35);color:#facc15;border-color:rgba(234,179,8,0.5);margin-top:4px">保留 ' + g.reserved + ' 片</div>'
+            : '') +
+        '</div>' +
+        '<div class="ca-wall-series">' + caEsc(label) + '</div>' +
+        '<div class="ca-wall-foot">' + caFmtDuration(g.days) + '</div>' +
+      '</div>' +
+      '<div class="ca-wall-note-bar">' +
+        '<button class="ca-note-btn" title="新增詢問紀錄" ' +
+          'onclick="caAddNote(\'' + caEsc(g.photoUrl || '') + '\',\'' + caEsc(label) + '\')">✏️</button>' +
+        (noteList.length
+          ? '<button class="ca-note-btn" onclick="caToggleEl(\'' + noteId + '\')">💬 ' + noteList.length + '</button>'
+          : '') +
+      '</div>' +
+      (noteList.length
+        ? '<div class="ca-wall-notes" id="' + noteId + '" style="display:none">' +
+          noteList.map(function (n) {
+            return '<div class="ca-note-row"><span class="n-time">' + caEsc(n.time) + '</span>' +
+              '<span class="n-sales">' + caEsc(n.sales) + '</span>' +
+              '<div class="n-text">' + caEsc(n.content) + '</div></div>';
+          }).join('') + '</div>'
+        : '') +
+      '<div class="ca-wall-items">' +
+        g.items.map(function (it) {
           var forgot = _caForgottenSkuSet[String(it.sku)] ? ' <span class="ca-forgot-tag">💤</span>' : '';
-          var stockColor = it.stockPing <= 0 ? 'var(--wr-red)' : (it.stockPing < 5 ? '#f5a623' : 'var(--wr-text2)');
-          return '<div style="font-size:10px;color:var(--wr-text2)">' + caEsc(it.sku) + crown + forgot +
-            '　餘 <span style="color:' + stockColor + '">' + it.stockPing + ' 坪</span>' +
-            (it.reservedQty > 0 ? '　保留 ' + it.reservedQty + ' 片' : '') + '</div>';
+          var ping = Number(it.currentPyeong || 0);
+          var sc = ping <= 0 ? 'var(--wr-red)' : (ping < 5 ? '#f5a623' : 'var(--wr-text2)');
+          return '<div class="ca-wall-item">' + caEsc(it.sku) + forgot +
+            '　餘 <span style="color:' + sc + '">' + (Math.round(ping * 10) / 10) + ' 坪</span>' +
+            (it.customerReservedQty > 0 ? '　保留 ' + it.customerReservedQty + ' 片' : '') +
+          '</div>';
         }).join('') +
-      '</div></div></div>';
+      '</div>' +
+    '</div>';
   });
 
   return html + '</div></div>';
@@ -1008,6 +1096,86 @@ function caRenderForgotten() {
     }).join('') + '</div>';
 
   box.innerHTML = html + '</div>';
+}
+
+// ─────────────────────────────────────────────────────────
+// 樣品紀錄 / 版面詢問紀錄
+// ─────────────────────────────────────────────────────────
+
+var _caSample = null;
+var _caNotes = null;
+
+function caLoadSample() {
+  var el = document.getElementById('ca-sample-stat');
+  google.script.run
+    .withSuccessHandler(function (res) {
+      _caSample = (res && res.success) ? res : null;
+      if (!el) return;
+      if (!_caSample) {
+        el.innerHTML = '<div class="ca-stat-label">樣品</div><div class="ca-stat-value muted" style="font-size:13px">—</div>';
+        return;
+      }
+      if (!_caSample.hasSample) {
+        el.innerHTML = '<div class="ca-stat-label">樣品</div>' +
+          '<div class="ca-stat-value muted" style="font-size:13px">沒拿過</div>';
+        return;
+      }
+      var d = _caSample.daysSince;
+      var col = d === null ? '#fff' : (d > 365 ? 'var(--wr-text2)' : (d > 180 ? '#f5a623' : '#22c55e'));
+      el.innerHTML = '<div class="ca-stat-label">樣品</div>' +
+        '<div class="ca-stat-value" style="font-size:13px;color:' + col + '">' + caEsc(_caSample.lastDate) + '</div>' +
+        '<div class="ca-stat-sub">' + (d !== null ? d + ' 天前' : '') +
+          '　共 ' + _caSample.count + ' 筆</div>';
+    })
+    .withFailureHandler(function () {
+      if (el) el.innerHTML = '<div class="ca-stat-label">樣品</div><div class="ca-stat-value muted" style="font-size:13px">讀取失敗</div>';
+    })
+    .getCustomerSampleInfo(_caCustomer);
+}
+
+function caLoadNotes(cb) {
+  google.script.run
+    .withSuccessHandler(function (res) {
+      _caNotes = (res && res.success) ? (res.byPhoto || {}) : {};
+      if (cb) cb();
+    })
+    .withFailureHandler(function () { _caNotes = {}; if (cb) cb(); })
+    .getDisplayNotes(_caCustomer);
+}
+
+/** 版面詢問紀錄：展開／收合 */
+window.caToggleNotes = function (id) { caToggleEl(id); };
+
+/** 開啟輸入框新增一筆詢問紀錄 */
+window.caAddNote = function (photoUrl, series) {
+  var text = window.prompt('新增這個版面的詢問紀錄：\n（' + (series || '未命名') + '）');
+  if (text === null) return;
+  text = String(text).trim();
+  if (!text) return;
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (res && res.success) {
+        showToast('已記錄');
+        _caNotes = null;
+        caLoadNotes(function () { caReloadWall(); });
+      } else {
+        showToast((res && res.msg) || '寫入失敗');
+      }
+    })
+    .withFailureHandler(function (err) { showToast('寫入失敗：' + err); })
+    .addDisplayNote(_caCustomer, photoUrl, series, state.currentSales || '', text);
+};
+
+/** 寫完紀錄後重畫陳列牆（只重抓版面，不動其他區塊） */
+function caReloadWall() {
+  var box = document.getElementById('ca-wall-box');
+  if (!box) return;
+  google.script.run
+    .withSuccessHandler(function (res) {
+      try { box.outerHTML = caRenderWall(res); } catch (e) {}
+    })
+    .getCustomerDisplays(_caCustomer);
 }
 
 // ─────────────────────────────────────────────────────────

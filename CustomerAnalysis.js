@@ -334,6 +334,188 @@ function getSkuImageMap() {
   return { success: true, data: map };
 }
 
+// ─────────────────────────────────────────────────────────
+// 樣品紀錄：直接讀本專案的「經銷銷售報表」
+// 戰情室的分析一律把樣品排除在業績外（isSampleRow），所以那邊查不到；
+// 但業務要知道「這家有沒有拿過樣、多久前」，只能自己掃一次原始報表。
+// ─────────────────────────────────────────────────────────
+
+/** 判斷是否為樣品列：編號 -S/-S1 結尾，或備註/品名含樣品類關鍵字 */
+function caIsSampleRow_(sku, note) {
+  const s = String(sku || '').trim().toUpperCase();
+  if (/-S\d*$/.test(s)) return true;
+  const t = String(note || '');
+  return /樣品|送樣|樣板|SAMPLE|扣帶|陳列/i.test(t);
+}
+
+/**
+ * 🎯 某客戶的樣品紀錄：整體最後拿樣時間 + 每個 SKU 的最後拿樣時間
+ * @param {string} customerName 原始客戶名稱
+ */
+function getCustomerSampleInfo(customerName) {
+  const rawName = String(customerName || '').trim();
+  if (!rawName) return { success: false, msg: '沒有指定客戶' };
+
+  const key = caDisplayCustomerName_(rawName);
+  const cacheKey = 'ca_sample_v1_' + key;
+  try {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return cached;
+  } catch (e) {}
+
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
+    const sh = ss.getSheetByName(CONFIG.SHEET_NAME_SALES);
+    if (!sh) return { success: false, msg: '找不到經銷銷售報表' };
+
+    const lastRow = sh.getLastRow();
+    const data = sh.getRange(1, 1, lastRow, sh.getLastColumn()).getValues();
+
+    // 標題列自動偵測（同 getSalesOverview 的做法：找同時有日期與金額的那列）
+    let hIdx = 0;
+    for (let i = 0; i < Math.min(25, data.length); i++) {
+      const rowStr = data[i].join('');
+      if (rowStr.indexOf('日期') !== -1 && (rowStr.indexOf('金額') !== -1 || rowStr.indexOf('銷額') !== -1)) { hIdx = i; break; }
+    }
+    const h = data[hIdx];
+    const idx = {
+      date: findHeaderIndex(h, ['單據日期', '銷貨日期', '日期']),
+      cust: findHeaderIndex(h, ['客戶名稱', '客戶']),
+      code: findHeaderIndex(h, ['產品編號', '編號', '品碼', '序號']),
+      note: findHeaderIndex(h, ['備註', '說明', '案名']),
+      prod: findHeaderIndex(h, ['產品名稱', '品名']),
+      qty:  findHeaderIndex(h, ['數量', '片數'])
+    };
+    if (idx.cust === -1 || idx.date === -1) return { success: false, msg: '經銷銷售報表格式不符' };
+
+    let lastDate = null, total = 0;
+    const bySku = {};
+
+    for (let i = hIdx + 1; i < data.length; i++) {
+      const r = data[i];
+      const custRaw = String(r[idx.cust] || '').trim();
+      if (!custRaw || caDisplayCustomerName_(custRaw) !== key) continue;
+
+      const sku = idx.code !== -1 ? String(r[idx.code] || '').trim() : '';
+      const note = (idx.note !== -1 ? String(r[idx.note] || '') : '') + ' ' +
+                   (idx.prod !== -1 ? String(r[idx.prod] || '') : '');
+      if (!caIsSampleRow_(sku, note)) continue;
+
+      const d = parseDate(r[idx.date]);
+      if (!d || isNaN(d.getTime())) continue;
+      const ds = Utilities.formatDate(d, 'Asia/Taipei', 'yyyy-MM-dd');
+
+      total++;
+      if (!lastDate || ds > lastDate) lastDate = ds;
+
+      // SKU 去掉 -S 尾碼後歸戶，讓「拿過樣的正式編號」對得起來
+      const baseSku = String(sku).trim().toUpperCase().replace(/[\s\-]/g, '').replace(/S\d*$/, '');
+      if (baseSku) {
+        if (!bySku[baseSku] || ds > bySku[baseSku].date) {
+          bySku[baseSku] = { date: ds, sku: sku, qty: idx.qty !== -1 ? (parseFloat(r[idx.qty]) || 0) : 0 };
+        }
+      }
+    }
+
+    const daysSince = lastDate
+      ? Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000) : null;
+
+    const out = {
+      success: true,
+      hasSample: total > 0,
+      count: total,
+      lastDate: lastDate,
+      daysSince: daysSince,
+      bySku: bySku
+    };
+    try { CacheManager.putLarge(cacheKey, out, 1800); } catch (e) {}
+    return out;
+  } catch (e) {
+    return { success: false, msg: '樣品紀錄讀取失敗：' + e };
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// 業務詢問紀錄
+// 存在「業務庫」(CONFIG.SS_ID_BUSINESS) 的「版面詢問紀錄」分頁。
+// 選這裡的理由：版面上架清單、工作日誌、客戶備註歷史都在同一本，
+// 屬於「業務日常操作產生的資料」，跟主庫存/產品那本（SS_ID_MAIN）分開。
+// 分頁不存在時自動建立並寫入標題列，不需要人工先開表。
+// ─────────────────────────────────────────────────────────
+
+const CA_NOTE_SHEET = '版面詢問紀錄';
+const CA_NOTE_HEADERS = ['建立時間', '客戶名稱', '版面連結', '系列', '業務姓名', '詢問內容'];
+
+function caGetNoteSheet_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SS_ID_BUSINESS);
+  let sh = ss.getSheetByName(CA_NOTE_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(CA_NOTE_SHEET);
+    sh.getRange(1, 1, 1, CA_NOTE_HEADERS.length).setValues([CA_NOTE_HEADERS]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+/** 新增一筆版面詢問紀錄 */
+function addDisplayNote(customerName, photoUrl, series, salesName, content) {
+  const text = String(content || '').trim();
+  if (!text) return { success: false, msg: '內容不可空白' };
+  try {
+    const sh = caGetNoteSheet_();
+    sh.appendRow([
+      Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy/MM/dd HH:mm:ss'),
+      String(customerName || '').trim(),
+      String(photoUrl || '').trim(),
+      String(series || '').trim(),
+      String(salesName || '').trim(),
+      text
+    ]);
+    try { CacheManager.removeLarge('ca_notes_v1_' + String(customerName || '').trim()); } catch (e) {}
+    return { success: true };
+  } catch (e) {
+    return { success: false, msg: '寫入失敗：' + e };
+  }
+}
+
+/** 讀取某客戶的版面詢問紀錄，依版面連結分組 */
+function getDisplayNotes(customerName) {
+  const name = String(customerName || '').trim();
+  if (!name) return { success: false, msg: '沒有指定客戶' };
+  const cacheKey = 'ca_notes_v1_' + name;
+  try {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return cached;
+  } catch (e) {}
+
+  try {
+    const sh = caGetNoteSheet_();
+    const lastRow = sh.getLastRow();
+    const byPhoto = {};
+    if (lastRow >= 2) {
+      const data = sh.getRange(2, 1, lastRow - 1, CA_NOTE_HEADERS.length).getValues();
+      data.forEach(function (r) {
+        if (String(r[1] || '').trim() !== name) return;
+        const photo = String(r[2] || '').trim();
+        if (!byPhoto[photo]) byPhoto[photo] = [];
+        byPhoto[photo].push({
+          time: String(r[0] || ''), series: String(r[3] || ''),
+          sales: String(r[4] || ''), content: String(r[5] || '')
+        });
+      });
+    }
+    // 每個版面內由新到舊
+    Object.keys(byPhoto).forEach(function (k) {
+      byPhoto[k].sort(function (a, b) { return String(b.time).localeCompare(String(a.time)); });
+    });
+    const out = { success: true, byPhoto: byPhoto };
+    try { CacheManager.putLarge(cacheKey, out, 300); } catch (e) {}
+    return out;
+  } catch (e) {
+    return { success: false, msg: '讀取失敗：' + e };
+  }
+}
+
 /**
  * 🔧 連線自我檢查：在 Apps Script 編輯器直接執行這支，確認金鑰與連線是否正常
  */
