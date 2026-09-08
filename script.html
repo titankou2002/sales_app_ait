@@ -1140,10 +1140,11 @@
   /**
    * @param {boolean} isHistory 是否渲染歷史（下架）清單
    * @param {string}  [gridIdOverride] 指定要畫進哪個容器。
+   * @param {string}  [sortSelectId] 指定要讀哪個排序下拉（預設 album-sort-select）。
    *        客戶分析頁用這個參數共用同一份渲染與同一個詳情彈窗，
    *        避免兩邊各寫一套卡片、改一邊忘了另一邊。
    */
-  function renderAlbum(isHistory = false, gridIdOverride) {
+  function renderAlbum(isHistory = false, gridIdOverride, sortSelectId) {
     var targetGridId = gridIdOverride || (isHistory ? 'history-grid' : 'album-grid');
     var grid = document.getElementById(targetGridId);
     if (!grid) return;
@@ -1198,7 +1199,7 @@
 
     // 2. 轉換為陣列並進行智慧排序
     var sortedGroups = Object.values(groups);
-    var albumSortSelect = document.getElementById('album-sort-select');
+    var albumSortSelect = document.getElementById(sortSelectId || 'album-sort-select');
     var albumSortMethod = albumSortSelect ? albumSortSelect.value : 'amount';
 
     sortedGroups.sort(function (a, b) {

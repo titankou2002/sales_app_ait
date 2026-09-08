@@ -509,8 +509,10 @@ function caRenderWall(res) {
   return '<div class="ca-card" id="ca-wall-box">' +
     '<div class="ca-card-title"><span>🏪 版面陳列牆</span>' +
       '<span class="ca-sub">' + items.length + ' SKU</span></div>' +
-    '<div style="font-size:11px;color:var(--wr-text2);margin-bottom:10px">' +
-      '點卡片開啟產品規格（與版面記錄同一個畫面）</div>' +
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+      '<span style="font-size:11px;color:var(--wr-text2);flex:1">點卡片開啟產品規格（與版面記錄同一個畫面）</span>' +
+      '<span id="ca-sort-slot"></span>' +
+    '</div>' +
     '<div id="ca-album-grid" class="album-grid"></div>' +
   '</div>';
 }
@@ -519,13 +521,31 @@ function caRenderWall(res) {
 function caPaintWall() {
   var grid = document.getElementById('ca-album-grid');
   if (!grid || typeof renderAlbum !== 'function') return;
+
+  // 排序下拉直接複製版面記錄那顆，選項清單維持只有一份，
+  // 以後在 index.html 加排序方式，兩邊會自動都有
+  var slot = document.getElementById('ca-sort-slot');
+  if (slot && !document.getElementById('ca-sort-select')) {
+    var src = document.getElementById('album-sort-select');
+    if (src) {
+      var clone = src.cloneNode(true);
+      clone.id = 'ca-sort-select';
+      clone.style.marginLeft = '0';
+      clone.style.marginRight = '0';
+      clone.style.maxWidth = '96px';
+      clone.value = src.value;
+      clone.onchange = function () { renderAlbum(false, 'ca-album-grid', 'ca-sort-select'); };
+      slot.innerHTML = '';
+      slot.appendChild(clone);
+    }
+  }
   // 庫存資料是 renderSkuDetailList 需要的，沒有的話詳情會少東西
   if (!state.inventoryData || !state.inventoryData.length) {
     if (typeof loadInventoryData === 'function') {
       try { loadInventoryData(); } catch (e) {}
     }
   }
-  renderAlbum(false, 'ca-album-grid');
+  renderAlbum(false, 'ca-album-grid', 'ca-sort-select');
 }
 
 /** 移植自戰情室 loadCustomerExpand() 裡的時間軸區塊 */
@@ -1153,27 +1173,68 @@ window.renderDisplayNotes = function (photoUrl, series) {
 window.openDisplayNoteInput = function () {
   var sec = document.getElementById('display-note-section');
   if (!sec) return;
-  var photo = sec.dataset.photo || '';
-  var series = sec.dataset.series || '';
   var cust = state.selectedCustomer || state.currentCustomer || '';
   if (!cust) return;
 
-  var text = window.prompt('新增這個版面的訪問紀錄（' + (series || '未命名') + '）：');
-  if (text === null) return;
-  text = String(text).trim();
-  if (!text) return;
+  var m = document.getElementById('dn-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'dn-modal';
+    document.body.appendChild(m);
+  }
+  m.innerHTML =
+    '<div class="dn-modal-box" onclick="event.stopPropagation()">' +
+      '<div class="dn-modal-title">📝 新增訪問紀錄</div>' +
+      '<div class="dn-modal-sub">' + caEsc(cust) + '　' + caEsc(sec.dataset.series || '未命名') + '</div>' +
+      '<textarea id="dn-input" class="dn-input" rows="5" ' +
+        'placeholder="例如：客戶詢問這面牆的 60x120 有沒有現貨、想換色系…"></textarea>' +
+      '<div class="dn-modal-actions">' +
+        '<button class="dn-btn" onclick="closeDisplayNoteInput()">取消</button>' +
+        '<button class="dn-btn primary" id="dn-save" onclick="submitDisplayNote()">儲存</button>' +
+      '</div>' +
+    '</div>';
+  m.onclick = function () { closeDisplayNoteInput(); };
+  m.style.display = 'flex';
+  setTimeout(function () {
+    var t = document.getElementById('dn-input');
+    if (t) t.focus();
+  }, 50);
+};
+
+window.closeDisplayNoteInput = function () {
+  var m = document.getElementById('dn-modal');
+  if (m) m.style.display = 'none';
+};
+
+window.submitDisplayNote = function () {
+  var sec = document.getElementById('display-note-section');
+  var input = document.getElementById('dn-input');
+  var btn = document.getElementById('dn-save');
+  if (!sec || !input) return;
+
+  var text = String(input.value || '').trim();
+  if (!text) { input.focus(); return; }
+
+  var photo = sec.dataset.photo || '';
+  var series = sec.dataset.series || '';
+  var cust = state.selectedCustomer || state.currentCustomer || '';
+
+  if (btn) { btn.disabled = true; btn.textContent = '儲存中…'; }
 
   google.script.run
     .withSuccessHandler(function (res) {
       if (res && res.success) {
+        closeDisplayNoteInput();
         if (typeof showToast === 'function') showToast('已記錄');
-        _dnCache = null;                    // 讓下次重讀
+        _dnCache = null;
         renderDisplayNotes(photo, series);
-      } else if (typeof showToast === 'function') {
-        showToast((res && res.msg) || '寫入失敗');
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '儲存'; }
+        if (typeof showToast === 'function') showToast((res && res.msg) || '寫入失敗');
       }
     })
     .withFailureHandler(function (err) {
+      if (btn) { btn.disabled = false; btn.textContent = '儲存'; }
       if (typeof showToast === 'function') showToast('寫入失敗：' + err);
     })
     .addDisplayNote(cust, photo, series, state.currentSales || '', text);
