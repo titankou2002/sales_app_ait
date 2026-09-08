@@ -1165,10 +1165,12 @@ window.renderDisplayNotes = function (photoUrl, series) {
       return;
     }
     box.innerHTML = all.map(function (n) {
+      // 日期與業務放在備註內容前面，同一行流下去，省空間也好掃讀
       return '<div class="dn-row">' +
-        '<div class="dn-meta"><span class="dn-time">' + caEsc(n.time) + '</span>' +
-        (n.sales ? '<span class="dn-sales">' + caEsc(n.sales) + '</span>' : '') + '</div>' +
-        '<div class="dn-text">' + caEsc(n.content) + '</div></div>';
+        '<span class="dn-time">' + caEsc(n.time) + '</span>' +
+        (n.sales ? '<span class="dn-sales">' + caEsc(n.sales) + '</span>' : '') +
+        '<span class="dn-text">' + caEsc(n.content) + '</span>' +
+      '</div>';
     }).join('');
   }
 

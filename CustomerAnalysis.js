@@ -478,6 +478,25 @@ function addDisplayNote(customerName, photoUrl, series, salesName, content) {
   }
 }
 
+/**
+ * 訪問紀錄的日期一律顯示成 2026/9/8。
+ * 寫入時雖然是字串，但試算表會自動轉成日期值，讀回來是 Date 物件，
+ * 直接 String() 會變成 "Tue Sep 08 2026 16:16:22 GMT+0800 (台灣標準時間)"。
+ * 這裡不管拿到的是 Date 還是字串都轉成短格式。
+ */
+function caFmtNoteDate_(v) {
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    return Utilities.formatDate(v, 'Asia/Taipei', 'yyyy/M/d');
+  }
+  const t = String(v || '').trim();
+  if (!t) return '';
+  const m = t.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (m) return m[1] + '/' + parseInt(m[2], 10) + '/' + parseInt(m[3], 10);
+  const d = new Date(t);
+  if (!isNaN(d.getTime())) return Utilities.formatDate(d, 'Asia/Taipei', 'yyyy/M/d');
+  return t;
+}
+
 /** 讀取某客戶的版面詢問紀錄，依版面連結分組 */
 function getDisplayNotes(customerName) {
   const name = String(customerName || '').trim();
@@ -499,7 +518,8 @@ function getDisplayNotes(customerName) {
         const photo = String(r[2] || '').trim();
         if (!byPhoto[photo]) byPhoto[photo] = [];
         byPhoto[photo].push({
-          time: String(r[0] || ''), series: String(r[3] || ''),
+          time: caFmtNoteDate_(r[0]),
+          series: String(r[3] || ''),
           sales: String(r[4] || ''), content: String(r[5] || '')
         });
       });
