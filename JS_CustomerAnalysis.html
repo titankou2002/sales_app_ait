@@ -763,20 +763,98 @@ window.caToggleSkuTx = function (rowId, sku) {
     .getCustomerAnalysisDetail(_caCustomer, 'detail');
 };
 
+/**
+ * 案件正規化：把同一個案子的不同出貨併在一起。
+ * 實際資料裡同一個工地會寫成：
+ *   寧波東街22之1號 / 寧波東街22之1號-補 / 寧波東街22之1號-工 /
+ *   寧波東街22之1號-工補 / 寧波東街22-1號工破損
+ * 「補」＝補貨、「工」＝加工廠、「破損」＝破損補件，都是同一案的後續出貨。
+ * 規則：全形轉半形、之→-、去空白，再把結尾的 補/工/破損 這類標記剝掉。
+ * 刻意只剝「結尾」的標記，避免把地址本身含這些字的案子誤併。
+ */
+function caCaseKey(note) {
+  var t = String(note == null ? '' : note).trim();
+  if (!t) return '';
+  t = t.replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+       .replace(/[\s　]/g, '')
+       .replace(/之/g, '-')
+       .replace(/[（(].*?[）)]/g, '')
+       // 剝掉「工地:」「案名:」這類前綴標籤，否則同一個地址會因為有沒有加標籤而分成兩組
+       .replace(/^(工地|案名|案件|地址|工程)[:：]?/, '');
+  // 反覆剝除結尾的補/工/破損標記（可能疊在一起，如「-工補」「工破損」）
+  var prev;
+  do {
+    prev = t;
+    t = t.replace(/[-－]?(工補|補工|工破損|破損|補貨|補|工)$/, '');
+  } while (t !== prev && t.length > 0);
+  return t || String(note).trim();
+}
+
+/** 案件標記：把「這筆是補貨還是加工廠」抓出來當小標籤 */
+function caCaseTag(note) {
+  var t = String(note || '');
+  if (/破損/.test(t)) return { label: '破損', color: '#ef4444' };
+  if (/工補|補工/.test(t)) return { label: '工補', color: '#a78bfa' };
+  if (/補/.test(t)) return { label: '補貨', color: '#f5a623' };
+  if (/工/.test(t)) return { label: '加工', color: '#60a5fa' };
+  return null;
+}
+
 function caRenderSkuTx(el, sku) {
   var all = _caTxCache[_caCustomer] || [];
-  var rows = all.filter(function (r) { return String(r.sku) === String(sku); })
-                .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  var rows = all.filter(function (r) { return String(r.sku) === String(sku); });
   if (!rows.length) { el.innerHTML = '<div class="ca-dim" style="padding:6px 0">查無交易明細</div>'; return; }
-  el.innerHTML = rows.slice(0, 40).map(function (r) {
-    return '<div class="ca-tx-row">' +
-      '<span class="t-date">' + caEsc(r.date) + '</span>' +
-      '<span class="t-note">' + caEsc(r.note || '—') + '</span>' +
-      '<span class="t-sales">' + caEsc(r.sales || '') + '</span>' +
-      '<span class="t-amt">' + caFmt(r.amt) + '</span>' +
-    '</div>';
-  }).join('') + (rows.length > 40
-    ? '<div class="ca-dim" style="padding:4px 0">（只顯示最近 40 筆，共 ' + rows.length + ' 筆）</div>' : '');
+
+  // 依案件分組
+  var cases = {}, order = [];
+  rows.forEach(function (r) {
+    var key = caCaseKey(r.note) || '（無案名）';
+    if (!cases[key]) {
+      cases[key] = { key: key, rows: [], amt: 0, first: '', last: '', sales: {} };
+      order.push(key);
+    }
+    var c = cases[key];
+    c.rows.push(r);
+    c.amt += (Number(r.amt) || 0);
+    var d = String(r.date || '');
+    if (d) {
+      if (!c.first || d < c.first) c.first = d;
+      if (!c.last || d > c.last) c.last = d;
+    }
+    if (r.sales) c.sales[r.sales] = true;
+  });
+
+  var list = order.map(function (k) { return cases[k]; })
+                  .sort(function (a, b) { return b.amt - a.amt; });
+
+  var uid = 'cs-' + Math.random().toString(36).slice(2, 6);
+  el.innerHTML = list.map(function (c, i) {
+    var boxId = uid + '-' + i;
+    c.rows.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+    var reps = Object.keys(c.sales).join('、');
+    var span = (c.first && c.last && c.first !== c.last)
+      ? (c.first.slice(0, 7) + ' ~ ' + c.last.slice(0, 7)) : (c.last || '').slice(0, 7);
+
+    return '<div class="ca-case">' +
+      '<div class="ca-case-head" onclick="event.stopPropagation(); caToggleEl(\'' + boxId + '\')">' +
+        '<span class="cs-name">' + caEsc(c.key) + '</span>' +
+        '<span class="cs-meta">' + c.rows.length + ' 筆・' + caEsc(span) + '</span>' +
+        '<span class="cs-rep">' + caEsc(reps) + '</span>' +
+        '<span class="cs-amt">' + caFmt(c.amt) + '</span>' +
+      '</div>' +
+      '<div id="' + boxId + '" style="display:none" class="ca-case-body">' +
+        c.rows.map(function (r) {
+          var tag = caCaseTag(r.note);
+          return '<div class="ca-tx-row">' +
+            '<span class="t-date">' + caEsc(r.date) + '</span>' +
+            '<span class="t-note">' +
+              (tag ? '<span class="cs-tag" style="color:' + tag.color + ';border-color:' + tag.color + '55">' + tag.label + '</span>' : '') +
+              caEsc(r.note || '—') + '</span>' +
+            '<span class="t-amt">' + caFmt(r.amt) + '</span>' +
+          '</div>';
+        }).join('') +
+      '</div></div>';
+  }).join('');
 }
 
 /** 年度業績下探：近三年（新到舊），數字在前、長條在後 */

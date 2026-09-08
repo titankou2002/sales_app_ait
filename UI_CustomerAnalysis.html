@@ -130,6 +130,30 @@ body.client-view #page-customer-analysis { display: none !important; }
 .ca-tx-row .t-sales { width: 46px; flex: none; }
 .ca-tx-row .t-amt { width: 48px; flex: none; text-align: right; color: #fff; font-weight: 700; }
 
+/* 交易明細：依案件分組 */
+.ca-case { border-top: 1px solid rgba(194,157,102,0.12); }
+.ca-case:first-child { border-top: none; }
+.ca-case-head {
+  display: flex; align-items: center; gap: 6px; padding: 7px 0;
+  font-size: 12px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ca-case-head:active { background: rgba(255,255,255,0.05); }
+.ca-case-head .cs-name {
+  flex: 1; min-width: 0; font-weight: 800; color: rgba(255,255,255,0.9);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ca-case-head .cs-meta { font-size: 10.5px; color: var(--wr-text2); flex: none; }
+.ca-case-head .cs-rep { font-size: 10.5px; color: var(--wr-gold); flex: none; width: 46px; text-align: right; }
+.ca-case-head .cs-amt { font-size: 12px; font-weight: 900; flex: none; width: 50px; text-align: right; }
+.ca-case-body {
+  padding: 2px 0 8px 10px; margin-left: 4px;
+  border-left: 2px solid rgba(194,157,102,0.2);
+}
+.cs-tag {
+  display: inline-block; font-size: 9.5px; font-weight: 800;
+  border: 1px solid; border-radius: 4px; padding: 0 4px; margin-right: 5px;
+}
+
 /* 客戶清單排序列 */
 .ca-sort-bar {
   display: flex; gap: 6px; padding: 10px 14px; flex-wrap: wrap;
