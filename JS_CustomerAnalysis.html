@@ -146,8 +146,20 @@ function caRender(res) {
       // 常銷商品改成預設就顯示（不再藏在「看完整明細」後面）
       // 常銷商品與遺忘產品：手機上下排、電腦左右並排
       '<div class="ca-two-col">' +
-        '<div id="ca-topskus"><div class="ca-card"><div class="ca-dim" style="padding:8px 0">讀取常銷商品…</div></div></div>' +
-        '<div id="ca-forgotten"></div>' +
+        '<div id="ca-topskus">' + '<div class="ca-card">' +
+          '<div class="ca-loading-line"><span class="ai-query-spinner"></span><span>讀取常銷商品…</span></div>' +
+          '<div class="ca-skel-row ca-skel-head"></div>' +
+          '<div class="ca-skel-row w85"></div><div class="ca-skel-row"></div>' +
+          '<div class="ca-skel-row w70"></div><div class="ca-skel-row w85"></div>' +
+          '<div class="ca-skel-row w55"></div>' +
+        '</div>' + '</div>' +
+        '<div id="ca-forgotten">' + '<div class="ca-card">' +
+          '<div class="ca-loading-line"><span class="ai-query-spinner"></span><span>比對遺忘產品…</span></div>' +
+          '<div class="ca-skel-row ca-skel-head"></div>' +
+          '<div class="ca-skel-row w85"></div><div class="ca-skel-row"></div>' +
+          '<div class="ca-skel-row w70"></div><div class="ca-skel-row w85"></div>' +
+          '<div class="ca-skel-row w55"></div>' +
+        '</div>' + '</div>' +
       '</div>' +
       '<div class="ca-toggle" onclick="caLoadDetail()" id="ca-detail-btn">' +
         '<span>📊 看更多明細（版面陳列牆・互動紀錄）</span><span>▾</span>' +
@@ -410,9 +422,11 @@ function caLoadDetail() {
   _caDetailLoaded = true;
   if (btn) btn.style.display = 'none';
 
-  box.innerHTML = '<div class="ca-empty" style="padding:30px 0">' +
-                  '<div class="ai-query-spinner"></div>' +
-                  '<div style="margin-top:12px">讀取明細中…</div></div>';
+  box.innerHTML = '<div class="ca-card">' +
+    '<div class="ca-loading-line"><span class="ai-query-spinner"></span><span>讀取版面陳列牆與互動紀錄…</span></div>' +
+    '<div class="ca-skel-row ca-skel-head"></div>' +
+    '<div class="ca-skel-row w85"></div><div class="ca-skel-row"></div>' +
+    '<div class="ca-skel-row w70"></div></div>';
 
   var cust = (_caCache[name] && _caCache[name].customer) || null;
   // breakdown 已在上方「常銷商品」用掉，這裡不再重複顯示銷售品項分析
@@ -643,6 +657,8 @@ function caLoadBreakdown() {
 function caBreakdownFailed() {
   var box = document.getElementById('ca-topskus');
   if (box) box.innerHTML = '<div class="ca-card"><div class="ca-dim">常銷商品讀取失敗</div></div>';
+  var fbox = document.getElementById('ca-forgotten');
+  if (fbox) fbox.innerHTML = '<div class="ca-card"><div class="ca-dim">遺忘產品讀取失敗</div></div>';
   ['ca-drill-year', 'ca-drill-month'].forEach(function (id) {
     var sub = document.getElementById(id + '-sub');
     if (sub) sub.innerHTML = '<span class="ca-dim">讀取失敗</span>';

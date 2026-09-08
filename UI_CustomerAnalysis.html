@@ -231,6 +231,35 @@ body.client-view #page-customer-analysis { display: none !important; }
 }
 .dn-btn:disabled { opacity: 0.5; cursor: wait; }
 
+/* 載入骨架：列表型內容用骨架列，比單純轉圈更看得出「正在長東西」 */
+@keyframes caShimmer {
+  0%   { background-position: -320px 0; }
+  100% { background-position: 320px 0; }
+}
+.ca-skel-row {
+  height: 13px; border-radius: 5px; margin-bottom: 9px;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.045) 0%,
+    rgba(194,157,102,0.16) 50%,
+    rgba(255,255,255,0.045) 100%);
+  background-size: 320px 100%;
+  animation: caShimmer 1.15s linear infinite;
+}
+.ca-skel-row.w70 { width: 70%; }
+.ca-skel-row.w85 { width: 85%; }
+.ca-skel-row.w55 { width: 55%; }
+.ca-skel-head { height: 9px; width: 40%; margin-bottom: 14px; }
+.ca-loading-line {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: rgba(255,255,255,0.45); margin-bottom: 12px;
+}
+.ca-loading-line .ai-query-spinner {
+  width: 15px; height: 15px; border-width: 2px; margin: 0; flex: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ca-skel-row { animation: none; }
+}
+
 /* 業務籤（客戶分析頁的業務分類） */
 .ca-biz-chip {
   flex-shrink: 0; border: 1px solid rgba(255,255,255,0.22);
