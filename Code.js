@@ -3013,6 +3013,108 @@ function doGet(e) {
           if (totalCell) totalCell.innerText = '$ ' + Math.round(netPayout + deliveryBonus).toLocaleString();
         }
 
+        /**
+         * 📥 區間匯出 Excel（呼叫後端 exportBonusRangeToExcel）
+         */
+        function openBonusExportModal() {
+          // 年份預設跟著上面報表的年份走
+          const headYear = document.getElementById('bonus-report-year');
+          const modalYear = document.getElementById('bonus-export-year');
+          if (headYear && modalYear) modalYear.value = headYear.value;
+          const status = document.getElementById('bonus-export-status');
+          if (status) status.innerHTML = '';
+          showModal('bonus-export-modal');
+        }
+
+        function exportBonusExcel() {
+          const year = document.getElementById('bonus-export-year').value;
+          const sEl = document.getElementById('bonus-export-start');
+          const eEl = document.getElementById('bonus-export-end');
+          const btn = document.getElementById('bonus-export-btn');
+          const status = document.getElementById('bonus-export-status');
+          const mStart = parseInt(sEl.value);
+          const mEnd = parseInt(eEl.value);
+
+          if (mStart > mEnd) {
+            status.innerHTML = '<span style="color:var(--neon-pink);font-weight:bold;">起始月份不能晚於結束月份</span>';
+            return;
+          }
+
+          const origText = btn.innerText;
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+          btn.innerText = '匯出中…';
+          status.innerHTML = '<span style="color:var(--pixel-gray);">正在計算 ' + (mEnd - mStart + 1) + ' 個月並產生 Excel，月份多會需要一點時間…</span>';
+
+          function restore() {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.innerText = origText;
+          }
+
+          google.script.run
+            .withSuccessHandler(function(res) {
+              restore();
+              if (!res || !res.success) {
+                status.innerHTML = '<span style="color:var(--neon-pink);font-weight:bold;">✕ ' + ((res && res.msg) || '匯出失敗') + '</span>';
+                return;
+              }
+              status.innerHTML =
+                '<a href="' + res.url + '" target="_blank" rel="noopener" ' +
+                'style="display:inline-block;padding:6px 14px;border-radius:6px;background:var(--neon-green);color:#0f172a;font-weight:800;text-decoration:none;">⬇ 下載 ' + res.fileName + '</a>' +
+                (res.hasFreight ? '' : '<span style="color:var(--pixel-gray);font-size:12px;margin-left:10px;">（本區間無運費扣除，已略去該欄）</span>');
+            })
+            .withFailureHandler(function(err) {
+              restore();
+              status.innerHTML = '<span style="color:var(--neon-pink);font-weight:bold;">✕ ' + (err && err.message ? err.message : err) + '</span>';
+            })
+            .exportBonusRangeToExcel(year, mStart, mEnd);
+        }
+
+        /**
+         * 🧾 產生「獎金小計怎麼來的」一行簡易算式（顯示在每位業務下方）
+         * 資料全部來自後端已算好的欄位，不重算，避免與 Sales.js 邏輯分歧
+         */
+        function buildBonusFormulaLine(p) {
+          const wan = function(v) { return (Math.round(Number(v) || 0) / 10000).toLocaleString(undefined, {maximumFractionDigits: 1}) + '萬'; };
+          const usd = function(v) { return '$' + (Math.round(Number(v) || 0)).toLocaleString(); };
+          const rule = p.rule;
+          if (!rule) return '<span style="color:var(--pixel-gray);">未設定獎金規則</span>';
+
+          const cyan = 'color:var(--neon-cyan);font-weight:bold;';
+          const green = 'color:var(--neon-green);font-weight:bold;';
+          const pink = 'color:var(--neon-pink);font-weight:bold;';
+          let s = '';
+
+          // 達成獎金
+          if (p.monthlySales < rule.minThreshold) {
+            s += '實銷 <span style="' + cyan + '">' + wan(p.monthlySales) + '</span>'
+               + ' 未達最低門檻 ' + wan(rule.minThreshold)
+               + ' → 達成獎金 <span style="' + green + '">' + usd(0) + '</span>';
+          } else {
+            s += '實銷 <span style="' + cyan + '">' + wan(p.monthlySales) + '</span>'
+               + ' − 基底 ' + wan(rule.stepBase)
+               + ' = ' + wan(p.exceed)
+               + ' ÷ ' + wan(rule.stepValue)
+               + ' = <span style="' + cyan + '">' + p.steps + ' 級</span>'
+               + ' × ' + usd(rule.stepBonus)
+               + ' = <span style="' + green + '">' + usd(p.baseBonus) + '</span>';
+          }
+
+          // 突破獎金
+          s += '　＋　突破 ';
+          if (p.breakthroughBonus > 0) {
+            s += '<span style="' + pink + '">' + usd(p.breakthroughBonus) + '</span>'
+               + '（達 ' + wan(p.reachedBreakthroughLimit) + '）';
+          } else {
+            s += '<span style="color:var(--pixel-gray);">' + usd(0) + '</span>';
+          }
+
+          // 小計
+          s += '　＝　獎金小計 <span style="' + green + 'font-size:15px;">' + usd(p.totalBonus) + '</span>';
+          return s;
+        }
+
         function renderAdminBonusReport(data) {
           window.adminBonusReportData = data;
           const container = document.getElementById('bonus-report-container');
@@ -3058,6 +3160,11 @@ function doGet(e) {
                 '<td class="main-total-actual" style="color: var(--neon-green); font-weight: bold; padding: 14px 12px;">$ ' + totalActualPayout.toLocaleString() + '</td>' +
                 '<td style="padding: 14px 12px;">' +
                   '<button class="copy-btn" data-name="' + p.name + '" onclick="toggleReportDetail(this)">展開/收合明細</button>' +
+                '</td>' +
+              '</tr>' +
+              '<tr class="bonus-formula-row" data-formularow="' + p.name + '">' +
+                '<td colspan="9" style="padding:6px 12px 12px 12px; border-top:none; font-size:13px; color:var(--pixel-gray); line-height:1.7;">' +
+                  '<span style="opacity:0.75;">🧾 系統試算：</span>' + buildBonusFormulaLine(p) +
                 '</td>' +
               '</tr>';
           });
@@ -4537,6 +4644,7 @@ function doGet(e) {
                   `).join('')}
                 </select>
                 <button class="copy-btn" onclick="loadAdminBonusReport()" style="padding:6px 12px; font-size:14px; text-shadow: none !important;">計算</button>
+                <button class="copy-btn" onclick="openBonusExportModal()" title="匯出區間 Excel" style="padding:6px 12px; font-size:14px; text-shadow: none !important;">📥 匯出</button>
               </div>
             </div>
             
@@ -4800,6 +4908,37 @@ function doGet(e) {
                 <button class="copy-btn" onclick="closeModal('add-staff-modal')" style="flex:1; background:#444;">取消</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 📥 獎金區間匯出 Excel Modal -->
+      <div id="bonus-export-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:99999; align-items:center; justify-content:center;">
+        <div style="background:var(--inline-bg); border:1px solid var(--neon-cyan); border-radius:8px; padding:24px; min-width:340px; max-width:480px;">
+          <h3 style="color:var(--neon-cyan); margin:0 0 6px; text-shadow:none !important;">📥 匯出獎金精算 Excel</h3>
+          <p style="color:var(--pixel-gray); font-size:12px; margin:0 0 16px; line-height:1.6;">選擇要匯出的區間。內勤提撥、業績實領、實領、小計與合計都是公式，可直接在 Excel 裡改數字，會自動連動。</p>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <select id="bonus-export-year" style="background:var(--inline-bg); border:1px solid var(--neon-cyan); color:var(--pixel-white); padding:6px 10px; border-radius:4px; font-size:14px; font-weight:800; outline:none; text-shadow:none !important;">
+              <option value="2025">2025 年</option>
+              <option value="2026">2026 年</option>
+              <option value="2027">2027 年</option>
+            </select>
+            <select id="bonus-export-start" style="background:var(--inline-bg); border:1px solid var(--neon-cyan); color:var(--pixel-white); padding:6px 10px; border-radius:4px; font-size:14px; font-weight:800; outline:none; text-shadow:none !important;">
+              ${[0,1,2,3,4,5,6,7,8,9,10,11].map(m => `
+              <option value="${m}" ${m === 0 ? 'selected' : ''}>${m+1} 月</option>
+              `).join('')}
+            </select>
+            <span style="color:var(--pixel-gray); font-weight:800;">～</span>
+            <select id="bonus-export-end" style="background:var(--inline-bg); border:1px solid var(--neon-cyan); color:var(--pixel-white); padding:6px 10px; border-radius:4px; font-size:14px; font-weight:800; outline:none; text-shadow:none !important;">
+              ${[0,1,2,3,4,5,6,7,8,9,10,11].map(m => `
+              <option value="${m}" ${new Date().getMonth() === m ? 'selected' : ''}>${m+1} 月</option>
+              `).join('')}
+            </select>
+          </div>
+          <div id="bonus-export-status" style="margin-top:14px; font-size:13px; color:var(--pixel-gray); min-height:22px; line-height:1.6;"></div>
+          <div style="display:flex; gap:8px; margin-top:16px;">
+            <button class="copy-btn" id="bonus-export-btn" onclick="exportBonusExcel()" style="flex:1;">匯出</button>
+            <button class="copy-btn" onclick="closeModal('bonus-export-modal')" style="flex:1; background:#444;">關閉</button>
           </div>
         </div>
       </div>
@@ -5386,11 +5525,11 @@ function getCustomerDisplays(customerName) {
         const stock = inventoryMap[skuKey] || { level: 2, qty: 0, pyeong: 0, safe: 0, salesQty: 0, salesAmt: 0, singleImg: "" };
         const cSales = customerSalesMap[skuKey] || { pings: 0, amt: 0, count: 0 };
 
-        let thumbUrl = rawImg;
-        const driveId = extractIdFromUrl(rawImg);
-        if (driveId) {
-          thumbUrl = "https://lh3.googleusercontent.com/d/" + driveId + "=w1000";
-        }
+        // 一個版面可能有多張照片（同一個儲存格用換行分隔），全部轉成縮圖網址；
+        // photoUrl 仍維持「第一張」，既有的分組、上下架比對邏輯完全不用改。
+        const rawPhotoList = parsePhotoUrls_(rawImg);
+        const photoUrlList = rawPhotoList.map(function (u) { return toThumbUrl_(u, 1000); });
+        const thumbUrl = photoUrlList.length ? photoUrlList[0] : rawImg;
 
         let singleImgUrl = '';
         if (stock.singleImg && stock.singleImg.trim() !== '') {
@@ -5402,6 +5541,7 @@ function getCustomerDisplays(customerName) {
           sku: fullSku,
           series: idx.series !== -1 ? String(row[idx.series] || '一般系列') : '一般系列',
           photoUrl: thumbUrl,
+          photoUrls: photoUrlList,
           daysOnDisplay: Math.max(0, days),
           installDate: Utilities.formatDate(date, "GMT+8", "yyyy/MM/dd"),
           offDate: offDateRaw ? Utilities.formatDate(new Date(offDateRaw), "GMT+8", "yyyy/MM/dd HH:mm") : null,
@@ -6155,6 +6295,26 @@ function getSeriesNameSuggestions(query) {
   }
 }
 
+/**
+ * 🖼 一個版面可以有多張照片（業務反應有些牆實體上是分成兩片）。
+ * 做法是把多個網址放在同一個「版面連結」儲存格裡（換行或逗號分隔），
+ * 不新增欄位——因為分組是依這個儲存格的值，多張照片的品項自然還是同一組，
+ * 系列統計、上下架、批次更新都不受影響。
+ * @return {string[]} 原始網址陣列（未轉縮圖）
+ */
+function parsePhotoUrls_(raw) {
+  return String(raw || '')
+    .split(/[\r\n,、|]+/)
+    .map(function (t) { return t.trim(); })
+    .filter(function (t) { return t !== ''; });
+}
+
+/** 原始 Drive 網址 → lh3 縮圖網址（抓不到 id 就原樣回傳） */
+function toThumbUrl_(raw, width) {
+  const id = extractIdFromUrl(raw);
+  return id ? ('https://lh3.googleusercontent.com/d/' + id + '=w' + (width || 1000)) : raw;
+}
+
 function saveNewLayout(payload) {
   const now = new Date(); // 🚀 Move to top to avoid ReferenceError
   const ss = getSafeSsBusiness();
@@ -6190,28 +6350,40 @@ function saveNewLayout(payload) {
   // 1. 處理圖片儲存
   // 🚀 效能優化：移除 catch 區塊重複的 getInventoryMap 呼叫，改為先取快取再計算檔名
   let imageUrl = "";
-  if (payload.image && payload.image.base64) {
+  // 支援一次上傳多張（payload.images 陣列）；仍相容舊的單張 payload.image
+  const imageList = (payload.images && payload.images.length)
+    ? payload.images
+    : (payload.image && payload.image.base64 ? [payload.image] : []);
+  if (imageList.length) {
     const ssMain = getSafeSsMain();
     const invMap = getInventoryMapCached(ssMain);
     const firstSku = payload.items[0] ? payload.items[0].sku : "";
     const size = (invMap[firstSku] && invMap[firstSku].size) ? invMap[firstSku].size : "";
     const dateStr = Utilities.formatDate(now, "GMT+8", "yyyyMMdd");
-    const fileName = [payload.customerName, payload.series, size, dateStr, payload.salesperson].filter(Boolean).join("_") + ".jpg";
-    const blob = Utilities.newBlob(Utilities.base64Decode(payload.image.base64), payload.image.mimeType, fileName);
 
-    try {
-      const parentFolder = DriveApp.getFolderById(CONFIG.IMG_FOLDER_ID || "");
-      const file = parentFolder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      imageUrl = file.getUrl();
-    } catch (e) {
-      console.error("圖片上傳失敗，改用備援資料夾:", e);
-      const folders = DriveApp.getFoldersByName("eliTile_Uploads");
-      const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder("eliTile_Uploads");
-      const file = folder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      imageUrl = file.getUrl();
-    }
+    const urls = [];
+    imageList.forEach(function (img, i) {
+      if (!img || !img.base64) return;
+      const suffix = imageList.length > 1 ? ("_" + (i + 1)) : "";
+      const fileName = [payload.customerName, payload.series, size, dateStr, payload.salesperson]
+        .filter(Boolean).join("_") + suffix + ".jpg";
+      const blob = Utilities.newBlob(Utilities.base64Decode(img.base64), img.mimeType, fileName);
+      try {
+        const parentFolder = DriveApp.getFolderById(CONFIG.IMG_FOLDER_ID || "");
+        const file = parentFolder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        urls.push(file.getUrl());
+      } catch (e) {
+        console.error("圖片上傳失敗，改用備援資料夾:", e);
+        const folders = DriveApp.getFoldersByName("eliTile_Uploads");
+        const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder("eliTile_Uploads");
+        const file = folder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        urls.push(file.getUrl());
+      }
+    });
+    // 多張用換行存在同一格，讓所有品項仍歸屬同一個版面
+    imageUrl = urls.join("\n");
   }
 
   // 2. 準備公共欄位

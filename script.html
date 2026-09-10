@@ -1219,6 +1219,8 @@
       if (!groups[key]) {
         groups[key] = {
           photoUrl: d.photoUrl,
+          photoUrls: (d.photoUrls && d.photoUrls.length) ? d.photoUrls : (d.photoUrl ? [d.photoUrl] : []),
+          photoCount: (d.photoUrls && d.photoUrls.length) ? d.photoUrls.length : (d.photoUrl ? 1 : 0),
           items: [],
           totalSalesAmt: 0,
           totalSalesQty: 0,
@@ -1362,6 +1364,8 @@
             ';border-color:' + wallStatus.color + '66;background:' + wallStatus.color + '22">' +
             wallStatus.label + '</div>'
           : '') +
+        (group.photoCount > 1
+          ? '<div class="album-photo-count">🖼 ' + group.photoCount + ' 張</div>' : '') +
         '<img src="' + imgUrl + '" class="album-thumb" ' +
         'onerror="this.onerror=null; this.src=\'https://placehold.co/800x800/1a1a1a/666?text=載入失敗\'" ' +
         'loading="lazy">' +
@@ -1518,6 +1522,35 @@
     showGroupDetail(newIdx, isHistory);
   };
 
+  // 🖼 詳情彈窗的照片輪播（一個版面可能有兩張，實體上分成兩片）
+  var _detailPhotos = [];
+  var _detailPhotoIdx = 0;
+
+  function renderDetailPhoto() {
+    var img = document.getElementById('detail-img');
+    var prev = document.getElementById('detail-photo-prev');
+    var next = document.getElementById('detail-photo-next');
+    var dots = document.getElementById('detail-photo-dots');
+    if (!img) return;
+
+    var multi = _detailPhotos.length > 1;
+    img.src = _detailPhotos[_detailPhotoIdx] || 'https://placehold.co/800x800/0a0a0a/666?text=無圖片';
+    if (prev) prev.style.display = multi ? 'flex' : 'none';
+    if (next) next.style.display = multi ? 'flex' : 'none';
+    if (dots) {
+      dots.style.display = multi ? 'flex' : 'none';
+      dots.innerHTML = multi ? _detailPhotos.map(function (_, i) {
+        return '<span class="dp-dot' + (i === _detailPhotoIdx ? ' on' : '') + '"></span>';
+      }).join('') : '';
+    }
+  }
+
+  window.switchDetailPhoto = function (dir) {
+    if (_detailPhotos.length < 2) return;
+    _detailPhotoIdx = (_detailPhotoIdx + dir + _detailPhotos.length) % _detailPhotos.length;
+    renderDetailPhoto();
+  };
+
   window.showGroupDetail = function (gIdx, isHistory = false) {
     state.currentGIdx = gIdx;
     state.currentIsHistory = isHistory; // 🚀 記錄目前是看陳列牆還是歷史清單，供左右滑動切換版面時知道要在哪個陣列裡移動
@@ -1529,7 +1562,10 @@
       ? group.photoUrl
       : 'https://placehold.co/800x800/0a0a0a/666?text=無圖片';
 
-    document.getElementById('detail-img').src = imgUrl;
+    // 多張照片時啟用左右切換
+    _detailPhotos = (group.photoUrls && group.photoUrls.length) ? group.photoUrls : (imgUrl ? [imgUrl] : []);
+    _detailPhotoIdx = 0;
+    renderDetailPhoto();
     document.getElementById('detail-series').innerText = group.seriesLabel || group.series || '';
     document.getElementById('detail-last-update').innerText = d.lastUpdate || '';
 
@@ -2455,12 +2491,13 @@
 
   var addState = {
     imageData: null,
+    imageData2: null,
     gpsPos: null
   };
   var _seriesBlockSeq = 0; // 系列區塊唯一序號（每次開 modal 重置）
 
   window.openAddLayoutModal = function () {
-    addState = { imageData: null, gpsPos: null };
+    addState = { imageData: null, imageData2: null, gpsPos: null };
     document.getElementById('add-photo-preview').innerHTML = '<div class="photo-placeholder">' +
       '<div style="font-size:22px; margin-bottom:4px;">📸</div>' +
       '<div style="font-weight:800; font-size:13px;">拍攝現場或從相簿選擇</div>' +
@@ -2761,15 +2798,17 @@
     container.appendChild(div);
   };
 
-  window.triggerAddPhoto = function () {
-    document.getElementById('add-photo-input').click();
+  window.triggerAddPhoto = function (slot) {
+    document.getElementById(slot === 1 ? 'add-photo-input-2' : 'add-photo-input').click();
   };
 
-  window.handleAddPhoto = function (input) {
+  window.handleAddPhoto = function (input, slot) {
     if (input.files && input.files[0]) {
       var file = input.files[0];
+      var isSecond = (slot === 1);
       
-      // 🚀 嘗試從 EXIF 提取 GPS
+      // 🚀 嘗試從 EXIF 提取 GPS（只用第一張；第二張是同一面牆的另一半，定位相同）
+      if (!isSecond) {
       updateGpsStatus('loading', '正在讀取照片定位...');
       processImageGps(file, function(gps) {
         if (gps) {
@@ -2790,16 +2829,19 @@
           }
         }
       });
+      }
 
       var reader = new FileReader();
       reader.onload = function (e) {
         var base64 = e.target.result.split(',')[1];
-        addState.imageData = {
-          base64: base64,
-          mimeType: file.type,
-          name: file.name
-        };
-        document.getElementById('add-photo-preview').innerHTML = '<img src="' + e.target.result + '">';
+        var data = { base64: base64, mimeType: file.type, name: file.name };
+        if (isSecond) {
+          addState.imageData2 = data;
+          document.getElementById('add-photo-preview-2').innerHTML = '<img src="' + e.target.result + '">';
+        } else {
+          addState.imageData = data;
+          document.getElementById('add-photo-preview').innerHTML = '<img src="' + e.target.result + '">';
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -2899,6 +2941,7 @@
       size: firstSize,
       items: items,
       image: addState.imageData,
+      images: [addState.imageData, addState.imageData2].filter(Boolean),
       gps: document.getElementById('add-gps-sync').checked ? addState.gpsPos : null
     };
 

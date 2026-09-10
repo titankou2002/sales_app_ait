@@ -472,4 +472,41 @@
 @media (prefers-reduced-motion: reduce) {
   .album-item.wall-never-pulse { animation: none; }
 }
+
+/* 🖼 一次記錄兩張版面照片（實體上分成兩片的牆） */
+.add-photo-row { display: flex; gap: 10px; }
+.add-photo-row .add-photo-section { flex: 1; min-width: 0; }
+.add-photo-section.add-photo-second { opacity: 0.85; }
+
+/* 卡片右上角的張數標記 */
+.album-photo-count {
+  position: absolute; top: 8px; left: 8px; z-index: 6;
+  background: rgba(0,0,0,0.6); color: #fff;
+  font-size: 10px; font-weight: 800; padding: 3px 7px;
+  border-radius: 6px; backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+/* 詳情彈窗的照片左右切換 */
+.detail-photo-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 38px; height: 38px; border-radius: 50%;
+  background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.25);
+  color: #fff; font-size: 22px; line-height: 1; cursor: pointer;
+  align-items: center; justify-content: center; z-index: 8;
+  backdrop-filter: blur(6px); -webkit-tap-highlight-color: transparent;
+}
+.detail-photo-nav.prev { left: 12px; }
+.detail-photo-nav.next { right: 12px; }
+.detail-photo-nav:active { background: rgba(0,0,0,0.8); }
+.detail-photo-dots {
+  position: absolute; bottom: 12px; left: 0; right: 0;
+  justify-content: center; gap: 6px; z-index: 8;
+}
+.detail-photo-dots .dp-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(255,255,255,0.35);
+}
+.detail-photo-dots .dp-dot.on { background: #c29d66; width: 18px; border-radius: 4px; }
+
 </style>

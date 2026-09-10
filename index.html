@@ -426,16 +426,31 @@
 
         <div class="modal-body">
           <!-- 📷 拍照區域 -->
-          <div class="add-photo-section" onclick="triggerAddPhoto()">
-            <input type="file" id="add-photo-input" accept="image/*" style="display:none"
-              onchange="handleAddPhoto(this)">
-            <div id="add-photo-preview" class="add-photo-preview" style="position:relative;">
-              <div class="photo-placeholder">
-                <div style="font-size:22px; margin-bottom:4px;">📸</div>
-                <div style="font-weight:800; font-size:13px;">拍攝現場或從相簿選擇</div>
-                <div style="font-size:10px; opacity:0.6; margin-top:3px;">支援相機拍照與手機相簿上傳</div>
+          <div class="add-photo-row">
+            <div class="add-photo-section" onclick="triggerAddPhoto(0)">
+              <input type="file" id="add-photo-input" accept="image/*" style="display:none"
+                onchange="handleAddPhoto(this, 0)">
+              <div id="add-photo-preview" class="add-photo-preview" style="position:relative;">
+                <div class="photo-placeholder">
+                  <div style="font-size:22px; margin-bottom:4px;">📸</div>
+                  <div style="font-weight:800; font-size:13px;">拍攝現場或從相簿選擇</div>
+                  <div style="font-size:10px; opacity:0.6; margin-top:3px;">支援相機拍照與手機相簿上傳</div>
+                </div>
               </div>
             </div>
+            <!-- 第二張：有些版面實體上分成兩片，可以一次記錄兩張，仍算同一個版面 -->
+            <div class="add-photo-section add-photo-second" onclick="triggerAddPhoto(1)">
+              <input type="file" id="add-photo-input-2" accept="image/*" style="display:none"
+                onchange="handleAddPhoto(this, 1)">
+              <div id="add-photo-preview-2" class="add-photo-preview" style="position:relative;">
+                <div class="photo-placeholder">
+                  <div style="font-size:20px; margin-bottom:4px;">➕</div>
+                  <div style="font-weight:800; font-size:12px;">第二張（選填）</div>
+                  <div style="font-size:10px; opacity:0.6; margin-top:3px;">版面分兩片時使用</div>
+                </div>
+              </div>
+            </div>
+          </div>
             <!-- 🚀 照片 GPS 提示標籤 -->
             <div id="photo-gps-badge" style="display:none; position:absolute; top:10px; left:10px; background:rgba(6,199,85,0.9); color:white; padding:4px 10px; border-radius:30px; font-size:11px; font-weight:800; backdrop-filter:blur(5px); z-index:10; border:1px solid rgba(255,255,255,0.2);">
               📍 已讀取照片定位
@@ -554,6 +569,12 @@
             📍 已讀取照片定位
           </div>
           <img id="detail-img" src="" class="detail-image">
+          <!-- 一個版面可能有兩張照片（實體上分成兩片），左右切換 -->
+          <button id="detail-photo-prev" class="detail-photo-nav prev" style="display:none;"
+                  onclick="event.stopPropagation(); switchDetailPhoto(-1)">‹</button>
+          <button id="detail-photo-next" class="detail-photo-nav next" style="display:none;"
+                  onclick="event.stopPropagation(); switchDetailPhoto(1)">›</button>
+          <div id="detail-photo-dots" class="detail-photo-dots" style="display:none;"></div>
           <div id="edit-photo-overlay" style="position:absolute; top:20px; right:20px;">
             <button class="btn-glass-sm" onclick="triggerPhotoUpload()">📸 更換照片</button>
           </div>
