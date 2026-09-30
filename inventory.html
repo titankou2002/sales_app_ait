@@ -133,16 +133,18 @@
       if (!el) {
         el = document.createElement('div'); el.id = 'ttsGsi';
         el.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(2,6,23,.94);display:flex;align-items:center;justify-content:center;padding:20px;font-family:-apple-system,"Noto Sans TC",sans-serif';
-        var gHtml = inApp ? ''
-          : '<div style="margin:16px 0 10px;color:#64748b;font-size:12px">或</div><div id="ttsGsiBtn" style="display:flex;justify-content:center;min-height:44px"></div>';
+        /* 2026-09-30 拿掉 LINE 登入：手機主畫面 App 按 LINE 會跳到 LINE App，登入完回到 Safari 而不是 App，永遠登不進去。
+           一般瀏覽器、主畫面 App 只用 Google；只有 LINE／FB 等內建瀏覽器 (Google 禁止在裡面登入) 才顯示 LINE，在 LINE 裡用 LINE 登入不會跳走 */
+        var btnHtml = inApp
+          ? '<button id="ttsLineBtn" type="button" style="width:280px;max-width:100%;padding:12px;border:0;border-radius:999px;background:#06C755;color:#fff;font-size:16px;font-weight:800;cursor:pointer">用 LINE 登入</button>'
+          : '<div id="ttsGsiBtn" style="display:flex;justify-content:center;min-height:44px"></div>';
         el.innerHTML = '<div style="background:#0f172a;border:1px solid #334155;border-radius:18px;padding:26px 22px;width:100%;max-width:360px;text-align:center;color:#e2e8f0">'
           + '<div style="font-size:19px;font-weight:800;margin-bottom:6px">登入高雅瓷業務系統</div>'
-          + '<div style="font-size:13px;color:#94a3b8;margin-bottom:18px">請用你登記在系統的帳號登入</div>'
-          + '<button id="ttsLineBtn" type="button" style="width:280px;max-width:100%;padding:12px;border:0;border-radius:999px;background:#06C755;color:#fff;font-size:16px;font-weight:800;cursor:pointer">用 LINE 登入</button>'
-          + gHtml
+          + '<div style="font-size:13px;color:#94a3b8;margin-bottom:18px">請用你登記在系統的 ' + (inApp ? 'LINE' : 'Google') + ' 帳號登入</div>'
+          + btnHtml
           + '<button id="ttsGsiCancel" type="button" style="margin-top:18px;width:100%;padding:11px;border-radius:10px;border:1px solid #475569;background:transparent;color:#94a3b8;font-size:15px">取消</button></div>';
         document.body.appendChild(el);
-        document.getElementById('ttsLineBtn').onclick = lineLogin;
+        var lbtn = document.getElementById('ttsLineBtn'); if (lbtn) lbtn.onclick = lineLogin;
         document.getElementById('ttsGsiCancel').onclick = function () { send({ type: 'tts-google-cancel' }); };
       }
       el.style.display = 'flex';
