@@ -75,6 +75,7 @@
     if (m) pending = { credential: m[1], provider: 'google' };
     if (/[#&]gerr=1/.test(location.hash)) pendingErr = true;
     if (m || pendingErr) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { } }
+    try { var sg = sessionStorage.getItem('tts_gcred'); if (sg && !pending) { pending = { credential: sg, provider: 'google' }; } sessionStorage.removeItem('tts_gcred'); } catch (e) { }
 
     /* LINE：初始化 LIFF；如果是按了「用 LINE 登入」跳轉回來的，就取出 LINE 的身分證明 */
     var liffReady = (window.liff ? liff.init({ liffId: LIFF_ID }) : Promise.reject(new Error('LIFF 載入失敗'))).then(function () {
@@ -116,6 +117,7 @@
         if (standalone) {
           cfg.ux_mode = 'redirect'; cfg.login_uri = LOGIN_URI;
           document.cookie = 'tts_login_return=' + encodeURIComponent(location.pathname + location.search) + '; path=/tts; max-age=900; SameSite=Lax; Secure'; /* glogin.php 在 /tts/，登入後帶回 /ait/inventory.html */
+          try { localStorage.setItem('tts_login_return', JSON.stringify({ p: location.pathname + location.search, t: Date.now() })); } catch (e) { } /* iPhone 主畫面 App 常弄丟 cookie，另存一份 */
         } else {
           cfg.ux_mode = 'popup';
           cfg.callback = function (r) { if (r && r.credential) send({ type: 'tts-google-credential', credential: r.credential, provider: 'google' }); };
