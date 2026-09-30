@@ -9,8 +9,9 @@
     const isClient = currentQuery.includes("view=client") || currentQuery.includes("customer") || currentQuery.includes("clientName");
     document.title = isClient ? "高雅瓷庫存查詢系統" : "高雅瓷業務APP";
     const appTitle = isClient ? "高雅瓷庫存查詢系統" : "高雅瓷業務APP";
-    document.write(`<link rel="icon" type="image/svg+xml" href="favicon.svg">`);
-    document.write(`<link rel="apple-touch-icon" href="favicon.svg">`);
+    // 主選單 & 查庫存連結 皆使用 icon-silver.png
+    document.write(`<link rel="icon" type="image/png" href="icon-silver.png">`);
+    document.write(`<link rel="apple-touch-icon" sizes="180x180" href="icon-silver.png">`);
     document.write(`<meta name="apple-mobile-web-app-title" content="${appTitle}">`);
   </script>
 
@@ -45,10 +46,147 @@
     const gasBaseUrl = "https://script.google.com/macros/s/AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg/exec";
     
     // 2. 自動抓取瀏覽器網址列後的所有參數 (包括 view, clientName, sales, key, layoutIdx 等)
-    const queryString = window.location.search;
+    //    LINE 登入跳轉回來會多帶 code / state 等參數，這些只給外殼頁的登入中繼用，不傳給系統
+    const qs = new URLSearchParams(window.location.search);
+    ['code', 'state', 'liffClientId', 'liffRedirectUri', 'liff.state', 'error', 'error_description'].forEach(function (k) { qs.delete(k); });
+    const queryString = qs.toString() ? '?' + qs.toString() : '';
     
     // 3. 完美且動態透傳給 GAS 執行嵌入，永不丟失參數，終身免二次維護！
     document.getElementById('gas-app').src = gasBaseUrl + queryString;
   </script>
+  <!-- 2026-09-30 AIT 業務系統登入中繼 (與 bigt.cc/tts/ 同一套，帳號共用鈦傳速物流白名單)。原註解：V43.0～43.9 登入中繼：iframe 裡的系統頁面請求登入 → 這裡顯示「用 LINE 登入」與 Google 登入按鈕
+       （Google、LINE 都只允許登記過的網站 bigt.cc 使用）→ 把簽發的身分證明只回傳給發出請求的系統頁面，由系統後端驗證。
+       LINE 用整頁跳轉 (LIFF)；Google 一般用彈出視窗，手機主畫面全螢幕 App 模式改整頁跳轉 (glogin.php)。
+       LINE / FB / IG 內建瀏覽器 Google 禁止登入，只顯示 LINE 登入。 -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+  (function () {
+    var CLIENT_ID = '488092523611-2012hnf14cch4s7p6sl3dp37dvihjsdm.apps.googleusercontent.com';
+    var LOGIN_URI = 'https://bigt.cc/tts/glogin.php';
+    var LIFF_ID = '2007666611-euh6wJBi'; /* 「高雅瓷業務系統登入」endpoint = bigt.cc/ait/inventory.html */
+    var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    var ua = navigator.userAgent || '';
+    var inApp = /\bLine\//i.test(ua) ? 'line' : (/FBAN|FBAV|FB_IAB|Instagram|MicroMessenger|KAKAOTALK|musical_ly|Bytedance/i.test(ua) ? 'other' : '');
+    var waiting = [], inited = false, pending = null, pendingErr = false, autoServed = false;
+
+    /* Google 整頁跳轉回來：取出登入結果並立刻從網址清掉 */
+    var m = /[#&]gcred=([A-Za-z0-9_\-.]+)/.exec(location.hash);
+    if (m) pending = { credential: m[1], provider: 'google' };
+    if (/[#&]gerr=1/.test(location.hash)) pendingErr = true;
+    if (m || pendingErr) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { } }
+
+    /* LINE：初始化 LIFF；如果是按了「用 LINE 登入」跳轉回來的，就取出 LINE 的身分證明 */
+    var liffReady = (window.liff ? liff.init({ liffId: LIFF_ID }) : Promise.reject(new Error('LIFF 載入失敗'))).then(function () {
+      var want = false; try { want = sessionStorage.getItem('tts_line_pending') === '1'; sessionStorage.removeItem('tts_line_pending'); } catch (e) { }
+      if (want && liff.isLoggedIn()) { var t = liff.getIDToken(); if (t) pending = { credential: t, provider: 'line' }; }
+      if (/[?&](code|liffClientId|liff\.state)=/.test(location.search)) {
+        var q = new URLSearchParams(location.search);
+        ['code', 'state', 'liffClientId', 'liffRedirectUri', 'liff.state'].forEach(function (k) { q.delete(k); });
+        try { history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '')); } catch (e) { }
+      }
+    });
+    liffReady.catch(function () { });
+    setTimeout(function () { pending = null; }, 30 * 60 * 1000);
+
+    function okOrigin(o) { return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o); }
+    function send(msg) {
+      waiting.forEach(function (w) { try { w.src.postMessage(msg, w.origin); } catch (e) { } });
+      waiting = [];
+      var el = document.getElementById('ttsGsi'); if (el) el.style.display = 'none';
+    }
+    function lineLogin() {
+      var btn = document.getElementById('ttsLineBtn'); if (btn) btn.textContent = 'LINE 登入中…';
+      liffReady.then(function () {
+        if (liff.isLoggedIn()) {
+          var dec = liff.getDecodedIDToken(), t = liff.getIDToken();
+          if (t && dec && dec.exp * 1000 > Date.now() + 60000) { send({ type: 'tts-google-credential', credential: t, provider: 'line' }); return; }
+          liff.logout();
+        }
+        try { sessionStorage.setItem('tts_line_pending', '1'); } catch (e) { }
+        liff.login({ redirectUri: location.href.split('#')[0] });
+      }).catch(function (e) {
+        if (btn) btn.textContent = 'LINE 登入失敗，請再試一次';
+      });
+    }
+    function renderGoogle() {
+      if (!window.google || !google.accounts || !google.accounts.id) { setTimeout(renderGoogle, 200); return; }
+      if (!inited) {
+        var cfg = { client_id: CLIENT_ID, auto_select: false, itp_support: true };
+        if (standalone) {
+          cfg.ux_mode = 'redirect'; cfg.login_uri = LOGIN_URI;
+          document.cookie = 'tts_login_return=' + encodeURIComponent(location.pathname + location.search) + '; path=/tts; max-age=900; SameSite=Lax; Secure'; /* glogin.php 在 /tts/，登入後帶回 /ait/inventory.html */
+        } else {
+          cfg.ux_mode = 'popup';
+          cfg.callback = function (r) { if (r && r.credential) send({ type: 'tts-google-credential', credential: r.credential, provider: 'google' }); };
+        }
+        google.accounts.id.initialize(cfg);
+        inited = true;
+      }
+      var box = document.getElementById('ttsGsiBtn'); if (!box) return; box.innerHTML = '';
+      google.accounts.id.renderButton(box, { theme: 'filled_blue', size: 'large', shape: 'pill', text: 'signin_with', locale: 'zh-TW', width: 280 });
+    }
+    function show() {
+      var el = document.getElementById('ttsGsi');
+      if (!el) {
+        el = document.createElement('div'); el.id = 'ttsGsi';
+        el.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(2,6,23,.94);display:flex;align-items:center;justify-content:center;padding:20px;font-family:-apple-system,"Noto Sans TC",sans-serif';
+        var gHtml = inApp ? ''
+          : '<div style="margin:16px 0 10px;color:#64748b;font-size:12px">或</div><div id="ttsGsiBtn" style="display:flex;justify-content:center;min-height:44px"></div>';
+        el.innerHTML = '<div style="background:#0f172a;border:1px solid #334155;border-radius:18px;padding:26px 22px;width:100%;max-width:360px;text-align:center;color:#e2e8f0">'
+          + '<div style="font-size:19px;font-weight:800;margin-bottom:6px">登入高雅瓷業務系統</div>'
+          + '<div style="font-size:13px;color:#94a3b8;margin-bottom:18px">請用你登記在系統的帳號登入</div>'
+          + '<button id="ttsLineBtn" type="button" style="width:280px;max-width:100%;padding:12px;border:0;border-radius:999px;background:#06C755;color:#fff;font-size:16px;font-weight:800;cursor:pointer">用 LINE 登入</button>'
+          + gHtml
+          + '<button id="ttsGsiCancel" type="button" style="margin-top:18px;width:100%;padding:11px;border-radius:10px;border:1px solid #475569;background:transparent;color:#94a3b8;font-size:15px">取消</button></div>';
+        document.body.appendChild(el);
+        document.getElementById('ttsLineBtn').onclick = lineLogin;
+        document.getElementById('ttsGsiCancel').onclick = function () { send({ type: 'tts-google-cancel' }); };
+      }
+      el.style.display = 'flex';
+      var lb = document.getElementById('ttsLineBtn'); if (lb) lb.textContent = '用 LINE 登入';
+      if (!inApp) renderGoogle();
+    }
+    window.addEventListener('message', function (ev) {
+      if (!okOrigin(ev.origin)) return;
+      var d = ev.data || {};
+      if (d.type === 'tts-google-pending') {
+        /* 系統頁面載入時來問：剛才整頁跳轉 (LINE / Google) 有沒有帶回登入結果 */
+        var src = ev.source, origin = ev.origin;
+        liffReady.catch(function () { }).then(function () {
+          var reply = pending ? { type: 'tts-google-credential', credential: pending.credential, provider: pending.provider } : { type: pendingErr ? 'tts-google-failed' : 'tts-google-none' };
+          pending = null; pendingErr = false;
+          try { src.postMessage(reply, origin); } catch (e) { }
+        });
+        return;
+      }
+      if (d.type === 'tts-line-auto') {
+        /* V43.12: 在 LINE 裡、頁面還沒登入 → 自動用 LINE 登入。LINE 已記得登入就直接回傳；
+           否則自動跳轉 LINE 登入一次 (同一次瀏覽只自動跳一次，避免取消後一直重跳) */
+        if (inApp !== 'line' || autoServed) return;
+        var asrc = ev.source, aorigin = ev.origin;
+        liffReady.then(function () {
+          if (autoServed) return;
+          if (liff.isLoggedIn()) {
+            var dec = liff.getDecodedIDToken(), t = liff.getIDToken();
+            if (t && dec && dec.exp * 1000 > Date.now() + 60000) { autoServed = true; try { asrc.postMessage({ type: 'tts-google-credential', credential: t, provider: 'line' }, aorigin); } catch (e) { } return; }
+            liff.logout();
+          }
+          var tried = false; try { tried = sessionStorage.getItem('tts_line_auto_tried') === '1'; } catch (e) { }
+          if (tried) return;
+          autoServed = true;
+          try { sessionStorage.setItem('tts_line_auto_tried', '1'); sessionStorage.setItem('tts_line_pending', '1'); } catch (e) { }
+          liff.login({ redirectUri: location.href.split('#')[0] });
+        }).catch(function () { });
+        return;
+      }
+      if (d.type !== 'tts-google-login') return;
+      waiting.push({ src: ev.source, origin: ev.origin });
+      try { ev.source.postMessage({ type: 'tts-google-ack' }, ev.origin); } catch (e) { }
+      show();
+    });
+  })();
+  </script>
+
 </body>
 </html>
