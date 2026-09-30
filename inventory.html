@@ -152,6 +152,10 @@
     window.addEventListener('message', function (ev) {
       if (!okOrigin(ev.origin)) return;
       var d = ev.data || {};
+      /* 登入資料由外殼頁 (bigt.cc 第一方) 保管：iPhone 主畫面 App／LINE 會清掉 iframe 裡的儲存，這裡不會 → 不用每次重登 */
+      if (d.type === 'ait-session-get') { var sv = null; try { sv = localStorage.getItem('aitSessV2'); } catch (e) { } try { ev.source.postMessage({ type: 'ait-session', sess: sv }, ev.origin); } catch (e) { } return; }
+      if (d.type === 'ait-session-save') { try { if (typeof d.sess === 'string' && d.sess.length < 5000) localStorage.setItem('aitSessV2', d.sess); } catch (e) { } return; }
+      if (d.type === 'ait-session-clear') { try { localStorage.removeItem('aitSessV2'); } catch (e) { } return; }
       if (d.type === 'tts-google-pending') {
         /* 系統頁面載入時來問：剛才整頁跳轉 (LINE / Google) 有沒有帶回登入結果 */
         var src = ev.source, origin = ev.origin;
