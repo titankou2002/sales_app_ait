@@ -59,7 +59,6 @@
        LINE 用整頁跳轉 (LIFF)；Google 一般用彈出視窗，手機主畫面全螢幕 App 模式改整頁跳轉 (glogin.php)。
        LINE / FB / IG 內建瀏覽器 Google 禁止登入，只顯示 LINE 登入。 -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
   (function () {
     var CLIENT_ID = '488092523611-2012hnf14cch4s7p6sl3dp37dvihjsdm.apps.googleusercontent.com';
@@ -77,17 +76,8 @@
     if (m || pendingErr) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { } }
     try { var sg = sessionStorage.getItem('tts_gcred'); if (sg && !pending) { pending = { credential: sg, provider: 'google' }; } sessionStorage.removeItem('tts_gcred'); } catch (e) { }
 
-    /* LINE：初始化 LIFF；如果是按了「用 LINE 登入」跳轉回來的，就取出 LINE 的身分證明 */
-    var liffReady = (window.liff ? liff.init({ liffId: LIFF_ID }) : Promise.reject(new Error('LIFF 載入失敗'))).then(function () {
-      var want = false; try { want = sessionStorage.getItem('tts_line_pending') === '1'; sessionStorage.removeItem('tts_line_pending'); } catch (e) { }
-      if (want && liff.isLoggedIn()) { var t = liff.getIDToken(); if (t) pending = { credential: t, provider: 'line' }; }
-      if (/[?&](code|liffClientId|liff\.state)=/.test(location.search)) {
-        var q = new URLSearchParams(location.search);
-        ['code', 'state', 'liffClientId', 'liffRedirectUri', 'liff.state'].forEach(function (k) { q.delete(k); });
-        try { history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '')); } catch (e) { }
-      }
-    });
-    liffReady.catch(function () { });
+    /* 2026-10-01 使用者要求拿掉 LINE 登入，只保留 Google */
+    var liffReady = Promise.resolve();
     setTimeout(function () { pending = null; }, 30 * 60 * 1000);
 
     function okOrigin(o) { return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o); }
@@ -95,20 +85,6 @@
       waiting.forEach(function (w) { try { w.src.postMessage(msg, w.origin); } catch (e) { } });
       waiting = [];
       var el = document.getElementById('ttsGsi'); if (el) el.style.display = 'none';
-    }
-    function lineLogin() {
-      var btn = document.getElementById('ttsLineBtn'); if (btn) btn.textContent = 'LINE 登入中…';
-      liffReady.then(function () {
-        if (liff.isLoggedIn()) {
-          var dec = liff.getDecodedIDToken(), t = liff.getIDToken();
-          if (t && dec && dec.exp * 1000 > Date.now() + 60000) { send({ type: 'tts-google-credential', credential: t, provider: 'line' }); return; }
-          liff.logout();
-        }
-        try { sessionStorage.setItem('tts_line_pending', '1'); } catch (e) { }
-        liff.login({ redirectUri: location.href.split('#')[0] });
-      }).catch(function (e) {
-        if (btn) btn.textContent = 'LINE 登入失敗，請再試一次';
-      });
     }
     function renderGoogle() {
       if (!window.google || !google.accounts || !google.accounts.id) { setTimeout(renderGoogle, 200); return; }
@@ -133,22 +109,22 @@
       if (!el) {
         el = document.createElement('div'); el.id = 'ttsGsi';
         el.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(2,6,23,.94);display:flex;align-items:center;justify-content:center;padding:20px;font-family:-apple-system,"Noto Sans TC",sans-serif';
-        /* 2026-09-30 拿掉 LINE 登入：手機主畫面 App 按 LINE 會跳到 LINE App，登入完回到 Safari 而不是 App，永遠登不進去。
-           一般瀏覽器、主畫面 App 只用 Google；只有 LINE／FB 等內建瀏覽器 (Google 禁止在裡面登入) 才顯示 LINE，在 LINE 裡用 LINE 登入不會跳走 */
-        var btnHtml = inApp
-          ? '<button id="ttsLineBtn" type="button" style="width:280px;max-width:100%;padding:12px;border:0;border-radius:999px;background:#06C755;color:#fff;font-size:16px;font-weight:800;cursor:pointer">用 LINE 登入</button>'
+        /* LINE / FB / IG 內建瀏覽器 Google 禁止登入 → 請改用 Safari / Chrome 開啟 */
+        var ext = location.href.split('#')[0]; ext += (ext.indexOf('?') === -1 ? '?' : '&') + 'openExternalBrowser=1';
+        var body = inApp
+          ? '<div style="font-size:14px;color:#fca5a5;line-height:1.7;margin-bottom:14px">Google 不允許在 LINE／Facebook 裡登入，<br>請改用 Safari 或 Chrome 開啟。</div>'
+            + (inApp === 'line' ? '<a href="' + ext + '" style="display:block;width:280px;max-width:100%;margin:0 auto;padding:12px;border-radius:999px;background:#2563eb;color:#fff;font-size:16px;font-weight:800;text-decoration:none">用 Safari／Chrome 開啟</a>'
+              : '<div style="font-size:13px;color:#94a3b8">請點右上角「⋯」→「在瀏覽器中開啟」</div>')
           : '<div id="ttsGsiBtn" style="display:flex;justify-content:center;min-height:44px"></div>';
         el.innerHTML = '<div style="background:#0f172a;border:1px solid #334155;border-radius:18px;padding:26px 22px;width:100%;max-width:360px;text-align:center;color:#e2e8f0">'
           + '<div style="font-size:19px;font-weight:800;margin-bottom:6px">登入高雅瓷業務系統</div>'
-          + '<div style="font-size:13px;color:#94a3b8;margin-bottom:18px">請用你登記在系統的 ' + (inApp ? 'LINE' : 'Google') + ' 帳號登入</div>'
-          + btnHtml
+          + '<div style="font-size:13px;color:#94a3b8;margin-bottom:18px">請用你登記在系統的 Google 帳號登入</div>'
+          + body
           + '<button id="ttsGsiCancel" type="button" style="margin-top:18px;width:100%;padding:11px;border-radius:10px;border:1px solid #475569;background:transparent;color:#94a3b8;font-size:15px">取消</button></div>';
         document.body.appendChild(el);
-        var lbtn = document.getElementById('ttsLineBtn'); if (lbtn) lbtn.onclick = lineLogin;
         document.getElementById('ttsGsiCancel').onclick = function () { send({ type: 'tts-google-cancel' }); };
       }
       el.style.display = 'flex';
-      var lb = document.getElementById('ttsLineBtn'); if (lb) lb.textContent = '用 LINE 登入';
       if (!inApp) renderGoogle();
     }
     window.addEventListener('message', function (ev) {
@@ -168,26 +144,7 @@
         });
         return;
       }
-      if (d.type === 'tts-line-auto') {
-        /* V43.12: 在 LINE 裡、頁面還沒登入 → 自動用 LINE 登入。LINE 已記得登入就直接回傳；
-           否則自動跳轉 LINE 登入一次 (同一次瀏覽只自動跳一次，避免取消後一直重跳) */
-        if (inApp !== 'line' || autoServed) return;
-        var asrc = ev.source, aorigin = ev.origin;
-        liffReady.then(function () {
-          if (autoServed) return;
-          if (liff.isLoggedIn()) {
-            var dec = liff.getDecodedIDToken(), t = liff.getIDToken();
-            if (t && dec && dec.exp * 1000 > Date.now() + 60000) { autoServed = true; try { asrc.postMessage({ type: 'tts-google-credential', credential: t, provider: 'line' }, aorigin); } catch (e) { } return; }
-            liff.logout();
-          }
-          var tried = false; try { tried = sessionStorage.getItem('tts_line_auto_tried') === '1'; } catch (e) { }
-          if (tried) return;
-          autoServed = true;
-          try { sessionStorage.setItem('tts_line_auto_tried', '1'); sessionStorage.setItem('tts_line_pending', '1'); } catch (e) { }
-          liff.login({ redirectUri: location.href.split('#')[0] });
-        }).catch(function () { });
-        return;
-      }
+      if (d.type === 'tts-line-auto') return; /* LINE 登入已拿掉 */
       if (d.type !== 'tts-google-login') return;
       waiting.push({ src: ev.source, origin: ev.origin });
       try { ev.source.postMessage({ type: 'tts-google-ack' }, ev.origin); } catch (e) { }
