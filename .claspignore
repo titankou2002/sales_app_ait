@@ -2,6 +2,11 @@
 **/.git/**
 
 # Google Drive 同步衝突產生的備份檔（內容與正檔重複，含相同函數名稱，千萬不能一起推上 Apps Script）
+* 2.*
+* 2.js
+* 2.html
+* 2.json
+* 2.md
 Code 2.js
 Code_Customer 2.js
 Code_SalesDelivery 2.js

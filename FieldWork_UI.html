@@ -77,6 +77,77 @@
     </div>
 
 
+    <!-- SVG 圖示庫（取代 emoji；用法：<svg class="ait-ico"><use href="#ico-名稱"/></svg>） -->
+<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true"><defs>
+<symbol id="ico-car" viewBox="0 0 24 24"><path d="M5 17h14M3 13l2-6a2 2 0 0 1 1.9-1.4h10.2A2 2 0 0 1 19 7l2 6v4a1 1 0 0 1-1 1h-2v-2M3 13v4a1 1 0 0 0 1 1h2v-2M3 13h18"/><circle cx="7.5" cy="14.5" r=".8" fill="currentColor"/><circle cx="16.5" cy="14.5" r=".8" fill="currentColor"/></symbol>
+<symbol id="ico-fuel" viewBox="0 0 24 24"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M4 10h10M14 8h2.5a1.5 1.5 0 0 1 1.5 1.5V16a1.5 1.5 0 0 0 3 0V8l-3-3"/></symbol>
+<symbol id="ico-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></symbol>
+<symbol id="ico-road" viewBox="0 0 24 24"><path d="M7 3 4 21M17 3l3 18M12 4v3M12 11v3M12 18v3"/></symbol>
+<symbol id="ico-pin" viewBox="0 0 24 24"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+<symbol id="ico-note" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6zM15 3v4h4M9 12h6M9 16h6"/></symbol>
+<symbol id="ico-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4"/></symbol>
+<symbol id="ico-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+<symbol id="ico-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
+<symbol id="ico-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+<symbol id="ico-chev-l" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+<symbol id="ico-chev-r" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+<symbol id="ico-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v5M12 17.5v.5"/></symbol>
+<symbol id="ico-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="ico-box" viewBox="0 0 24 24"><path d="m12 3 8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/></symbol>
+<symbol id="ico-chart" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-3"/></symbol>
+<symbol id="ico-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+<symbol id="ico-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+<symbol id="ico-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14-4L4 9M4 4v5h5M4 13a8 8 0 0 0 14 4l2-2M20 20v-5h-5"/></symbol>
+<symbol id="ico-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="ico-star" viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
+</defs></svg>
+<style>
+  .ait-ico { fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; vertical-align:-0.18em; flex-shrink:0; }
+  /* 日誌日期列 */
+  .fw-datebar { display:flex; align-items:stretch; gap:8px; margin-top:6px; }
+  .fw-datebar-arrow { width:48px; border:none; border-radius:14px; background:rgba(255,255,255,0.1); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .fw-datebar-arrow:active { transform:scale(0.92); background:rgba(255,255,255,0.2); }
+  .fw-datebar-main { flex:1; display:flex; align-items:center; justify-content:center; gap:10px; background:rgba(250,204,21,0.1); border:1px solid rgba(250,204,21,0.35); border-radius:14px; padding:12px 8px; cursor:pointer; position:relative; }
+  .fw-datebar-date { font-size:20px; font-weight:900; color:#fff; letter-spacing:0.5px; }
+  .fw-datebar-wd { font-size:14px; font-weight:900; color:#1a1a1a; background:#facc15; border-radius:8px; padding:3px 9px; }
+  .fw-datebar-wd.weekend { background:#f87171; color:#fff; }
+  .fw-datebar-cal { color:#facc15; opacity:0.8; display:flex; }
+  .fw-datebar-main.off-today { border-color:#fb923c; background:rgba(251,146,60,0.14); }
+  .fw-date-native { position:absolute; opacity:0; pointer-events:none; width:1px; height:1px; }
+  .fw-weekstrip { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-top:8px; }
+  .fw-wk-day { border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#fff; border-radius:12px; padding:7px 0; text-align:center; cursor:pointer; }
+  .fw-wk-day .w { font-size:11px; opacity:0.7; }
+  .fw-wk-day .d { font-size:16px; font-weight:800; }
+  .fw-wk-day.today { border-color:rgba(250,204,21,0.5); }
+  .fw-wk-day.today .w { color:#facc15; opacity:1; }
+  .fw-wk-day.sel { background:#facc15; color:#1a1a1a; border-color:#facc15; }
+  .fw-wk-day.sel .w { opacity:1; color:#1a1a1a; }
+  .fw-wk-day.has-log::after { content:''; display:block; width:5px; height:5px; border-radius:50%; background:#38bdf8; margin:2px auto 0; }
+  .fw-date-warn { margin-top:8px; display:flex; justify-content:space-between; align-items:center; gap:8px; background:rgba(251,146,60,0.15); border:1px solid rgba(251,146,60,0.5); color:#fdba74; border-radius:10px; padding:7px 10px; font-size:12px; font-weight:700; }
+  .fw-date-warn button { border:none; background:#fb923c; color:#1a1a1a; font-weight:800; font-size:12px; border-radius:8px; padding:5px 10px; cursor:pointer; }
+  .fw-cust-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .fw-cust-chip { border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.07); color:#fff; border-radius:999px; padding:5px 12px; font-size:12px; font-weight:700; cursor:pointer; }
+  .fw-cust-chip:active { background:rgba(250,204,21,0.3); }
+  .fw-wd-badge { display:inline-block; margin-left:6px; font-size:12px; font-weight:900; color:#1a1a1a; background:#facc15; border-radius:6px; padding:1px 8px; }
+  .fw-wd-badge.weekend { background:#f87171; color:#fff; }
+  /* 歷史彈窗 */
+  .fw-hist-filter { display:flex; gap:8px; padding:12px 15px 0; align-items:center; }
+  .fw-hist-chip, .fw-hist-month { border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.07); color:#fff; border-radius:999px; padding:7px 14px; font-size:13px; font-weight:700; cursor:pointer; }
+  .fw-hist-chip.active, .fw-hist-month.active { background:#facc15; color:#1a1a1a; border-color:#facc15; }
+  .fw-hist-month { appearance:none; -webkit-appearance:none; padding-right:14px; color-scheme:dark; }
+  .fw-hcard { position:relative; border-radius:14px; padding:12px 14px 12px; min-height:84px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.04); }
+  .fw-hcard.fuel { border-color:rgba(251,191,36,0.3); background:rgba(251,191,36,0.05); }
+  .fw-hcard.drive { border-color:rgba(74,222,128,0.3); background:rgba(74,222,128,0.05); }
+  .fw-hcard .plate { position:absolute; top:10px; right:10px; line-height:0; }
+  .fw-hcard .dt { font-size:13px; font-weight:800; opacity:0.85; display:flex; align-items:center; gap:6px; padding-right:100px; }
+  .fw-hcard .big { font-size:22px; font-weight:900; color:#fff; margin:8px 0 2px; }
+  .fw-hcard .big small { font-size:12px; opacity:0.65; font-weight:600; margin-left:4px; }
+  .fw-hcard .sub { font-size:12px; opacity:0.7; display:flex; align-items:center; gap:5px; margin-top:4px; }
+  .fw-hcard .edit-btn { position:absolute; right:10px; bottom:10px; width:32px; height:32px; padding:0; border:none; border-radius:50%; background:rgba(56,189,248,0.18); color:#38bdf8; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .fw-hcard .edit-btn:active { transform:scale(0.9); }
+  .fw-hcard .big, .fw-hcard .sub { padding-right:42px; }
+</style>
+
     <!-- Tab 2: 日誌 Log (支援同客戶多任務) -->
     <div id="fw-log" class="fw-tab-content active">
       <div class="fw-form">
@@ -86,7 +157,21 @@
             <label style="flex:1; margin:0;">日誌日期</label>
             <span id="fw-log-stat-sleeper" class="fw-log-stat-breath" style="display:none; font-size:12px; font-weight:900; color:#a855f7; white-space:nowrap;">--</span>
           </div>
-          <input type="date" id="log-date" style="color-scheme: dark;">
+          <div class="fw-datebar">
+            <button type="button" class="fw-datebar-arrow" aria-label="前一天" onclick="fwLogShiftDay(-1)"><svg class="ait-ico" width="20" height="20" aria-hidden="true"><use href="#ico-chev-l"/></svg></button>
+            <div class="fw-datebar-main" id="fw-datebar-main" onclick="fwLogOpenPicker()">
+              <div class="fw-datebar-date" id="log-date-label">--</div>
+              <div class="fw-datebar-wd" id="log-date-wd">--</div>
+              <span class="fw-datebar-cal"><svg class="ait-ico" width="16" height="16" aria-hidden="true"><use href="#ico-calendar"/></svg></span>
+            </div>
+            <button type="button" class="fw-datebar-arrow" aria-label="後一天" onclick="fwLogShiftDay(1)"><svg class="ait-ico" width="20" height="20" aria-hidden="true"><use href="#ico-chev-r"/></svg></button>
+          </div>
+          <div class="fw-weekstrip" id="fw-weekstrip"></div>
+          <div class="fw-date-warn" id="fw-date-warn" style="display:none;">
+            <span><svg class="ait-ico" width="15" height="15" aria-hidden="true"><use href="#ico-alert"/></svg> 目前記錄的不是今天</span>
+            <button type="button" onclick="fwLogSetDate(fwTodayStr())">回到今天</button>
+          </div>
+          <input type="date" id="log-date" class="fw-date-native" onchange="fwLogSetDate(this.value)" style="color-scheme: dark;">
         </div>
         <style>
           @keyframes fwLogStatBreath {
@@ -102,6 +187,7 @@
           <datalist id="customer-list">
             <!-- 由 JS 動態填入 -->
           </datalist>
+          <div class="fw-cust-chips" id="fw-cust-chips"></div>
         </div>
 
         <!-- 任務清單（支援新增多筆） -->
@@ -117,7 +203,8 @@
       <div class="fw-timeline-header">
         <div class="fw-section-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:8px;">
           <span id="fw-log-view-title">今日</span>
-          <input type="date" id="fw-log-view-date" onchange="refreshFwTimeline(this.value)" style="background:transparent; border:none; color:#fbbf24; font-size:16px; font-weight:800; cursor:pointer; outline:none; color-scheme: dark; width: auto; padding: 0;">
+          <span id="fw-log-view-label" style="color:#fbbf24; font-weight:800;"></span>
+          <input type="date" id="fw-log-view-date" onchange="fwLogSetDate(this.value)" style="display:none;">
           <span>行程足跡</span>
         </div>
         <div id="fw-log-timeline" class="fw-timeline-arrow-wrap">
@@ -127,7 +214,7 @@
 
       <!-- 🕒 歷史紀錄區塊 (從回顧遷移至此) -->
       <div class="fw-history-integration" style="margin-top:40px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:30px;">
-        <div class="fw-section-title" style="text-align:center; color:#facc15; margin-bottom:20px;">📅 歷史紀錄回顧</div>
+        <div class="fw-section-title" style="text-align:center; color:#facc15; margin-bottom:20px;"><svg class="ait-ico" width="18" height="18" aria-hidden="true"><use href="#ico-calendar"/></svg> 歷史紀錄回顧</div>
         
 
         <!-- 日曆導航 -->
@@ -163,8 +250,12 @@
             <input type="text" id="drv-plate-number" list="plate-list" placeholder="選擇或輸入車號">
           </div>
           <div class="fw-field" style="margin-top:10px;">
-            <label>紀錄日期</label>
-            <input type="date" id="drv-date">
+            <label>紀錄日期 <span id="drv-date-wd" class="fw-wd-badge">--</span></label>
+            <div style="display:flex; gap:8px; align-items:stretch;">
+              <button type="button" class="fw-datebar-arrow" style="width:44px; padding:10px 0;" aria-label="前一天" onclick="fwDrvShiftDay(-1)"><svg class="ait-ico" width="18" height="18" aria-hidden="true"><use href="#ico-chev-l"/></svg></button>
+              <input type="date" id="drv-date" onchange="fwDrvDateChanged()" style="flex:1; min-width:0; text-align:center;">
+              <button type="button" class="fw-datebar-arrow" style="width:44px; padding:10px 0;" aria-label="後一天" onclick="fwDrvShiftDay(1)"><svg class="ait-ico" width="18" height="18" aria-hidden="true"><use href="#ico-chev-r"/></svg></button>
+            </div>
           </div>
         </div>
 
@@ -172,9 +263,9 @@
         <div style="background:rgba(74,222,128,0.05); border-radius:12px; padding:15px; margin-bottom:15px; border:1px solid rgba(74,222,128,0.2);">
           <div style="font-weight:800; color:#4ade80; font-size:15px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
             <div style="display:flex; align-items:center;">
-              <span style="margin-right:8px;">🚗</span> 里程紀錄
+              <span style="margin-right:8px; display:inline-flex;"><svg class="ait-ico" width="18" height="18" aria-hidden="true"><use href="#ico-car"/></svg></span> 里程紀錄
             </div>
-            <button type="button" onclick="openDrivingHistory()" style="background:rgba(255,255,255,0.1); border:none; color:#4ade80; font-size:11px; padding:3px 8px; border-radius:6px; cursor:pointer;">📜 歷史紀錄</button>
+            <button type="button" onclick="openDrivingHistory()" style="background:rgba(255,255,255,0.1); border:none; color:#4ade80; font-size:11px; padding:3px 8px; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;"><svg class="ait-ico" width="13" height="13" aria-hidden="true"><use href="#ico-history"/></svg> 歷史紀錄</button>
           </div>
           <div class="fw-row">
             <div class="fw-field">
@@ -186,16 +277,16 @@
               <input type="number" id="drv-end-odometer" inputmode="numeric" placeholder="輸入目前里程" oninput="calcDrvDist()">
             </div>
           </div>
-          <button class="fw-btn-primary" style="margin-top:15px; background:linear-gradient(135deg, #4ade80 0%, #22c55e 100%);" onclick="submitFwMileage(this)">儲存里程紀錄</button>
+          <button class="fw-btn-primary" style="margin-top:15px; width:100%; display:block; background:linear-gradient(135deg, #4ade80 0%, #22c55e 100%);" onclick="submitFwMileage(this)">儲存里程紀錄</button>
         </div>
 
         <!-- ⛽ 區塊二：加油紀錄 -->
         <div style="background:rgba(251,191,36,0.05); border-radius:12px; padding:15px; border:1px solid rgba(251,191,36,0.2);">
           <div style="font-weight:800; color:#fbbf24; font-size:15px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
             <div style="display:flex; align-items:center;">
-              <span style="margin-right:8px;">⛽</span> 加油紀錄
+              <span style="margin-right:8px; display:inline-flex;"><svg class="ait-ico" width="18" height="18" aria-hidden="true"><use href="#ico-fuel"/></svg></span> 加油紀錄
             </div>
-            <button type="button" onclick="openFuelHistory()" style="background:rgba(255,255,255,0.1); border:none; color:#fbbf24; font-size:11px; padding:3px 8px; border-radius:6px; cursor:pointer;">📜 歷史紀錄</button>
+            <button type="button" onclick="openFuelHistory()" style="background:rgba(255,255,255,0.1); border:none; color:#fbbf24; font-size:11px; padding:3px 8px; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;"><svg class="ait-ico" width="13" height="13" aria-hidden="true"><use href="#ico-history"/></svg> 歷史紀錄</button>
           </div>
           <div class="fw-row">
             <div class="fw-field">
@@ -207,7 +298,7 @@
               <input type="number" id="drv-fuel-liters" step="0.01" inputmode="decimal" placeholder="0.00">
             </div>
           </div>
-          <button class="fw-btn-primary" style="margin-top:15px; background:linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);" onclick="submitFwFuel(this)">儲存加油紀錄</button>
+          <button class="fw-btn-primary" style="margin-top:15px; width:100%; display:block; background:linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);" onclick="submitFwFuel(this)">儲存加油紀錄</button>
         </div>
       </div>
     </div>
@@ -216,8 +307,12 @@
     <div id="modal-driving-history" class="fw-modal" style="display:none;">
       <div class="fw-modal-content">
         <div class="fw-modal-header">
-          <div class="fw-modal-title" style="color:#facc15; font-weight:800;">🛣️ 近期行駛紀錄</div>
+          <div class="fw-modal-title" style="color:#facc15; font-weight:800; display:flex; align-items:center; gap:8px;"><svg class="ait-ico" width="20" height="20" aria-hidden="true"><use href="#ico-road"/></svg> 行駛紀錄</div>
           <button class="fw-modal-close" onclick="document.getElementById('modal-driving-history').style.display='none'">&times;</button>
+        </div>
+        <div class="fw-hist-filter" id="drv-hist-filter">
+          <button type="button" class="fw-hist-chip active" data-r="14" onclick="fwHistSetRange('drv','14',this)">近兩週</button>
+          <select class="fw-hist-month" id="drv-hist-month" onchange="fwHistSetRange('drv',this.value,this)"></select>
         </div>
         <div id="driving-history-list" style="max-height:65vh; overflow-y:auto; padding:15px;">
            <!-- 內容由 JS 生成 -->
@@ -229,8 +324,12 @@
     <div id="modal-fuel-history" class="fw-modal" style="display:none;">
       <div class="fw-modal-content">
         <div class="fw-modal-header">
-          <div class="fw-modal-title" style="color:#fbbf24; font-weight:800;">⛽ 近期加油紀錄</div>
+          <div class="fw-modal-title" style="color:#fbbf24; font-weight:800; display:flex; align-items:center; gap:8px;"><svg class="ait-ico" width="20" height="20" aria-hidden="true"><use href="#ico-fuel"/></svg> 加油紀錄</div>
           <button class="fw-modal-close" onclick="document.getElementById('modal-fuel-history').style.display='none'">&times;</button>
+        </div>
+        <div class="fw-hist-filter" id="fuel-hist-filter">
+          <button type="button" class="fw-hist-chip active" data-r="14" onclick="fwHistSetRange('fuel','14',this)">近兩週</button>
+          <select class="fw-hist-month" id="fuel-hist-month" onchange="fwHistSetRange('fuel',this.value,this)"></select>
         </div>
         <div id="fuel-history-list" style="max-height:65vh; overflow-y:auto; padding:15px;">
            <!-- 內容由 JS 生成 -->
@@ -242,7 +341,7 @@
     <div id="modal-edit-driving" class="fw-modal" style="display:none;">
       <div class="fw-modal-content">
         <div class="fw-modal-header">
-          <div class="fw-modal-title" style="color:#38bdf8; font-weight:800;">✏️ 編輯行駛/加油紀錄</div>
+          <div class="fw-modal-title" style="color:#38bdf8; font-weight:800;"><span style="display:inline-flex;vertical-align:-3px;margin-right:6px;"><svg class="ait-ico" width="20" height="20" aria-hidden="true"><use href="#ico-edit"/></svg></span>編輯行駛/加油紀錄</div>
           <button class="fw-modal-close" onclick="document.getElementById('modal-edit-driving').style.display='none'">&times;</button>
         </div>
         <div style="padding:20px; max-height:70vh; overflow-y:auto;">
@@ -282,8 +381,8 @@
             <input type="text" id="edit-drv-note" placeholder="備註">
           </div>
           <div style="display:flex; gap:10px; margin-top:20px;">
-            <button class="fw-btn-primary" style="flex:1; background:linear-gradient(135deg,#38bdf8,#0284c7);" onclick="saveEditDrivingRecord()">✅ 儲存修改</button>
-            <button class="fw-btn-primary" style="flex:1; background:linear-gradient(135deg,#ef4444,#b91c1c);" onclick="deleteDrivingRecord()">🗑️ 刪除紀錄</button>
+            <button class="fw-btn-primary" style="flex:1; background:linear-gradient(135deg,#38bdf8,#0284c7);" onclick="saveEditDrivingRecord()"><span style="display:inline-flex;vertical-align:-3px;margin-right:4px;"><svg class="ait-ico" width="18" height="18" aria-hidden="true"><use href="#ico-check"/></svg></span>儲存修改</button>
+            <button class="fw-btn-primary" style="flex:1; background:linear-gradient(135deg,#ef4444,#b91c1c);" onclick="deleteDrivingRecord()"><span style="display:inline-flex;vertical-align:-3px;margin-right:4px;"><svg class="ait-ico" width="18" height="18" aria-hidden="true"><use href="#ico-trash"/></svg></span>刪除紀錄</button>
           </div>
           <button class="fw-btn-primary" style="width:100%; margin-top:10px; background:rgba(255,255,255,0.1);" onclick="document.getElementById('modal-edit-driving').style.display='none'">返回列表</button>
         </div>

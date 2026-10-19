@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <style>body { margin: 0; background: #0b0f19; color: #e2e8f0; font-family: -apple-system, 'Noto Sans TC', sans-serif; } #aitKeysMsg { min-height: 100vh; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #94a3b8; padding: 20px; text-align: center; }</style>
+</head>
+<body>
+  <!-- 🔐 機密中心登入殼：主管登入後才向後端取內容 (aitKeysPageHtml，只有主管能呼叫) -->
+  <div id="aitKeysMsg">🔐 高雅瓷機密中心：請用主管帳號登入</div>
+  <?!= include('JS_AitAuth'); ?>
+  <script>
+    AIT.gate(function () {
+      var msg = document.getElementById('aitKeysMsg');
+      if (msg) msg.textContent = '載入機密中心…';
+      google.script.run
+        .withSuccessHandler(function (html) { AIT.injectPage(html); })
+        .withFailureHandler(function (e) { if (msg) msg.textContent = '無法載入：' + ((e && e.message) || e); })
+        .aitKeysPageHtml();
+    }, { need: 'king', force: true });
+  </script>
+</body>
+</html>

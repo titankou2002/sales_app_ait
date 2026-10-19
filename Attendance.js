@@ -59,7 +59,7 @@ function _rowToStaff(row) {
 
 // ─── 員工管理 ───────────────────────────────────────────
 
-function getAttendanceStaffList() {
+function getAttendanceStaffList_impl_() {
   try {
     var sheet = _getAttSheet('員工資料');
     var data = sheet.getDataRange().getValues();
@@ -75,7 +75,7 @@ function getAttendanceStaffList() {
   }
 }
 
-function saveAttendanceStaff(data) {
+function saveAttendanceStaff_impl_(data) {
   try {
     var sheet = _getAttSheet('員工資料');
     var rows = sheet.getDataRange().getValues();
@@ -118,8 +118,16 @@ function saveAttendanceStaff(data) {
 
 // ─── 打卡紀錄 ───────────────────────────────────────────
 
-function getTodayAttendance() {
+function getTodayAttendance_impl_() {
   try {
+    // 🚀 效能優化：今日出勤是儀表板，進出頁面會頻繁重撈；打卡資料更新即時性要求低（30 秒可接受），
+    //    CacheManager 短快取避免每次 openById+全表重掃。
+    var cacheKey = 'att_today_v1';
+    try {
+      var cached = CacheManager.getLarge(cacheKey);
+      if (cached) return cached;
+    } catch (e) {}
+
     var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
     var staffSheet = _getAttSheet('員工資料');
     var punchSheet = _getAttSheet('打卡紀錄');
@@ -182,13 +190,15 @@ function getTodayAttendance() {
         note: punch ? punch[10] : (inLeave ? inLeave : '')
       });
     }
-    return { success: true, data: result };
+    var out = { success: true, data: result };
+    try { CacheManager.putLarge(cacheKey, out, 30); } catch (e) {}
+    return out;
   } catch(e) {
     return { success: false, msg: e.toString() };
   }
 }
 
-function savePunchRecord(data) {
+function savePunchRecord_impl_(data) {
   try {
     var sheet = _getAttSheet('打卡紀錄');
     var allRows = sheet.getDataRange().getValues();
@@ -258,7 +268,7 @@ function savePunchRecord(data) {
   }
 }
 
-function getMonthlyAttendance(year, month, empId) {
+function getMonthlyAttendance_impl_(year, month, empId) {
   try {
     var sheet = _getAttSheet('打卡紀錄');
     var data = sheet.getDataRange().getValues();
@@ -297,7 +307,7 @@ function getMonthlyAttendance(year, month, empId) {
 
 // ─── 請假管理 ───────────────────────────────────────────
 
-function getLeaveList(status) {
+function getLeaveList_impl_(status) {
   try {
     var sheet = _getAttSheet('請假紀錄');
     var data = sheet.getDataRange().getValues();
@@ -328,7 +338,7 @@ function getLeaveList(status) {
   }
 }
 
-function addLeaveRecord(data) {
+function addLeaveRecord_impl_(data) {
   try {
     var sheet = _getAttSheet('請假紀錄');
     var staffSheet = _getAttSheet('員工資料');
@@ -356,7 +366,7 @@ function addLeaveRecord(data) {
   }
 }
 
-function updateLeaveStatus(leaveId, status) {
+function updateLeaveStatus_impl_(leaveId, status) {
   try {
     var sheet = _getAttSheet('請假紀錄');
     var data = sheet.getDataRange().getValues();
@@ -404,7 +414,7 @@ function _calcAnnualLeave(tenure) {
   return Math.min(15 + Math.floor(tenure - 10) + 1, 30);
 }
 
-function getLeaveBalance() {
+function getLeaveBalance_impl_() {
   try {
     var sheet = _getAttSheet('特休餘額');
     var data = sheet.getDataRange().getValues();
@@ -431,7 +441,7 @@ function getLeaveBalance() {
   }
 }
 
-function recalcLeaveBalance() {
+function recalcLeaveBalance_impl_() {
   try {
     var staffSheet = _getAttSheet('員工資料');
     var leaveSheet = _getAttSheet('請假紀錄');
@@ -487,7 +497,7 @@ function recalcLeaveBalance() {
   }
 }
 
-function updateLeaveBalance(empId, remainDays) {
+function updateLeaveBalance_impl_(empId, remainDays) {
   try {
     var sheet = _getAttSheet('特休餘額');
     var data = sheet.getDataRange().getValues();
@@ -504,7 +514,7 @@ function updateLeaveBalance(empId, remainDays) {
   }
 }
 
-function updateLeaveBalanceFull(empId, annual, used) {
+function updateLeaveBalanceFull_impl_(empId, annual, used) {
   try {
     var sheet = _getAttSheet('特休餘額');
     var data = sheet.getDataRange().getValues();
@@ -535,7 +545,7 @@ function updateLeaveBalanceFull(empId, annual, used) {
   }
 }
 
-function deleteAttendanceStaff(empId) {
+function deleteAttendanceStaff_impl_(empId) {
   try {
     var sheet = _getAttSheet('員工資料');
     var data = sheet.getDataRange().getValues();
@@ -553,7 +563,7 @@ function deleteAttendanceStaff(empId) {
 
 // ─── 薪資計算 ───────────────────────────────────────────
 
-function calcMonthlySalary(year, month) {
+function calcMonthlySalary_impl_(year, month) {
   try {
     var staffSheet = _getAttSheet('員工資料');
     var punchSheet = _getAttSheet('打卡紀錄');
@@ -651,7 +661,7 @@ function calcMonthlySalary(year, month) {
   }
 }
 
-function saveSalarySlips(year, month) {
+function saveSalarySlips_impl_(year, month) {
   try {
     var res = calcMonthlySalary(year, month);
     if (!res.success) return res;
@@ -678,7 +688,7 @@ function saveSalarySlips(year, month) {
   }
 }
 
-function updateSalaryRow(data) {
+function updateSalaryRow_impl_(data) {
   try {
     var sheet = _getAttSheet('薪資計算紀錄');
     var rows = sheet.getDataRange().getValues();
@@ -699,7 +709,7 @@ function updateSalaryRow(data) {
 // 加薪記錄從原始薪資試算表讀取
 var RAISE_SOURCE_ID = '1xMOOzl_Ad7OkUrvli5ZMnONymWLhUL2s49Ral-HIC6M';
 
-function getRaiseRecords() {
+function getRaiseRecords_impl_() {
   try {
     var ss = SpreadsheetApp.openById(RAISE_SOURCE_ID);
     var sheet = ss.getSheetByName('加薪記錄');

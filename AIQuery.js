@@ -86,7 +86,7 @@ function _aiGetProviderConfig_() {
  * @param {string} [deviceId] 前端 localStorage 存的裝置代號，用來做每分鐘次數限制（防止 API 費用被濫用）
  * @param {string} [bypassPassword] 超過每分鐘限額時，輸入這組密碼可直接放行本次查詢
  */
-function aiAssistantAsk(question, deviceId, bypassPassword) {
+function aiAssistantAsk_impl_(question, deviceId, bypassPassword) {
   try {
     const q = String(question || '').trim();
     if (!q) return { success: false, msg: '請輸入您想查詢的內容' };

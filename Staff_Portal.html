@@ -221,6 +221,7 @@
     </div>
   </div>
 
+  <?!= include('JS_AitAuth'); ?>
   <script>
     var allProducts = [];
     var currentGalleryData = { scenes: [], singles: [], molds: [], intros: [], catalogs: [] };
@@ -230,7 +231,8 @@
     
     window.onload = function() {
       initParticles();
-      loadData();
+      // 🔐 v2: 先登入 (LINE / Google) 才載入資料
+      AIT.gate(function () { loadData(); });
       
       // 🚀 Splash 動畫邏輯
       setTimeout(() => {

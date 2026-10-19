@@ -167,7 +167,7 @@ function forceUpdateAllFwHeaders() {
 /**
  * 📍 打卡報班 API (重新設計類別版)
  */
-function saveAttendance(payload) {
+function saveAttendance_impl_(payload) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.ATTENDANCE);
     const now = new Date();
@@ -401,7 +401,7 @@ function saveWorkLog(payload) {
 /**
  * 📅 取得指定日期的工作日誌（歷史查詢用）
  */
-function getWorkLogHistory(employeeName, dateStr) {
+function getWorkLogHistory_impl_(employeeName, dateStr) {
   try {
     const searchName = String(employeeName || "").trim().replace(/\s/g, '');
 
@@ -464,6 +464,11 @@ function clearWorkLogCache_(employeeName, dateStr) {
     // 🚀 [2026-08] 一併清除每日報表快取，避免里程/油資顯示舊值
     const dStr = String(dateStr || "").split(' ')[0].replace(/\//g, '-');
     cache.remove("FW_DAILY_" + searchName + "_" + dStr);
+    // 🚀 [2026-09] 一併清除「全知視角」每日總覽快取，避免新打的工作日誌被舊快取蓋住看不到
+    cache.remove("ALL_SALES_v6_" + dStr);
+    cache.remove("ALL_SALES_v6_AUTO");
+    // 🚀 月曆的「本月已記錄日期」快取也要清，不然剛存的今天不會馬上出現綠點
+    if (dStr) cache.remove("WL_MONTH_" + searchName + "_" + dStr.slice(0, 7));
   } catch (e) {}
 }
 
@@ -555,7 +560,7 @@ function fwGetValidCustomerSetForBiz_(employeeName) {
   return set;
 }
 
-function getCustomerVisitRanking(employeeName) {
+function getCustomerVisitRanking_impl_(employeeName) {
   const searchName = String(employeeName || "").trim().replace(/\s/g, '');
   if (!searchName) return { success: false, msg: "缺少業務姓名" };
 
@@ -697,7 +702,7 @@ function getCustomerVisitRanking(employeeName) {
  * @param {string} employeeName  業務姓名
  * @param {number} [declineThreshold=-10]  判斷「下滑」的 YoY % 門檻，預設 -10%
  */
-function getCustomerYoyVisitMatrix(employeeName, declineThreshold) {
+function getCustomerYoyVisitMatrix_impl_(employeeName, declineThreshold) {
   const name = String(employeeName || '').trim();
   if (!name) return { success: false, msg: '缺少業務姓名' };
   const threshold = (typeof declineThreshold === 'number') ? declineThreshold : -10;
@@ -960,7 +965,7 @@ function deleteWorkLog(logId) {
  * 一天內多筆任務是用 " || " 串接在同一列的同一欄位裡，此函式只把符合的那一段拿掉，
  * 若拿掉後該列已無任何任務才整列刪除。
  */
-function deleteWorkLogEntry(payload) {
+function deleteWorkLogEntry_impl_(payload) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.WORKLOG);
     const data = sheet.getDataRange().getValues();
@@ -1018,7 +1023,7 @@ function deleteWorkLogEntry(payload) {
  * 📝 更新指定工作日誌（同一天內「單一筆」任務，不會動到同一天的其他任務）
  * payload: { id, employeeName, date, originalTime, originalCustomer, customerName, result, content }
  */
-function updateWorkLog(payload) {
+function updateWorkLog_impl_(payload) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.WORKLOG);
     const data = sheet.getDataRange().getValues();
@@ -1071,20 +1076,31 @@ function updateWorkLog(payload) {
 /**
  * 📆 取得指定月份中有日誌紀錄的日期（用於日曆標點）
  */
-function getWorkLogMonthDates(employeeName, monthStr) {
+function getWorkLogMonthDates_impl_(employeeName, monthStr) {
   try {
+    // 🚀 效能：切工作日誌分頁、翻月曆都會呼叫，原本完全沒快取、整表重掃 WORKLOG。
+    // 當月會持續變動只給短快取；非當月（已翻過去的月份）幾乎不會再變，給長快取。
+    const cache = CacheService.getScriptCache();
+    const searchName = String(employeeName || "").trim();
+    const cacheKey = "WL_MONTH_" + searchName.replace(/\s/g, '') + "_" + monthStr;
+    const cached = cache.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
     const sheet = getFwSheet(FW_CONFIG.SHEETS.WORKLOG);
     const data = sheet.getDataRange().getValues();
     const datesSet = new Set();
 
     data.slice(1).forEach(row => {
       const rowDate = String(row[0]).trim().substring(0, 10);
-      if (String(row[1]) === String(employeeName) && rowDate.startsWith(monthStr)) {
+      if (String(row[1]) === searchName && rowDate.startsWith(monthStr)) {
         datesSet.add(rowDate);
       }
     });
 
-    return { success: true, dates: Array.from(datesSet) };
+    const result = { success: true, dates: Array.from(datesSet) };
+    const isCurrentMonth = monthStr === Utilities.formatDate(new Date(), "GMT+8", "yyyy-MM");
+    try { cache.put(cacheKey, JSON.stringify(result), isCurrentMonth ? 300 : 21600); } catch (e) {}
+    return result;
   } catch (e) {
     return { success: false, dates: [] };
   }
@@ -1095,7 +1111,7 @@ function getWorkLogMonthDates(employeeName, monthStr) {
 /**
  * 📊 取得今日打卡狀態
  */
-function getTodayStatus(employeeName) {
+function getTodayStatus_impl_(employeeName) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.ATTENDANCE);
     const data = sheet.getDataRange().getValues();
@@ -1141,7 +1157,7 @@ function getTodayStatus(employeeName) {
 /**
  * 📅 取得月份打卡報表
  */
-function getAttendanceReport(employeeName, monthStr) {
+function getAttendanceReport_impl_(employeeName, monthStr) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.ATTENDANCE);
     const data = sheet.getDataRange().getValues();
@@ -1227,7 +1243,7 @@ function autoCheckMissingCheckout() {
 /**
  * 📊 取得今日綜合日報數據 (強化版)
  */
-function getDailyReportData(employeeName) {
+function getDailyReportData_impl_(employeeName) {
   try {
     console.log("正在獲取業務今日報表:", employeeName);
     const now = new Date();
@@ -1452,7 +1468,7 @@ function fwGetAssignedTasksForDate_(dateStrHyphen) {
   return map;
 }
 
-function getAllSalesDailyReports(targetDate) {
+function getAllSalesDailyReports_impl_(targetDate) {
   try {
     // 快取：同一天內不重複讀表（今天短、過去日期長，比照全知視角口徑）
     const cache = CacheService.getScriptCache();
@@ -1663,7 +1679,7 @@ function getAllSalesDailyReports(targetDate) {
 /**
  * 📜 管理者專用：取得業務員過去 N 天的拜訪歷史
  */
-function getSalesHistoryReport(employeeName, days = 5) {
+function getSalesHistoryReport_impl_(employeeName, days = 5) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.WORKLOG);
     const data = sheet.getDataRange().getValues();
@@ -1717,7 +1733,7 @@ function getSalesHistoryReport(employeeName, days = 5) {
 /**
  * 📧 自動化功能 1：每日傍晚發送今日行程總覽給高弘治 (titankou2002@gmail.com)
  */
-function sendDailyAdminSummary() {
+function sendDailyAdminSummary_impl_() {
   const adminEmail = FW_CONFIG.EMAILS["高弘治"];
   const res = getAllSalesDailyReports();
   if (!res.success || res.data.length === 0) return;
@@ -1751,7 +1767,7 @@ function sendDailyAdminSummary() {
 /**
  * 📧 自動化功能 2：每日晚上 7 點發送未打卡通知給業務員
  */
-function sendMissingCheckoutReminders() {
+function sendMissingCheckoutReminders_impl_() {
   const ss = SpreadsheetApp.openById(FW_CONFIG.SS_ID);
   const sheet = ss.getSheetByName(FW_CONFIG.SHEETS.ATTENDANCE);
   if (!sheet) return;
@@ -1787,7 +1803,7 @@ function sendMissingCheckoutReminders() {
 /**
  * 📈 取得月度統計摘要
  */
-function getFieldWorkSummary(employeeName, monthStr) {
+function getFieldWorkSummary_impl_(employeeName, monthStr) {
   try {
     const stats = {
       workDays: 0,
@@ -1871,7 +1887,7 @@ function getFieldWorkSummary(employeeName, monthStr) {
 /**
  * 📄 生成出缺勤報告 (勞工局檢查格式)
  */
-function generateAttendanceReport(employeeName, monthStr) {
+function generateAttendanceReport_impl_(employeeName, monthStr) {
   try {
     const ss = SpreadsheetApp.openById(FW_CONFIG.SS_ID);
     const sheet = ss.getSheetByName(FW_CONFIG.SHEETS.ATTENDANCE);
@@ -1926,8 +1942,15 @@ function generateAttendanceReport(employeeName, monthStr) {
 /**
  * 👥 取得該業務負責的客戶清單 (終極強化版)
  */
-function getSalesCustomers(salesName) {
+function getSalesCustomers_impl_(salesName) {
   try {
+    // 🚀 效能：每次切進工作日誌分頁都會呼叫一次，但「業務分區」是人工低頻異動表，
+    // 完全沒有快取一直整表重掃太浪費，加 30 分快取（跟本專案 9/18 效能優化的 TTL 拉長方向一致）。
+    const cache = CacheService.getScriptCache();
+    const cacheKey = "SALES_CUST_" + String(salesName || "").trim().replace(/\s/g, '');
+    const cached = cache.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
     const sheet = ss.getSheetByName("業務分區");
     if (!sheet) return [];
@@ -1979,6 +2002,7 @@ function getSalesCustomers(salesName) {
 
     const result = [...new Set(sorted.map(c => c.name))];
     console.log("過濾後客戶數量: " + result.length + " (業務: " + salesName + ")");
+    try { cache.put(cacheKey, JSON.stringify(result), 1800); } catch (e) {}
     return result;
   } catch (e) {
     console.error("getSalesCustomers Error: " + e.toString());
@@ -1993,7 +2017,7 @@ function getSalesCustomers(salesName) {
 /**
  * 📝 提交請假報備
  */
-function submitLeaveRequest(data) {
+function submitLeaveRequest_impl_(data) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.LEAVE);
 
@@ -2024,7 +2048,7 @@ function submitLeaveRequest(data) {
   }
 }
 
-function getTodayLogs(employeeName) {
+function getTodayLogs_impl_(employeeName) {
   try {
     // 快取 120 秒
     var cache = CacheService.getScriptCache();
@@ -2082,7 +2106,7 @@ function getTodayLogs(employeeName) {
  * 🚗 取得上一次結束里程（自動帶入開始里程）
  * 欄位：日期(0), 業務姓名(1), 開始里程(2), 結束里程(3), 行駛距離(4), 今日行程(5), 加油公升(6), 加油金額(7), 備註(8), 記錄ID(9)
  */
-function getLastOdometer(employeeName) {
+function getLastOdometer_impl_(employeeName) {
   try {
     // 快取該業務最後里程（5 分鐘有效）
     var cache = CacheService.getScriptCache();
@@ -2215,19 +2239,56 @@ function syncTodayRouteToDrivingLog(employeeName, dateStr) {
     if (!route) return;
 
     const sheet = getFwSheet(FW_CONFIG.SHEETS.DRIVING_LOG);
-    const data = sheet.getDataRange().getValues();
-    const searchName = String(employeeName).trim();
-
-    for (let i = data.length - 1; i >= 1; i--) {
-      const rowDate = fwNormaliseDate_(data[i][0]);
-      if (rowDate === dateStr && String(data[i][1]).trim() === searchName) {
-        // 今日行程在第 7 欄 (Index 6)
-        sheet.getRange(i + 1, 7).setValue(route);
-      }
+    // 🚀 效能：改用列號快取定位（比照 saveWorkLog 的做法），避免每存一筆行程就整表重掃一次行駛日誌
+    const rowIdx = _fwFindDrivingLogRow_(sheet, employeeName, dateStr);
+    if (rowIdx > 0) {
+      // 今日行程在第 7 欄 (Index 6)
+      sheet.getRange(rowIdx, 7).setValue(route);
     }
   } catch (e) {
     console.error("同步行程失敗:", e);
   }
+}
+
+/**
+ * 🚀 效能共用：定位「行駛日誌」中某業務、某日期的列號。
+ * 先查列號快取（12 小時），命中就只讀 2 格驗證是否還對得上；沒命中或驗證失敗才整表重掃一次。
+ * 供 syncTodayRouteToDrivingLog / saveDrivingFuelRecord 共用，取代原本各自重複的整表 for 迴圈。
+ */
+function _fwFindDrivingLogRow_(sheet, employeeName, dateStr, plateNumber) {
+  const searchName = String(employeeName || '').trim();
+  const searchPlate = plateNumber !== undefined ? String(plateNumber || '').trim() : null;
+  const cache = CacheService.getScriptCache();
+  const cacheKey = "DRV_ROW_" + searchName.replace(/\s/g, '') + "_" + dateStr + (searchPlate !== null ? "_" + searchPlate : "");
+  const cached = cache.get(cacheKey);
+  let rowIdx = cached ? parseInt(cached, 10) : -1;
+
+  if (rowIdx > 0) {
+    try {
+      const check = sheet.getRange(rowIdx, 1, 1, 3).getValues()[0];
+      const rDate = fwNormaliseDate_(check[0]);
+      const rName = String(check[1] || '').trim();
+      const rPlate = String(check[2] || '').trim();
+      const ok = rDate === dateStr && rName === searchName && (searchPlate === null || rPlate === searchPlate);
+      if (!ok) rowIdx = -1;
+    } catch (e) { rowIdx = -1; }
+  }
+
+  if (rowIdx === -1) {
+    const data = sheet.getDataRange().getValues();
+    for (let i = data.length - 1; i >= 1; i--) {
+      const rowDate = fwNormaliseDate_(data[i][0]);
+      if (rowDate !== dateStr || String(data[i][1]).trim() !== searchName) continue;
+      if (searchPlate !== null && String(data[i][2]).trim() !== searchPlate) continue;
+      rowIdx = i + 1;
+      break;
+    }
+  }
+
+  if (rowIdx > 0) {
+    try { cache.put(cacheKey, String(rowIdx), 43200); } catch (e) {}
+  }
+  return rowIdx;
 }
 
 /**
@@ -2250,16 +2311,24 @@ function getTodayWorkRoute(employeeName) {
 /**
  * 🚗 取得歷史行駛紀錄 (近 30 筆)
  */
-function getDrivingHistory(employeeName) {
+function getDrivingHistory_impl_(employeeName) {
   try {
+    const searchName = String(employeeName || "").trim();
+
+    // 🚀 效能：整表掃描沒有捷徑可跳過（要抓某人近一週所有列），但結果可以快取；
+    // 寫入時（saveDrivingFuelRecord）會主動清掉這個 key，避免看到舊資料。
+    const cache = CacheService.getScriptCache();
+    const cacheKey = "DRV_HISTORY_" + searchName.replace(/\s/g, '');
+    const cached = cache.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
     const sheet = getFwSheet(FW_CONFIG.SHEETS.DRIVING_LOG);
     if (!sheet) return { success: false, logs: [] };
     const data = sheet.getDataRange().getValues();
-    const searchName = String(employeeName || "").trim();
 
     // 欄位：日期(0), 業務姓名(1), 車牌(2), 開始里程(3), 結束里程(4), 距離(5), 行程(6), 公升(7), 金額(8), 備註(9)
     const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 62); // 近 62 天，前端再篩選（近兩週／各月份）
     oneWeekAgo.setHours(0, 0, 0, 0);
 
     let logs = [];
@@ -2288,7 +2357,9 @@ function getDrivingHistory(employeeName) {
       return dateB - dateA;
     });
 
-    return { success: true, logs: logs };
+    const result = { success: true, logs: logs };
+    try { cache.put(cacheKey, JSON.stringify(result), 90); } catch (e) {}
+    return result;
   } catch (e) {
     return { success: false, logs: [], msg: e.toString() };
   }
@@ -2305,9 +2376,15 @@ function getDrivingHistory(employeeName) {
 /**
  * ⚙️ 取得系統設定 (車號與車主對應表)
  */
-function getFwSettings() {
+function getFwSettings_impl_() {
   try {
-    forceUpdateAllFwHeaders(); // 🚀 自動校正標題列
+    // 🚀 效能：標題列自我修復不用每次進場都跑（清內容+重寫格式共 4 張表，卻幾乎永遠沒變化）。
+    // 改成一天只真的執行一次，其餘呼叫直接跳過，靠快取旗標判斷。
+    const cache = CacheService.getScriptCache();
+    if (!cache.get("FW_HEADERS_OK")) {
+      forceUpdateAllFwHeaders(); // 🚀 自動校正標題列
+      cache.put("FW_HEADERS_OK", "1", 86400);
+    }
     const ss = SpreadsheetApp.openById(FW_CONFIG.SS_ID);
     const sheet = ss.getSheetByName(FW_CONFIG.SHEETS.SETTINGS);
     if (!sheet) return { success: false, msg: "找不到系統設定分頁" };
@@ -2341,13 +2418,11 @@ function getFwSettings() {
 /**
  * 📋 儲存合併行駛日誌 (修正版：加入車牌)
  */
-function saveDrivingFuelRecord(payload) {
+function saveDrivingFuelRecord_impl_(payload) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.DRIVING_LOG);
-    const data = sheet.getDataRange().getValues();
     const now = new Date();
     const dateStr = payload.date || Utilities.formatDate(now, "GMT+8", "yyyy-MM-dd");
-    const searchName = String(payload.employeeName).trim();
     const searchPlate = String(payload.plateNumber || "").trim();
 
     const start = parseFloat(payload.startOdometer) || 0;
@@ -2356,19 +2431,13 @@ function saveDrivingFuelRecord(payload) {
     const fuelAmt = parseFloat(payload.fuelAmount) || 0;
     const route = payload.route || generateTodayRoute(payload.employeeName, dateStr);
 
-    // 嘗試尋找當天、同業務、同車牌的現有紀錄
-    let existingRowIdx = -1;
-    for (let i = data.length - 1; i >= 1; i--) {
-      const rowDate = fwNormaliseDate_(data[i][0]);
-      if (rowDate === dateStr && String(data[i][1]).trim() === searchName && String(data[i][2]).trim() === searchPlate) {
-        existingRowIdx = i + 1;
-        break;
-      }
-    }
+    // 🚀 效能：改用列號快取定位（比照 saveWorkLog），避免每存一筆行程/加油就整表重掃行駛日誌
+    const existingRowIdx = _fwFindDrivingLogRow_(sheet, payload.employeeName, dateStr, searchPlate);
 
+    let result;
     if (existingRowIdx > -1) {
-      // 更新現有紀錄
-      const rowData = data[existingRowIdx - 1];
+      // 更新現有紀錄：只讀這一列，不再讀整表
+      const rowData = sheet.getRange(existingRowIdx, 1, 1, 11).getValues()[0];
 
       // 如果 payload 有里程資訊，更新里程 (Index 3, 4, 5)
       if (end > 0) {
@@ -2392,15 +2461,7 @@ function saveDrivingFuelRecord(payload) {
           sheet.getRange(existingRowIdx, 10).setValue(oldNote + (oldNote ? ";" : "") + payload.note);
         }
       }
-      // 排序：先依姓名(2) 升冪，再依日期(1) 降冪
-      const lastRow = sheet.getLastRow();
-      if (lastRow > 1) {
-        sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort([
-          { column: 2, ascending: true },
-          { column: 1, ascending: false }
-        ]);
-      }
-      return { success: true, id: rowData[10], distance: Math.max(0, end - start), route: route, updated: true };
+      result = { success: true, id: rowData[10], distance: Math.max(0, end - start), route: route, updated: true };
     } else {
       // 新增紀錄
       // 生成唯一 ID (LOG_ + 毫秒 + 隨機數) 避免循環提交時碰撞
@@ -2420,17 +2481,44 @@ function saveDrivingFuelRecord(payload) {
         id
       ];
       sheet.appendRow(row);
-
-      // 排序
-      const lastRow = sheet.getLastRow();
-      if (lastRow > 1) {
-        sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort([
-          { column: 2, ascending: true },
-          { column: 1, ascending: false }
-        ]);
-      }
-      return { success: true, id: id, distance: dist, route: route, updated: false };
+      // 快取這筆新列號，下一次同天存檔（例如先存里程、再存加油）就能秒定位，不用整表重掃
+      try {
+        const cache = CacheService.getScriptCache();
+        const cacheKey = "DRV_ROW_" + String(payload.employeeName || '').trim().replace(/\s/g, '') + "_" + dateStr + "_" + searchPlate;
+        cache.put(cacheKey, String(sheet.getLastRow()), 43200);
+      } catch (e) {}
+      result = { success: true, id: id, distance: dist, route: route, updated: false };
     }
+
+    // 🚀 效能：排序是整表重排，成本隨列數線性增加——改成比照 saveWorkLog，每 20 次寫入才排序一次，
+    // 平常直接略過。使用者看到的是「今日/近期」清單，資料本身沒有立即整表排序的必要。
+    try {
+      const cache = CacheService.getScriptCache();
+      let sc = parseInt(cache.get("DRV_SORT_COUNT") || "0", 10);
+      sc++;
+      cache.put("DRV_SORT_COUNT", String(sc), 21600);
+      if (sc >= 20) {
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort([
+            { column: 2, ascending: true },
+            { column: 1, ascending: false }
+          ]);
+        }
+        cache.put("DRV_SORT_COUNT", "0", 21600);
+      }
+    } catch (e) { console.warn("saveDrivingFuelRecord deferred sort failed:", e); }
+
+    // 寫入後清掉「歷史/近期紀錄」快取，避免使用者存完馬上查看到舊資料
+    // 🚀 也順便清掉今日儀表板快取（FW_DAILY_），不然存完加油/里程，首頁的今日里程/油資會卡舊資料到最多 2 分鐘
+    try {
+      const c = CacheService.getScriptCache();
+      const nameKey = String(payload.employeeName || '').trim().replace(/\s/g, '');
+      c.remove("DRV_HISTORY_" + nameKey);
+      c.remove("FW_DAILY_" + nameKey + "_" + dateStr);
+    } catch (e) {}
+
+    return result;
   } catch (e) {
     return { success: false, msg: e.toString() };
   }
@@ -2441,7 +2529,7 @@ function saveDrivingFuelRecord(payload) {
  * payload: { row, date, plate, start, end, route, fuelLiters, fuelAmount, note }
  * @param {Object} payload.row 工作表列號
  */
-function updateDrivingRecord(payload) {
+function updateDrivingRecord_impl_(payload) {
   try {
     const rowIdx = parseInt(payload.row, 10);
     if (!rowIdx || rowIdx < 2) return { success: false, msg: "缺少有效的列號" };
@@ -2476,15 +2564,26 @@ function updateDrivingRecord(payload) {
 
     // 🚀 [2026-08] 清除該業務當日報表快取，避免顯示舊里程/油資
     clearWorkLogCache_(String(existing[1] || ""), dateStr);
+    // 🚀 內容變了，近期紀錄快取也要清掉，不然清單還顯示改之前的值
+    try { CacheService.getScriptCache().remove("DRV_HISTORY_" + String(existing[1] || '').trim().replace(/\s/g, '')); } catch (e) {}
 
-    // 重新排序：依姓名(2) 升冪、日期(1) 降冪
-    const lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort([
-        { column: 2, ascending: true },
-        { column: 1, ascending: false }
-      ]);
-    }
+    // 🚀 效能：排序跟 saveDrivingFuelRecord 共用同一個計數器，一樣是每 20 次寫入才整表重排一次
+    try {
+      const cache = CacheService.getScriptCache();
+      let sc = parseInt(cache.get("DRV_SORT_COUNT") || "0", 10);
+      sc++;
+      cache.put("DRV_SORT_COUNT", String(sc), 21600);
+      if (sc >= 20) {
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort([
+            { column: 2, ascending: true },
+            { column: 1, ascending: false }
+          ]);
+        }
+        cache.put("DRV_SORT_COUNT", "0", 21600);
+      }
+    } catch (e) { console.warn("updateDrivingRecord deferred sort failed:", e); }
 
     return { success: true, msg: "✅ 行駛/加油紀錄已更新" };
   } catch (e) {
@@ -2496,7 +2595,7 @@ function updateDrivingRecord(payload) {
  * 🗑️ 刪除單筆行駛/加油紀錄 (2026-08 新增)
  * @param {number} row 工作表列號
  */
-function deleteDrivingRecord(row) {
+function deleteDrivingRecord_impl_(row) {
   try {
     const rowIdx = parseInt(row, 10);
     if (!rowIdx || rowIdx < 2) return { success: false, msg: "缺少有效的列號" };
@@ -2535,7 +2634,7 @@ function deleteDrivingRecord(row) {
 /**
  * 🔧 儲存保養紀錄 (修正版：加入車牌)
  */
-function saveMaintenanceRecord(payload) {
+function saveMaintenanceRecord_impl_(payload) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.MAINTENANCE);
     const now = new Date();
@@ -2567,6 +2666,13 @@ function saveMaintenanceRecord(payload) {
     ];
 
     sheet.appendRow(row);
+    // 🚀 存了新保養紀錄，把這個車牌的保養歷史快取清掉，避免看到舊資料
+    try {
+      const plate = String(payload.plateNumber || "").trim().toUpperCase();
+      const c = CacheService.getScriptCache();
+      c.remove("MAINT_HIST_" + plate);
+      c.remove("MAINT_FULL_" + plate);
+    } catch (e) {}
     return { success: true, id: id };
   } catch (e) {
     return { success: false, msg: e.toString() };
@@ -2576,15 +2682,26 @@ function saveMaintenanceRecord(payload) {
 /**
  * 🔍 取得保養歷史 (用於顯示上次保養項目日期)
  */
-function getMaintenanceHistory(employeeName, plateNumber) {
+function getMaintenanceHistory_impl_(employeeName, plateNumber) {
   try {
+    // 🚀 效能：保養紀錄寫入頻率低，加 30 分快取，切保養分頁不用每次整表重掃
+    const cache = CacheService.getScriptCache();
+    const plateKey = String(plateNumber || "").trim().toUpperCase();
+    const cacheKey = "MAINT_HIST_" + plateKey;
+    const cached = cache.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
     const sheet = getFwSheet(FW_CONFIG.SHEETS.MAINTENANCE);
     const data = sheet.getDataRange().getValues();
     const history = {};
     let lastNote = "";
     let lastPlate = plateNumber || "";
 
-    if (data.length < 2) return { success: true, history: {}, lastNote: "", lastPlate: lastPlate };
+    if (data.length < 2) {
+      const empty = { success: true, history: {}, lastNote: "", lastPlate: lastPlate };
+      try { cache.put(cacheKey, JSON.stringify(empty), 1800); } catch (e) {}
+      return empty;
+    }
 
     const searchPlate = String(plateNumber || "").trim().toUpperCase();
 
@@ -2613,7 +2730,9 @@ function getMaintenanceHistory(employeeName, plateNumber) {
         });
       }
     }
-    return { success: true, history: history, lastNote: lastNote, lastPlate: lastPlate };
+    const result = { success: true, history: history, lastNote: lastNote, lastPlate: lastPlate };
+    try { cache.put(cacheKey, JSON.stringify(result), 1800); } catch (e) {}
+    return result;
   } catch (e) {
     return { success: false, msg: e.toString() };
   }
@@ -2622,11 +2741,17 @@ function getMaintenanceHistory(employeeName, plateNumber) {
 /**
  * 🔍 取得完整保養歷史清單
  */
-function getFullMaintenanceHistory(employeeName, plateNumber) {
+function getFullMaintenanceHistory_impl_(employeeName, plateNumber) {
   try {
+    // 🚀 效能：同上，加 30 分快取
+    const cache = CacheService.getScriptCache();
+    const searchPlate = String(plateNumber || "").trim().toUpperCase();
+    const cacheKey = "MAINT_FULL_" + searchPlate;
+    const cached = cache.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
     const sheet = getFwSheet(FW_CONFIG.SHEETS.MAINTENANCE);
     const data = sheet.getDataRange().getValues();
-    const searchPlate = String(plateNumber || "").trim().toUpperCase();
 
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
@@ -2654,7 +2779,9 @@ function getFullMaintenanceHistory(employeeName, plateNumber) {
         return dateB - dateA;
       });
 
-    return { success: true, list: list };
+    const result = { success: true, list: list };
+    try { cache.put(cacheKey, JSON.stringify(result), 1800); } catch (e) {}
+    return result;
   } catch (e) {
     return { success: false, msg: e.toString() };
   }
@@ -2749,7 +2876,7 @@ function setupFieldWorkTriggers() {
  * 預熱「業務配送清單」與「版面記錄（工作日誌）」的 Script Cache。
  * 若無業務名單可取得，仍會嘗試常見清單以避免完全空轉。
  */
-function runAllPreWarm() {
+function runAllPreWarm_impl_() {
   const results = {};
   try {
     results.delivery = prewarmDeliveryCache();
@@ -2802,7 +2929,7 @@ function dataURItoBlob_(dataURI) {
 /**
  * 👁️ 全知視角：獲取多個業務的日誌與統計 (戰情室 2.0 版)
  */
-function getOmniscientLogs(dateStr) {
+function getOmniscientLogs_impl_(dateStr) {
   try {
     let names = Array.from(FW_CONFIG.OMNISCIENT_LIST || ["高弘治", "謝博皓", "潘右森", "陳勁多"]);
     try {
@@ -2911,7 +3038,7 @@ function getOmniscientLogs(dateStr) {
  * @param {string} mimeType 例如 image/jpeg
  * @return {Object} { success, url }
  */
-function uploadFwOnlinePhoto(base64, mimeType) {
+function uploadFwOnlinePhoto_impl_(base64, mimeType) {
   try {
     if (!base64) return { success: false, msg: '缺少圖片資料' };
     const folder = _getSafeFolder();
@@ -2924,7 +3051,7 @@ function uploadFwOnlinePhoto(base64, mimeType) {
   }
 }
 
-function saveWorkLogBatch(payload) {
+function saveWorkLogBatch_impl_(payload) {
   try {
     const sheet = getFwSheet(FW_CONFIG.SHEETS.WORKLOG);
     const now = new Date();

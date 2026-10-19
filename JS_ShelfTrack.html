@@ -1,5 +1,6 @@
 <style>
   /* 📐 上架追蹤樣式 */
+  @keyframes shShelfSpin { to { transform: rotate(360deg); } }
   .shelf-tab {
     flex: 1; background: transparent; border: none; color: rgba(255,255,255,0.45);
     padding: 12px 4px; font-size: 14px; font-weight: 700; letter-spacing: 1px;
@@ -17,9 +18,71 @@
   .shelf-section summary .cnt { font-size: 12px; opacity: 0.5; font-weight: 600; }
   .shelf-section[open] summary { border-bottom: 1px solid rgba(255,255,255,0.08); }
 
+  /* 🖥️ 電腦版多欄排列控制與卡片樣式 */
+  .shelf-col-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 3px 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .shelf-col-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .shelf-col-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .shelf-col-btn.active {
+    background: #facc15;
+    color: #000;
+    font-weight: 800;
+    box-shadow: 0 0 8px rgba(250, 204, 21, 0.4);
+  }
+
+  /* 📦 項目容器 Grid 佈局：電腦版預設 2 排寬 */
+  .shelf-srow-container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1px;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  @media (min-width: 768px) {
+    .shelf-srow-container {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      padding: 10px;
+      background: transparent;
+    }
+    .shelf-srow-container.cols-1 {
+      grid-template-columns: 1fr !important;
+    }
+    .shelf-srow-container.cols-2 {
+      grid-template-columns: repeat(2, 1fr) !important;
+    }
+    .shelf-srow-container.cols-3 {
+      grid-template-columns: repeat(3, 1fr) !important;
+    }
+    .shelf-srow-container.cols-4 {
+      grid-template-columns: repeat(4, 1fr) !important;
+    }
+  }
+
   .shelf-srow {
     display: flex; justify-content: space-between; align-items: center; gap: 10px;
-    padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer;
+    padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer;
+    background: #141418;
+    transition: background 0.2s, border-color 0.2s, transform 0.15s;
   }
   .shelf-srow:last-child { border-bottom: none; }
   .shelf-srow:active { background: rgba(255,255,255,0.08); }
@@ -27,6 +90,31 @@
   .shelf-srow .sage { font-size: 11px; opacity: 0.4; margin-top: 1px; }
   .shelf-srow .scount { font-size: 15px; font-weight: 800; color: #facc15; white-space: nowrap; }
   .shelf-srow .sbiz { font-size: 11px; opacity: 0.55; margin-top: 1px; text-align: right; }
+
+  @media (min-width: 768px) {
+    .shelf-srow {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .shelf-srow:hover {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: rgba(250, 204, 21, 0.35);
+      transform: translateY(-1px);
+    }
+  }
+
+  .shelf-zone-container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  @media (min-width: 992px) {
+    .shelf-zone-container {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+  }
 
   .shelf-select {
     width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.2);
@@ -100,6 +188,29 @@
 (function() {
   let shelfData = null;
 
+  let shelfGridCols = (function() {
+    try {
+      const saved = localStorage.getItem('ag_shelf_grid_cols');
+      if (saved && (saved === '1' || saved === '2' || saved === '3' || saved === '4')) {
+        return parseInt(saved, 10);
+      }
+    } catch(e) {}
+    return 2; // 電腦版預設 2 排寬
+  })();
+
+  window.setShelfGridCols = function(cols) {
+    shelfGridCols = cols;
+    try {
+      localStorage.setItem('ag_shelf_grid_cols', String(cols));
+    } catch(e) {}
+    document.querySelectorAll('.shelf-srow-container').forEach(function(el) {
+      el.className = 'shelf-srow-container cols-' + cols;
+    });
+    document.querySelectorAll('.shelf-col-btn').forEach(function(btn) {
+      btn.classList.toggle('active', parseInt(btn.dataset.cols, 10) === cols);
+    });
+  };
+
   window.openShelfTrackModule = function() {
     showPage('page-shelftrack');
     if (!shelfData) loadShelfTracking(false);
@@ -107,7 +218,10 @@
 
   window.loadShelfTracking = function(force) {
     document.getElementById('shelf-tab-overview').innerHTML =
-      '<div style="text-align:center; opacity:0.4; padding:40px 0;">載入中…</div>';
+      '<div class="ait-loading-box" style="padding:48px 0;">' +
+        '<div class="ait-spinner"></div>' +
+        '<div style="letter-spacing:2px;">上架追蹤資料載入中…</div>' +
+      '</div>';
     google.script.run
       .withSuccessHandler(res => {
         if (!res || !res.success) {
@@ -203,7 +317,12 @@
         '<div class="m-stats">' + statusHtml + salesHtml + '</div>' +
         imgsHtml +
         '<div class="shelf-group-title">出貨明細</div>' +
-        '<div class="shelf-rows" id="shelf-modal-rows"><div style="opacity:0.4; font-size:12.5px; padding:8px 0;">讀取中…</div></div>' +
+        '<div class="shelf-rows" id="shelf-modal-rows">' +
+          '<div class="ait-loading-box" style="padding:16px 0;">' +
+            '<div class="ait-spinner ait-spinner-sm"></div>' +
+            '<div style="font-size:12px;">讀取出貨明細中…</div>' +
+          '</div>' +
+        '</div>' +
         '<button onclick="shelfOpenAlbum(\'' + esc(cust).replace(/'/g, "\\'") + '\')" ' +
           'style="width:100%; margin-top:16px; background:transparent; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.55); ' +
           'border-radius:10px; padding:9px; font-size:13px; font-weight:700; cursor:pointer;">📸 前往版面記錄（載入較久）</button>' +
@@ -215,15 +334,15 @@
       .withSuccessHandler(res => {
         const box = document.getElementById('shelf-modal-rows');
         if (!box) return;
-        if (!res || !res.success) { box.innerHTML = '<div style="opacity:0.4; font-size:12.5px;">查詢失敗</div>'; return; }
-        if (!res.rows.length) { box.innerHTML = '<div style="opacity:0.4; font-size:12.5px;">查無出貨明細</div>'; return; }
+        if (!res || !res.success) { box.innerHTML = '<div style="opacity:0.4; font-size:12.5px; text-align:center; padding:10px 0;">查詢失敗</div>'; return; }
+        if (!res.rows.length) { box.innerHTML = '<div style="opacity:0.4; font-size:12.5px; text-align:center; padding:10px 0;">查無出貨明細</div>'; return; }
         box.innerHTML = res.rows.map(r =>
           '<div class="rrow"><span>' + esc(r.date) + '　' + esc(r.code) + (r.note ? '　<i style="opacity:0.5;">' + esc(r.note) + '</i>' : '') + '</span>' +
           '<span>$' + Math.round(r.amt).toLocaleString() + '</span></div>').join('');
       })
       .withFailureHandler(() => {
         const box = document.getElementById('shelf-modal-rows');
-        if (box) box.innerHTML = '<div style="opacity:0.4; font-size:12.5px;">查詢失敗</div>';
+        if (box) box.innerHTML = '<div style="opacity:0.4; font-size:12.5px; text-align:center; padding:10px 0;">查詢失敗</div>';
       })
       .getShelfSalesRows(cust, series);
   };
@@ -280,12 +399,22 @@
     const section = (title, list, open) =>
       '<details class="shelf-section"' + (open ? ' open' : '') + '>' +
         '<summary><span>' + title + '</span><span class="cnt">' + list.length + ' 個系列</span></summary>' +
+        '<div class="shelf-srow-container cols-' + shelfGridCols + '">' +
         (list.length ? list.map(seriesRow).join('') :
-          '<div style="padding:14px 16px; opacity:0.35; font-size:13px;">目前沒有系列</div>') +
+          '<div style="padding:14px 16px; opacity:0.35; font-size:13px; grid-column:1/-1;">目前沒有系列</div>') +
+        '</div>' +
       '</details>';
 
+    const colBtn = c => '<button class="shelf-col-btn' + (shelfGridCols === c ? ' active' : '') + '" data-cols="' + c + '" onclick="setShelfGridCols(' + c + ')">' + c + ' 排</button>';
+
     document.getElementById('shelf-tab-overview').innerHTML =
-      '<div style="font-size:11px; opacity:0.4; margin-bottom:10px;">資料時間：' + esc(shelfData.generatedAt) + ' · 點系列可看店家明細</div>' +
+      '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">' +
+        '<div style="font-size:11px; opacity:0.45; letter-spacing:0.5px;">資料時間：' + esc(shelfData.generatedAt) + ' · 點系列可看店家明細</div>' +
+        '<div class="shelf-col-switch">' +
+          '<span style="font-size:11px; color:rgba(255,255,255,0.4); font-weight:700; margin-right:2px;">排列</span>' +
+          colBtn(1) + colBtn(2) + colBtn(3) +
+        '</div>' +
+      '</div>' +
       section('🌟 全新上架（3個月內）', groups.fresh, true) +
       section('🌱 新品（3個月～1年）', groups.new, false) +
       section('📦 正常品', groups.normal, true) +
@@ -338,7 +467,12 @@
       body = '<select class="shelf-select" id="shelf-cust-select" onchange="renderShelfCustomerDetail(this.value)">' +
         '<option value="">— 選擇客戶 —</option></select>';
     } else {
-      body = '<div id="shelf-cust-picker" style="margin-bottom:12px;"><div style="opacity:0.4; font-size:13px; padding:12px 0;">載入客戶中…</div></div>';
+      body = '<div id="shelf-cust-picker" style="margin-bottom:12px;">' +
+        '<div class="ait-loading-box" style="padding:24px 0;">' +
+          '<div class="ait-spinner"></div>' +
+          '<div style="letter-spacing:1px;">載入客戶中…</div>' +
+        '</div>' +
+      '</div>';
     }
 
     document.getElementById('shelf-tab-customer').innerHTML =
@@ -382,16 +516,16 @@
           g.map(c => '<span class="shelf-chip off" style="cursor:pointer;" onclick="renderShelfCustomerDetail(\'' + esc(c.name).replace(/'/g, "\\'") + '\')">' + esc(c.name) + '</span>').join('') +
           '</div>';
       });
-      picker.innerHTML = h || '<div style="opacity:0.35; font-size:13px;">此業務無客戶</div>';
+      picker.innerHTML = h || '<div style="opacity:0.35; font-size:13px; text-align:center; padding:15px 0;">此業務無客戶</div>';
     };
     if (shelfCustListCache[biz]) { render(shelfCustListCache[biz]); return; }
     google.script.run
       .withSuccessHandler(res => {
         if (res && res.success) { shelfCustListCache[biz] = res.data; render(res.data); }
-        else { const pk = document.getElementById('shelf-cust-picker'); if (pk) pk.innerHTML = '<div style="opacity:0.4;">載入失敗</div>'; }
+        else { const pk = document.getElementById('shelf-cust-picker'); if (pk) pk.innerHTML = '<div class="ait-loading-box" style="padding:20px 0; color:#fca5a5;"><div style="font-size:13px;">載入失敗</div></div>'; }
       })
       .withFailureHandler(() => {
-        const pk = document.getElementById('shelf-cust-picker'); if (pk) pk.innerHTML = '<div style="opacity:0.4;">載入失敗</div>';
+        const pk = document.getElementById('shelf-cust-picker'); if (pk) pk.innerHTML = '<div class="ait-loading-box" style="padding:20px 0; color:#fca5a5;"><div style="font-size:13px;">載入失敗</div></div>';
       })
       .getCustomerList(biz);
   }
@@ -577,7 +711,7 @@
         '<span class="shelf-chip off" onclick="shelfSeriesFilterSet(\'notshelf\')" style="cursor:pointer;' + selStyle('notshelf') + '">未上架 ' + rankCounts[4] + ' 家</span>' +
       '</div>' +
       shortageCodesHtml +
-      zoneHtml;
+      '<div class="shelf-zone-container">' + zoneHtml + '</div>';
   };
 })();
 </script>

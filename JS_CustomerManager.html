@@ -37,12 +37,11 @@ function switchAlbumTab(tabId) {
  * 也是真正維護保留單資料的地方），並帶入這個客戶的名字做搜尋篩選，不用在這裡另外重做一套。
  * ?tab=reserve 直接開到保留單分頁；?q=客戶名稱 會自動帶進那邊的「搜尋客戶/工地」欄位。
  */
-var RESERVE_SYSTEM_URL = 'https://script.google.com/macros/s/AKfycbxTYjCWP-HI9RYcznkp30rQ6sIoQUV2lK4DfS3zhQNAYugAHPLm92Tx9hvAhthcfemnTQ/exec';
 function openReserveSystemForCustomer() {
   var customerName = state.currentCustomer;
   if (!customerName) return;
-  var url = RESERVE_SYSTEM_URL + '?tab=reserve&q=' + encodeURIComponent(customerName);
-  window.open(url, '_blank');
+  // 📦 保留系統已併入版面神器：直接在 App 裡開「保留日誌」(不另開分頁；手機主畫面 App 另開分頁會跳出 App)
+  openReserveWithFilter('tab=reserve&q=' + encodeURIComponent(customerName));
 }
 
 /**

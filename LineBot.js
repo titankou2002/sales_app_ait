@@ -9,6 +9,7 @@ var LINE_CHANNEL_SECRET = 'f5dd2736fe84058330197e204044d043';
 // ─── Webhook 入口（立即回 200，存 queue 後由 trigger 處理）─────────
 
 function doPost(e) {
+  __AIT_SYS__ = true; // 🔐 LINE webhook：後端內部呼叫放行 (見 Auth.js)
   try {
     var body = e.postData.contents;
     var sig = (e.postData.headers && e.postData.headers['X-Line-Signature']) || '';
@@ -37,7 +38,7 @@ function doPost(e) {
 
 // ─── Queue 處理 trigger ───────────────────────────────────────────
 
-function processLineBotQueue() {
+function processLineBotQueue_impl_() {
   var props = PropertiesService.getScriptProperties();
   var queueRaw = props.getProperty('LINE_QUEUE') || '[]';
   var queue = JSON.parse(queueRaw);

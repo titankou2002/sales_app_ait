@@ -82,12 +82,12 @@
   }
 
   @keyframes logoBreath {
-    0%, 100% { filter: drop-shadow(0 0 15px rgba(255,255,255,0.4)); transform: scale(1); }
-    50% { filter: drop-shadow(0 0 30px rgba(255,255,255,0.8)); transform: scale(1.05); }
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
   }
 
   .dashboard-particles { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-  .dashboard-brand-logo { width: 65px; height: auto; animation: logoBreath 4s ease-in-out infinite; }
+  .dashboard-brand-logo { width: 65px; height: auto; filter: none !important; }
 
   /* 🚀 啟動頁 (Splash) - 極簡輕量版 */
   .splash-container {
@@ -119,4 +119,38 @@
   }
 
   .brand-logo { width: 60px; height: auto; filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.2)); }
+
+  /* 💫 全域統一發光讀取中旋轉動畫 (Gold / Amber Spinner) */
+  .ait-loading-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 36px 16px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    letter-spacing: 1.5px;
+  }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .ait-spinner {
+    width: 30px;
+    height: 30px;
+    border: 3px solid rgba(255, 255, 255, 0.12);
+    border-top-color: #facc15;
+    border-right-color: #f59e0b;
+    border-radius: 50%;
+    animation: aitSpin 0.75s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    box-shadow: 0 0 12px rgba(250, 204, 21, 0.25);
+    flex-shrink: 0;
+  }
+  .ait-spinner-sm {
+    width: 20px;
+    height: 20px;
+    border-width: 2px;
+  }
+  @keyframes aitSpin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
 </style>

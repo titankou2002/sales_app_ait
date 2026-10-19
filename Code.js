@@ -86,7 +86,7 @@ function writeTestKeyToSheet() {
 /**
  * 📝 記錄業務查庫存的行為至 log 工作表 (維持原有 8 欄位格式)
  */
-function logSalespersonSearch(salesName, q, sz, minP, minQ) {
+function logSalespersonSearch_impl_(salesName, q, sz, minP, minQ) {
   try {
     const ss = SpreadsheetApp.openById("1zTTl3IjrwZvYdxvX3UZk6YLVaGF7m_DBhb_tWM2LjW0"); // 業務庫
     const logSheet = ss.getSheetByName("LOG") || ss.getSheetByName("log") || ss.getSheetByName("智能_工作日誌");
@@ -97,7 +97,8 @@ function logSalespersonSearch(salesName, q, sz, minP, minQ) {
     try {
       const wlSheet = ss.getSheetByName("白名單");
       if (wlSheet) {
-        const wlData = wlSheet.getDataRange().getValues();
+        // 🚀 改用共用白名單快取，避免每次搜尋都整表重掃
+        const wlData = getWhitelistRowsCached_(ss);
         const row = wlData.find(r => String(r[2]).trim() === String(salesName).trim()); // 名字在第3欄 (索引2)
         if (row) level = String(row[1]).toUpperCase(); // 等級在第2欄 (索引1)
       }
@@ -207,7 +208,7 @@ function logAdminKeyAction_(actionType, targetSales, detail) {
 /**
  * ➕ 新增直達同仁並發配金鑰
  */
-function addDirectSalesperson(name) {
+function addDirectSalesperson_impl_(name) {
   name = String(name || '').trim();
   if (!name) return { success: false, msg: "姓名不能為空" };
   
@@ -240,7 +241,7 @@ function addDirectSalesperson(name) {
 /**
  * ❌ 一鍵停用/失效業務金鑰
  */
-function revokeDirectSalesperson(name) {
+function revokeDirectSalesperson_impl_(name) {
   name = String(name || '').trim();
   if (!name) return { success: false, msg: "姓名不能為空" };
   
@@ -262,7 +263,7 @@ function revokeDirectSalesperson(name) {
 /**
  * 🟢 一鍵恢復啟用業務金鑰
  */
-function enableDirectSalesperson(name) {
+function enableDirectSalesperson_impl_(name) {
   name = String(name || '').trim();
   if (!name) return { success: false, msg: "姓名不能為空" };
   
@@ -283,7 +284,7 @@ function enableDirectSalesperson(name) {
  * 🗑️ 永久刪除業務金鑰（僅限管理後台手動新增的自訂名單；業務分區/固定名單的正式業務只能停用，
  * 因為刪了下次讀 getSalesList() 還是會自動再出現，刪除在語意上不成立，直接明確拒絕比較不會誤導）
  */
-function deleteDirectSalesperson(name) {
+function deleteDirectSalesperson_impl_(name) {
   name = String(name || '').trim();
   if (!name) return { success: false, msg: "姓名不能為空" };
 
@@ -317,7 +318,7 @@ function deleteDirectSalesperson(name) {
 /**
  * 🛡️ 前端金鑰全局安全校正 API (方案 1 核心)
  */
-function verifySalesKey(sales, key) {
+function verifySalesKey_impl_(sales, key) {
   sales = String(sales || '').trim();
   key = String(key || '').trim();
   if (!sales || !key) return { success: false, msg: "資訊不完整" };
@@ -350,15 +351,39 @@ function verifySalesKey(sales, key) {
 }
 
 /**
+ * 🛡️ 白名單整表讀取共用快取（5 分鐘，依試算表 ID 分 key）
+ * 原本 verifyClientDirectAccess / getClientDirectKey / doGet / verifyClientMember 各自
+ * getDataRange().getValues() 整表重掃；也涵蓋 logSalespersonSearch 用的「業務庫」白名單。
+ * 有寫入白名單的地方會主動 invalidateWhitelistCache_() 清除，不會看到舊資料。
+ */
+function getWhitelistRowsCached_(ss) {
+  const CACHE_KEY = "whitelist_rows_" + ss.getId() + "_v1";
+  try {
+    const cached = CacheManager.getLarge(CACHE_KEY);
+    if (cached) return cached;
+  } catch (e) {}
+
+  const sheet = ss.getSheetByName("白名單");
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  try { CacheManager.putLarge(CACHE_KEY, data, 900); } catch (e) {}
+  return data;
+}
+
+function invalidateWhitelistCache_(ss) {
+  try { CacheManager.removeLarge("whitelist_rows_" + ss.getId() + "_v1"); } catch (e) {}
+}
+
+/**
  * 🛡️ 客戶直達安全驗證 API (免登入免 LINE 綁定)
  */
-function verifyClientDirectAccess(clientName, key) {
+function verifyClientDirectAccess_impl_(clientName, key) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
     const wlSheet = ss.getSheetByName("白名單");
     if (!wlSheet) return { success: false, isAuthorized: false, msg: "找不到白名單" };
     
-    const data = wlSheet.getDataRange().getValues();
+    const data = getWhitelistRowsCached_(ss);
     const h = data[0].map(v => String(v || '').replace(/[\s\uFEFF]/g, '').trim());
     const idx = {
       name: findHeaderIndex(h, ["名字", "姓名"]),
@@ -406,7 +431,7 @@ function getClientDirectKey(clientName) {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
     const wlSheet = ss.getSheetByName("白名單");
     if (!wlSheet) return "";
-    const data = wlSheet.getDataRange().getValues();
+    const data = getWhitelistRowsCached_(ss);
     const h = data[0].map(v => String(v || '').replace(/[\s\uFEFF]/g, '').trim());
     const idxName = findHeaderIndex(h, ["名字", "姓名"]);
     const idxKey = findHeaderIndex(h, ["金鑰", "安全金鑰", "KEY"]);
@@ -463,7 +488,7 @@ function getSalesStaffNames() {
     console.warn("getSalesStaffNames error: " + e);
   }
 
-  try { cache.put(cacheKey, JSON.stringify(names), 600); } catch (e) {}
+  try { cache.put(cacheKey, JSON.stringify(names), 1800); } catch (e) {}
   return names;
 }
 
@@ -524,13 +549,16 @@ function getClientWhitelist() {
       });
     }
     
+    // 🚀 自動補鍵值時有寫入白名單，順手清共用快取
+    invalidateWhitelistCache_(ss);
+
     return { success: true, data: list };
   } catch(e) {
     return { success: false, msg: e.toString() };
   }
 }
 
-function addOrBatchClients(clientsList) {
+function addOrBatchClients_impl_(clientsList) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
     let wlSheet = ss.getSheetByName("白名單");
@@ -615,13 +643,16 @@ function addOrBatchClients(clientsList) {
       logAdminKeyAction_("批量新增客戶", "ADMIN", `新增客戶: ${addedNames.join(", ")}`);
     }
     
+    // 🚀 有寫入白名單，清共用快取
+    invalidateWhitelistCache_(ss);
+    
     return { success: true, msg: `成功儲存外部客戶名單！` };
   } catch(e) {
     return { success: false, msg: e.toString() };
   }
 }
 
-function removeClientFromWhitelist(rowIdx) {
+function removeClientFromWhitelist_impl_(rowIdx) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
     const wlSheet = ss.getSheetByName("白名單");
@@ -637,6 +668,9 @@ function removeClientFromWhitelist(rowIdx) {
     
     wlSheet.deleteRow(rowIdx);
     logAdminKeyAction_("刪除外部客戶", "ADMIN", `移除客戶: ${name} (${company})`);
+    
+    // 🚀 有刪除白名單列，清共用快取
+    invalidateWhitelistCache_(ss);
     
     return { success: true, msg: "客戶已成功移出白名單！" };
   } catch(e) {
@@ -696,7 +730,7 @@ function getLineBotWhitelist() {
 /**
  * ➕ 新增或編輯 LINE 機器人白名單 (同步至物流白名單)
  */
-function addOrBatchLineClients(clientsList) {
+function addOrBatchLineClients_impl_(clientsList) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
     let wlSheet = ss.getSheetByName("白名單");
@@ -779,7 +813,7 @@ function addOrBatchLineClients(clientsList) {
 /**
  * ❌ 移除 LINE 機器人白名單
  */
-function removeLineClientFromWhitelist(rowIdx) {
+function removeLineClientFromWhitelist_impl_(rowIdx) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
     const wlSheet = ss.getSheetByName("白名單");
@@ -884,7 +918,14 @@ function syncToLogisticsWhitelist_(uid, name, company, action) {
 }
 
 function doGet(e) {
+  __AIT_SYS__ = true; // 🔐 頁面產生時的後端內部呼叫放行 (見 Auth.js)
   const params = e.parameter || {};
+  // 📦 保留系統 (2026-09-30 併入)：保留日誌頁、續保／取消快速連結、產品圖片 (見 Reserve_Main.js)
+  if (params.view === 'reserve') return reserveDoGet_(e);
+  // 🚀 效能優化：確保「定時預熱」觸發器存在（若使用者從未在編輯器手動跑過
+  //    setupSalesOverviewPrewarmTrigger，這裡會自動補建每 30 分鐘的預熱），
+  //    讓冷啟動快取在有人進站時早已熱好；成本極低（只比對 handler 名稱）。
+  try { ensurePrewarmTriggers_(); } catch (err) {}
   // 🚀 自訂網域相容性極致修復：若自訂網頁 iframe 僅轉發 sales 與 key，我們將客戶名稱包裝在 sales 中 (CLIENT_客戶名稱)
   if (params.sales && params.sales.startsWith("CLIENT_")) {
     params.clientName = params.sales.replace("CLIENT_", "");
@@ -893,12 +934,2174 @@ function doGet(e) {
   if (params.clientName) {
     params.view = 'client';
   }
+
+  // 🔐 v2: 登入改在頁面上做 (JS_AitAuth)，每個後端功能自己驗證 (AitGuard.js)；客戶端 view=client 照舊走金鑰制
   
-  // 👔 業務直達金鑰與網址總表生成管理後台
+  // 👔 業務直達金鑰與網址總表生成管理後台 (機密中心)
+  // v2: 內容含所有金鑰、客戶白名單、出勤薪資 → 頁面先只給登入殼，主管登入後才由 aitKeysPageHtml() 取內容
   if (params.view === 'getkeys') {
+    const shell = HtmlService.createTemplateFromFile('AIT_KeysShell');
+    return shell.evaluate()
+      .setTitle("高雅瓷機密中心")
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+  
+  // 🔐 獨立單獨查庫存安全金鑰驗證
+  if (params.view === 'inventory') {
+    const sales = params.sales || '';
+    const key = params.key || '';
+    const expectedKey = getSalesDirectKey(sales);
+    
+    // 🛡️ 檢查是否在黑名單中
+    let blockedSales = [];
+    try {
+      blockedSales = JSON.parse(PropertiesService.getScriptProperties().getProperty("DIRECT_ACCESS_BLOCKED") || "[]");
+    } catch(e){}
+    const isBlocked = blockedSales.includes(sales);
+    
+    if (!sales || key !== expectedKey || isBlocked) {
+      return HtmlService.createHtmlOutput(
+        "<body style='background:#000; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; font-family:sans-serif;'>" +
+        "<div style='text-align:center; padding:30px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,59,48,0.3); border-radius:20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);'>" +
+        "<h1 style='color:#ff3b30; font-size:60px; margin:0 0 20px;'>🔒</h1>" +
+        "<h2 style='margin:0 0 10px; color:#fff;'>" + (isBlocked ? "存取遭拒：此專屬網址已被停用" : "存取遭拒：安全金鑰無效") + "</h2>" +
+        "<p style='color:rgba(255,255,255,0.4); font-size:13px; margin:0;'>請確認您的直達專屬網址是否正確，或聯繫系統管理員。</p>" +
+        "</div>" +
+        "</body>"
+      )
+      .setTitle("AIT 存取拒絕")
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
+  }
+  
+  // 🔐 獨立客戶直達安全驗證 (免 LINE 登入登出)
+  if (params.view === 'client' && params.clientName && params.key) {
+    const expectedKey = getClientDirectKey(params.clientName);
+    if (!params.key || params.key !== expectedKey) {
+      return HtmlService.createHtmlOutput(
+        "<body style='background:#000; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; font-family:sans-serif;'>" +
+        "<div style='text-align:center; padding:30px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,59,48,0.3); border-radius:20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);'>" +
+        "<h1 style='color:#ff3b30; font-size:60px; margin:0 0 20px;'>🔒</h1>" +
+        "<h2 style='margin:0 0 10px; color:#fff;'>存取遭拒：安全金鑰無效</h2>" +
+        "<p style='color:rgba(255,255,255,0.4); font-size:13px; margin:0;'>請確認您的直達專屬網址是否正確，或聯繫服務業務。</p>" +
+        "</div>" +
+        "</body>"
+      )
+      .setTitle("AIT 存取拒絕")
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
+  }
+  
+  // 🚀 獨立分流：分公司/員工專用入口
+  if (params.view === 'staff') {
+    const template = HtmlService.createTemplateFromFile('Staff_Portal');
+    template.params = params;
+    template.scriptUrl = ScriptApp.getService().getUrl();
+    return template.evaluate()
+      .setTitle('AIT-內部查詢')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  let clientInfo = { name: "", company: "", level: "LEVEL 2" };
+  try {
+    const targetName = params.clientName || params.customer || "";
+    if (targetName) {
+      const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
+      const wlSheet = ss.getSheetByName("白名單");
+      if (wlSheet) {
+        const data = getWhitelistRowsCached_(ss);
+        const h = data[0].map(v => String(v || '').replace(/[\s\uFEFF]/g, '').trim());
+        const idx = {
+          name: findHeaderIndex(h, ["名字", "姓名"]),
+          company: findHeaderIndex(h, ["公司", "客戶"]),
+          level: findHeaderIndex(h, ["等級", "權限等級", "LEVEL"])
+        };
+        const userRow = data.find(r => idx.name !== -1 && String(r[idx.name]).trim() === targetName.trim());
+        if (userRow) {
+          clientInfo.name = targetName;
+          clientInfo.company = idx.company !== -1 ? String(userRow[idx.company]).trim() : "未知公司";
+          clientInfo.level = idx.level !== -1 && String(userRow[idx.level]).trim() ? String(userRow[idx.level]).trim().toUpperCase() : "LEVEL 2";
+        } else {
+          // 白名單中如果沒找到，至少保留網址上的姓名以作記錄
+          clientInfo.name = targetName;
+          clientInfo.company = "訪客客戶";
+          clientInfo.level = "LEVEL 2";
+        }
+      }
+    }
+  } catch(e) {
+    console.warn("doGet 預解析客戶公司失敗:", e);
+  }
+
+  const template = HtmlService.createTemplateFromFile('index');
+  template.params = params;
+  template.clientInfo = clientInfo;
+  template.scriptUrl = ScriptApp.getService().getUrl();
+  template.clientLiffId = getScriptPropOrDefault_('CLIENT_LIFF_ID', '2007666611-y2vJrdKu');
+  
+  let title = 'AIT-業務專用';
+  if (params.view === 'client') {
+    title = 'AIT-查詢系統';
+  }
+  
+  return template.evaluate()
+    .setTitle(title)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * 👔 取得業務員清單 (從業務分區自動讀取)
+ */
+function getSalesList_impl_(onlySales = false) {
+  try {
+    // 🚀 效能優化：加入 Script Cache（5 分鐘），避免每次登入都重掃業務分區全表
+    const cacheKey = onlySales ? 'sales_list_only' : 'sales_list_all';
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return { success: true, data: JSON.parse(cached) };
+    }
+
+    const ss = getSafeSsMain();
+    const sheet = ss.getSheetByName("業務分區");
+    if (!sheet) return { success: false, msg: "找不到業務分區工作表" };
+    const data = sheet.getDataRange().getValues();
+    const h = data[0].map(v => String(v || '').trim());
+    
+    const salesSet = new Set();
+    const salesColIdx = findHeaderIndex(h, ["負責業務", "業務", "負責人"]);
+    
+    if (salesColIdx !== -1) {
+      // --- 縱向佈局 ---
+      for (let i = 1; i < data.length; i++) {
+        const val = String(data[i][salesColIdx] || '').trim();
+        if (val && val !== "負責業務") salesSet.add(val);
+      }
+    } else {
+      // --- 水平佈局 (舊版兜底) ---
+      h.forEach(val => {
+        if (val && val !== "序號" && val !== "客戶名稱" && !/^\d+$/.test(val)) {
+          salesSet.add(val);
+        }
+      });
+    }
+
+    // 🚀 核心強化：合併 SALES_CONFIG 中的固定名單 (確保即使沒分配客戶也能看到按鈕)
+    if (typeof SALES_CONFIG !== 'undefined' && SALES_CONFIG.SALES_PEOPLE) {
+      SALES_CONFIG.SALES_PEOPLE.forEach(p => {
+        if (p.name) salesSet.add(p.name);
+      });
+    }
+
+    // 🚀 核心增強：合併手動新增的業務/助理名單 (由管理後台金鑰發行而來)
+    if (!onlySales) {
+      try {
+        const customSales = JSON.parse(PropertiesService.getScriptProperties().getProperty("DIRECT_ACCESS_CUSTOM") || "[]");
+        customSales.forEach(name => {
+          if (name) salesSet.add(name);
+        });
+      } catch(e){}
+    }
+
+    const result = Array.from(salesSet);
+    // 快取 5 分鐘（業務名單變動頻率低）
+    try { cache.put(cacheKey, JSON.stringify(result), 1800); } catch(e){}
+    return { success: true, data: result };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// -----------------------------------------------------------------------------
+// 1. 戰情室旗艦邏輯移植 (歸併與標題)
+// -----------------------------------------------------------------------------
+
+function mergeCustomer(name) {
+  let s = String(name || "").trim();
+  if (s.includes('漢樺') || s.includes('波爾泰')) return '漢樺';
+  if (s.includes('大永') || s.includes('新大永')) return '大永';
+  if (s.includes('錦義') || s.includes('睿敏')) return '錦義';
+  if (s.includes('滿財') || s.includes('東春')) return '滿財';
+  if (s.includes('傅邦') || s.includes('盛邦')) return '傅邦';
+  if (s.includes('喬翌') || s.includes('伊特')) return '伊特';
+  if (s.includes('太爾') || s.includes('信義星')) return '信義星';
+  if (s.includes('鼎康') || s.includes('鼎晨')) return '鼎晨';
+  if (s.includes('高頓') || s.includes('馬來高')) return '馬來高';
+  if (s.includes('鏷城') || s.includes('璞城')) return '鏷城';
+  if (s.includes('今冠') || s.includes('金冠')) return '金冠';
+  if (s.includes('琮達') || s.includes('琮威')) return '琮威';
+
+  // 🚀 核心規則：特定客戶不抓前二字（保留完整名稱）
+  const exceptions = ['夏綠蒂', '德思特尼', '百事得', '百達富麗', '鑫東聖', '海格斯', '信義星', '好仕齊', '新睦豐', '富利鴻', '金豪益'];
+  for (const ex of exceptions) {
+    if (s.includes(ex)) return ex;
+  }
+
+  const suffixes = ['企業','建材','國際','磁磚','工程','股份有限公司','有限公司','公司','實業','精品'];
+  for (const suf of suffixes) {
+    const idx = s.indexOf(suf);
+    if (idx !== -1) { s = s.substring(0, idx); break; }
+  }
+  return s.slice(0, 2);
+}
+
+function getCustomerShortName(name) {
+  let s = String(name || "").trim();
+  if (!s) return '';
+  // 固定合併對照（比照 mergeCustomer，統一顯示為單一名稱）
+  if (s.includes('漢樺') || s.includes('波爾泰')) return '漢樺';
+  if (s.includes('大永') || s.includes('新大永')) return '大永';
+  if (s.includes('錦義') || s.includes('睿敏')) return '錦義';
+  if (s.includes('滿財') || s.includes('東春')) return '滿財';
+  if (s.includes('傅邦') || s.includes('盛邦')) return '傅邦';
+  if (s.includes('喬翌') || s.includes('伊特')) return '伊特';
+  if (s.includes('太爾') || s.includes('信義星')) return '信義星';
+  if (s.includes('鼎康') || s.includes('鼎晨')) return '鼎晨';
+  if (s.includes('高頓') || s.includes('馬來高')) return '馬來高';
+  if (s.includes('鏷城') || s.includes('璞城')) return '鏷城';
+  if (s.includes('今冠') || s.includes('金冠')) return '金冠';
+  if (s.includes('琮達') || s.includes('琮威')) return '琮威';
+
+  const exceptions = ['夏綠蒂', '德思特尼', '百事得', '百達富麗', '鑫東聖', '海格斯', '信義星', '好仕齊', '新睦豐', '富利鴻', '金豪益'];
+  for (const ex of exceptions) {
+    if (s.includes(ex)) return ex;
+  }
+
+  s = s
+    .replace(/[()（）\[\]【】]/g, '')
+    .replace(/[-_－—–\s]*(出貨|樣品|門市|倉庫)$/g, '')
+    .trim();
+
+  const suffixes = [
+    '股份有限公司', '有限公司', '公司', '企業', '實業', '國際',
+    '工程行', '材料行', '建材行', '磁磚行', '衛浴行', '展示中心', '旗艦店',
+    '工程', '建材', '材料', '磁磚', '精品', '商行', '貿易', '門市',
+    '建設', '開發', '設計', '裝潢', '裝修', '工業', '綜合', '有限', '股份',
+    '五金', '衛浴', '展覽', '展服', '展示', '展場', '全館', '生活', '家居', '居家',
+    '美學', '空間', '工作坊', '工作室', '總店', '分店', '行'
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const suf of suffixes) {
+      if (s.endsWith(suf)) {
+        s = s.slice(0, -suf.length).trim();
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  s = s.replace(/[-_－—–\s]+$/g, '').trim();
+  s = s.replace(/(股份有限公司|有限公司|公司|企業|實業|國際|工程|建材|材料|磁磚|精品|商行|貿易|建設|開發|設計|裝潢|裝修|工業|綜合|有限|股份|五金|衛浴|展覽|展服|展示|展場|全館|生活|家居|居家|美學|空間|工作坊|工作室|總店|分店|行)$/g, '').trim();
+  if (s.length > 4) s = s.slice(0, 4);
+  return s || String(name || '').trim().slice(0, 4);
+}
+
+function getSharedSalesWeight(name) {
+  const s = String(name || '').trim();
+  return (s.includes('漢樺') || s.includes('波爾泰')) ? 1 / 3 : 1;
+}
+
+function findHeaderIndex(headers, candidates) {
+  if (!headers || headers.length === 0) return -1;
+  const cleanHeaders = headers.map(h =>
+    String(h).replace(/[\s\uFEFF\xA0"()（）]/g, '').trim().toUpperCase()
+  );
+  for (const cand of candidates) {
+    const target = String(cand).replace(/[\s"()（）]/g, '').toUpperCase();
+    const idx = cleanHeaders.indexOf(target);
+    if (idx !== -1) return idx;
+  }
+  for (const cand of candidates) {
+    const target = String(cand).replace(/[\s"()（）]/g, '').toUpperCase();
+    const idx = cleanHeaders.findIndex(h => h.includes(target));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+/**
+ * 🚀 共用工具：把保留單登記到貨用的「暫記編號」還原成正式編號，供比對「編號價目表」用。
+ * 保留單分頁的「編號」欄常見 "RS61280-掛"、"ED45751-F-期" 這種格式——「-掛」「-期」是
+ * 保留系統用來標記「尚未有正式批號、先登記到貨」的暫記後綴，不是真正編號的一部分；
+ * 若直接拿去比對編號價目表（只有去除空白/連字號，沒去掉這個後綴），一律比對不到，
+ * 圖片/系列/尺寸等資料就會全部拿到空值。原本只有 Inventory.js 內部有一份（供到貨日期比對用），
+ * 這裡拉出來做全域共用，Code_Customer.js 的保留單明細（陳列牆→保留單分頁）圖片抓取同樣需要。
+ */
+function normalizeIncomingSkuKey_(raw) {
+  let s = String(raw || '').trim();
+  s = s.replace(/[-\s]*(掛|期)\s*$/, ''); // 去除保留單登記到貨用的暫記後綴
+  return s.replace(/[\s\-]/g, '');
+}
+
+// -----------------------------------------------------------------------------
+// 2. 業務清單同步 (採戰情室對位邏輯)
+// -----------------------------------------------------------------------------
+
+/**
+ * ➕ 新增客戶到內部管理「業務分區」（App 內新增，馬上可選來上架）
+ */
+function addCustomerToZoning_impl_(custName, salesName) {
+  try {
+    const name = String(custName || '').trim();
+    const sales = String(salesName || '').trim();
+    if (!name) return { success: false, msg: "客戶名稱不可為空" };
+    if (!sales) return { success: false, msg: "業務名稱不可為空" };
+
+    const ss = getSafeSsMain();
+    const sheet = ss.getSheetByName("業務分區");
+    if (!sheet) return { success: false, msg: "找不到業務分區表" };
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const custColIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
+    const salesColIdx = findHeaderIndex(headers, ["負責業務", "業務", "負責人"]);
+    if (custColIdx === -1 || salesColIdx === -1) return { success: false, msg: "業務分區表格式不符" };
+
+    // 重複檢查（合併名比對）
+    const targetMerged = mergeCustomer(name);
+    for (let i = 1; i < data.length; i++) {
+      const rowCust = String(data[i][custColIdx] || '').trim();
+      if (rowCust && mergeCustomer(rowCust) === targetMerged) {
+        return { success: false, msg: "客戶「" + rowCust + "」已存在（負責業務：" + String(data[i][salesColIdx] || '') + "）" };
+      }
+    }
+
+    // 寫入新列（只填客戶名稱與負責業務）
+    const newRow = new Array(headers.length).fill('');
+    newRow[custColIdx] = name;
+    newRow[salesColIdx] = sales;
+    sheet.appendRow(newRow);
+
+    // 清快取讓列表立即更新
+    const cacheKey = 'cust_list_v2_' + sales.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
+    try { CacheService.getScriptCache().remove(cacheKey); } catch (e) {}
+
+    return { success: true, msg: "已新增客戶「" + name + "」" };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 👁️ 設定客戶版面顯示與否（寫入內部管理「業務分區」的「版面顯示」欄）
+ * visible=false → 填 N；visible=true → 清空
+ */
+function setCustomerVisibility_impl_(custName, visible, salesName) {
+  try {
+    const ss = getSafeSsMain();
+    const sheet = ss.getSheetByName("業務分區");
+    if (!sheet) return { success: false, msg: "找不到業務分區表" };
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const custColIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
+    let showColIdx = findHeaderIndex(headers, ["版面顯示", "上架顯示"]);
+
+    // 沒有「版面顯示」欄就自動在最後面建立
+    if (showColIdx === -1) {
+      showColIdx = headers.length;
+      sheet.getRange(1, showColIdx + 1).setValue("版面顯示").setFontWeight("bold");
+    }
+
+    const targetMerged = mergeCustomer(String(custName || '').trim());
+    let updated = 0;
+    for (let i = 1; i < data.length; i++) {
+      const rowCust = String(data[i][custColIdx] || '').trim();
+      if (rowCust && mergeCustomer(rowCust) === targetMerged) {
+        sheet.getRange(i + 1, showColIdx + 1).setValue(visible ? '' : 'N');
+        updated++;
+      }
+    }
+    if (updated === 0) return { success: false, msg: "業務分區找不到客戶：" + custName };
+
+    // 清該業務的客戶列表快取
+    if (salesName) {
+      const cacheKey = 'cust_list_v2_' + String(salesName).replace(/[^a-zA-Z一-龥]/g, '');
+      try { CacheService.getScriptCache().remove(cacheKey); } catch (e) {}
+    }
+    return { success: true, msg: (visible ? "已顯示" : "已隱藏") + "「" + custName + "」" };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+function getCustomerList_impl_(salesName) {
+  try {
+    // 🚀 效能優化：加入 Script Cache（10 分鐘），業務點選後不再每次重掃業務分區全表
+    const cacheKey = 'cust_list_v2_' + salesName.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return { success: true, data: JSON.parse(cached) };
+    }
+
+    const ss = getSafeSsMain();
+    const zoningSheet = ss.getSheetByName("業務分區");
+    const customerMap = {};
+
+    if (zoningSheet) {
+      const data = zoningSheet.getDataRange().getValues();
+      const headers = data[0];
+      
+      const salesColIdx = findHeaderIndex(headers, ["負責業務", "業務", "負責人"]);
+      const custColIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
+      const showColIdx = findHeaderIndex(headers, ["版面顯示", "上架顯示"]);
+      const levelColIdx = findHeaderIndex(headers, ["等級"]);
+
+      if (salesColIdx !== -1 && custColIdx !== -1) {
+        // --- 縱向佈局 (一列一個客戶) ---
+        for (let i = 1; i < data.length; i++) {
+          const rowSales = String(data[i][salesColIdx] || '').trim();
+          const rowCust = String(data[i][custColIdx] || '').trim();
+          if (!(rowSales.includes(salesName.trim()) && rowCust)) continue;
+
+          // 🙈 版面顯示欄填 N/否 → hidden（仍回傳，由前端收進「未顯示版面」區）
+          let hidden = false;
+          if (showColIdx !== -1) {
+            const showVal = String(data[i][showColIdx] || '').trim().toLowerCase();
+            hidden = (showVal === 'n' || showVal === 'no' || showVal === '否' || showVal === '隱藏' || showVal === '0' || showVal === 'false');
+          }
+          const level = levelColIdx !== -1 ? String(data[i][levelColIdx] || '').trim() : '';
+
+          const merged = mergeCustomer(rowCust);
+          if (!customerMap[merged]) {
+            customerMap[merged] = { name: rowCust, salesperson: rowSales, level: level, hidden: hidden };
+          }
+        }
+      } else {
+        // --- 橫向佈局 (舊版) ---
+        const repCols = [];
+        headers.forEach((h, idx) => {
+          if (h && h.includes(salesName)) {
+            repCols.push({ name: h, col: idx });
+          }
+        });
+        if (repCols.length === 0) return { success: false, msg: "找不到業務: " + salesName };
+        for (let i = 1; i < data.length; i++) {
+          repCols.forEach(rep => {
+            let nameRaw = String(data[i][rep.col + 1] || '').trim(); 
+            if (!nameRaw || /^\d+$/.test(nameRaw)) {
+               const fallback = String(data[i][rep.col] || '').trim();
+               if (fallback && !/^\d+$/.test(fallback)) nameRaw = fallback;
+            }
+            if (nameRaw && nameRaw !== "客戶名稱" && nameRaw !== "序號" && nameRaw !== "客戶" && !/^\d+$/.test(nameRaw)) {
+              const merged = mergeCustomer(nameRaw);
+              if (!customerMap[merged]) {
+                customerMap[merged] = { name: nameRaw, salesperson: rep.name };
+              }
+            }
+          });
+        }
+      }
+    }
+    
+    const result = Object.values(customerMap);
+    // 快取 10 分鐘（客戶分區調整頻率低）
+    try { cache.put(cacheKey, JSON.stringify(result), 1800); } catch(e){}
+    return { success: true, data: result };
+  } catch (e) {
+    return { success: false, msg: "清單載入失敗: " + e.toString() };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 3. 版面抓取 (100% 複刻戰情室圖片解析)
+// -----------------------------------------------------------------------------
+
+/**
+ * 🚀 版面上架清單「全表」共用快取（5 分鐘）
+ * 原本 getCustomerDisplays 的 per-customer 快取沒命中時，每個不同客戶各自對整張
+ * 「版面上架清單」再做一次 getDataRange().getValues()。改成全公司共用一份 raw 資料，
+ * 之後不管看哪個客戶都只是在本機記憶體過濾（O(1)），僅快取過期時才需要重掃一次，
+ * 且那一次是「幫全公司所有人一起掃好」。所有寫入路徑都會一併失效，不會看到舊資料。
+ */
+function getLayoutRowsCached_(ssBusiness) {
+  const CACHE_KEY = "layout_rows_v1";
+  try {
+    const cached = CacheManager.getLarge(CACHE_KEY);
+    if (cached) return cached;
+  } catch (e) {}
+
+  const sheet = ssBusiness.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  try { CacheManager.putLarge(CACHE_KEY, data, 1800); } catch (e) {}
+  return data;
+}
+
+function getCustomerDisplays_impl_(customerName) {
+  try {
+    const targetMerged = mergeCustomer(customerName);
+
+    // 🚀 效能優化：整包回應快取 3 分鐘（業務反應版面記錄讀取很慢，根因是這裡完全沒快取，
+    //    每次開客戶頁都重新全表掃描＋跨表讀保留單）。所有會改到這個客戶版面資料的寫入路徑
+    //    （saveNewLayout / updateDisplayBatch / offShelfDisplayBatch / deleteDisplayBatchPermanent /
+    //    updateLayoutFieldBatch）都會主動呼叫 CacheManager.removeLarge 清除，不會看到舊資料。
+    const cacheKey = "displays_v5_" + targetMerged;
+    try {
+      const cached = CacheManager.getLarge(cacheKey);
+      if (cached) return cached;
+    } catch (e) {}
+
+    const ssBusiness = getSafeSsBusiness();
+    const ssMain = getSafeSsMain();
+    // 🚀 全公司共用整表快取：快取沒命中時不再每個客戶各自全表重掃一次
+    const data = getLayoutRowsCached_(ssBusiness);
+
+    // 🚀 對齊戰情室標號：標題在第二列 (Index 1)，數據從第三列 (Index 2) 開始
+    const headers = data[1] || data[0];
+    const startRow = 2;
+
+    const idx = {
+      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
+      series: findHeaderIndex(headers, ["中文系列", "系列"]),
+      sku: findHeaderIndex(headers, ["編號", "產品編號"]),
+      img: findHeaderIndex(headers, ["版面連結", "連結", "圖片", "照片"]),
+      date: findHeaderIndex(headers, ["上架日期", "日期"]),
+      qty: findHeaderIndex(headers, ["片數", "數量"]),
+      batch: findHeaderIndex(headers, ["批號"]),
+      size: findHeaderIndex(headers, ["尺寸"]),
+      mode: findHeaderIndex(headers, ["展示方式"]),
+      lastUpdate: findHeaderIndex(headers, ["最後更新時間", "更新時間"]),
+      offDate: findHeaderIndex(headers, ["下架日期"])
+    };
+
+    if (idx.cust === -1) return { success: false, msg: "找不到客戶欄位", debug_headers: headers };
+
+    // 🚀 優化 1：快取庫存與單磚圖資料 (10 分鐘)
+    let inventoryMap = {};
+    try {
+      inventoryMap = getInventoryMapCached(ssMain);
+    } catch (e) {
+      console.warn("Cache Error:", e);
+      inventoryMap = getInventoryMap(ssMain); // 失敗則讀取實體
+    }
+
+    // 🚀 優化 2：快取銷售合計數據 (避免每次遍歷數萬行)
+    let customerSalesMap = {};
+    try {
+      customerSalesMap = getCustomerSalesCached(ssMain, targetMerged, inventoryMap);
+    } catch (e) {
+      console.warn("Sales Cache Error:", e);
+      customerSalesMap = calculateSalesManual(ssMain, targetMerged, inventoryMap);
+    }
+
+    // 🚀 新增：取得此客戶的專屬保留資料 (用於版面頁面標註)
+    let customerReservedMap = {};
+    try {
+      if (typeof getReservedOrdersGrouped === 'function') {
+        // 🚀 傳入已算好的 inventoryMap，避免函式內部再開一次主表、重掃一次編號價目表
+        const reservedGroups = getReservedOrdersGrouped(ssMain, targetMerged, inventoryMap);
+        reservedGroups.forEach(group => {
+          group.items.forEach(item => {
+            // 🚀 跟圖片抓取同一個根因：保留單的「-掛」「-期」暫記編號要先去後綴，
+            // 才能對回版面上架清單的正式編號 key，不然這個客戶的保留標註會悄悄對不到。
+            const skuKey = normalizeIncomingSkuKey_(item.sku);
+            if (!customerReservedMap[skuKey]) {
+              customerReservedMap[skuKey] = { qty: 0, cases: new Set(), details: [] };
+            }
+            customerReservedMap[skuKey].qty += item.qty;
+            if (group.name) customerReservedMap[skuKey].cases.add(group.name);
+            
+            // 🚀 紀錄詳細資訊：編號 數量片 業務 (使用 group.biz 修正 item.biz 遺漏問題)
+            customerReservedMap[skuKey].details.push(item.sku + " " + item.qty + "片 " + (group.biz || '未指定'));
+          });
+        });
+      }
+    } catch (e) {
+      console.warn("Reservation Load Error:", e);
+    }
+
+    const today = new Date().getTime();
+
+    const allData = data.slice(startRow)
+      .filter(row => {
+        const rowCust = row[idx.cust];
+        return rowCust && mergeCustomer(rowCust) === targetMerged;
+      })
+      .map(row => {
+        const fullSku = String(row[idx.sku] || '').trim();
+        const skuKey = fullSku.replace(/[\s\-]/g, '');
+        const rawImg = String(row[idx.img] || '').trim();
+        // 上架日期可能是文字（如 2024/04/28）；解析不出來就視為「未知」，不能當成今天（否則永遠顯示 0M）
+        const dateMs = idx.date !== -1 ? parseFlexDateMs_(row[idx.date]) : null;
+        const date = dateMs === null ? null : new Date(dateMs);
+        const days = date ? Math.floor((today - date.getTime()) / 86400000) : null;
+        const offDateRaw = idx.offDate !== -1 ? row[idx.offDate] : null;
+
+        const stock = inventoryMap[skuKey] || { level: 2, qty: 0, pyeong: 0, safe: 0, salesQty: 0, salesAmt: 0, singleImg: "" };
+        const cSales = customerSalesMap[skuKey] || { pings: 0, amt: 0, count: 0 };
+
+        // 一個版面可能有多張照片（同一個儲存格用換行分隔），全部轉成縮圖網址；
+        // photoUrl 仍維持「第一張」，既有的分組、上下架比對邏輯完全不用改。
+        const rawPhotoList = parsePhotoUrls_(rawImg);
+        const photoUrlList = rawPhotoList.map(function (u) { return toThumbUrl_(u, 1000); });
+        const thumbUrl = photoUrlList.length ? photoUrlList[0] : rawImg;
+
+        let singleImgUrl = '';
+        if (stock.singleImg && stock.singleImg.trim() !== '') {
+          const singleDriveId = extractIdFromUrl(stock.singleImg);
+          singleImgUrl = singleDriveId ? "https://lh3.googleusercontent.com/d/" + singleDriveId + "=w200" : stock.singleImg;
+        }
+
+        return {
+          sku: fullSku,
+          series: idx.series !== -1 ? String(row[idx.series] || '一般系列') : '一般系列',
+          photoUrl: thumbUrl,
+          photoUrls: photoUrlList,
+          daysOnDisplay: days === null ? null : Math.max(0, days),
+          installDate: date ? Utilities.formatDate(date, "GMT+8", "yyyy/MM/dd") : '',
+          offDate: offDateRaw ? Utilities.formatDate(new Date(offDateRaw), "GMT+8", "yyyy/MM/dd HH:mm") : null,
+          stockLevel: stock.level,
+          currentStock: stock.qty,
+          currentPyeong: stock.pyeong,
+          safeStock: stock.safe,
+          salesQty: cSales.pings > 0 ? cSales.pings : stock.salesQty,
+          salesAmt: cSales.amt > 0 ? cSales.amt : stock.salesAmt,
+          customerSalesAmt: cSales.amt,
+          customerSalesQty: cSales.pings,
+          frequency: cSales.count || 0,
+          lastSaleMs: cSales.last || 0,     // 此客戶這個編號最後一次銷售（毫秒；0=沒賣過）
+          firstSaleMs: cSales.first || 0,
+          customerReservedQty: customerReservedMap[skuKey] ? customerReservedMap[skuKey].qty : 0,
+          customerReservedCases: customerReservedMap[skuKey] ? Array.from(customerReservedMap[skuKey].cases).join(', ') : '',
+          customerReservedSummary: customerReservedMap[skuKey] ? customerReservedMap[skuKey].details.join('\n') : '',
+          singleImg: singleImgUrl,
+          originalQty: idx.qty !== -1 ? (row[idx.qty] || 1) : 1,
+          batch: idx.batch !== -1 ? String(row[idx.batch] || '') : '',
+          size: idx.size !== -1 ? String(row[idx.size] || '') : '',
+          spec: idx.spec !== -1 ? String(row[idx.spec] || '') : '',
+          mode: idx.mode !== -1 ? String(row[idx.mode] || '版面') : '版面',
+          lastUpdate: idx.lastUpdate !== -1 && row[idx.lastUpdate]
+            ? Utilities.formatDate(new Date(row[idx.lastUpdate]), "GMT+8", "yyyy/MM/dd HH:mm")
+            : ''
+        };
+      });
+
+    const active = allData.filter(d => !d.offDate);
+    const history = allData.filter(d => d.offDate);
+
+    const result = {
+      success: true,
+      active: active,
+      history: history,
+      debug: { active: active.length, history: history.length, target: targetMerged }
+    };
+    try { CacheManager.putLarge(cacheKey, result, 1800); } catch (e) {}
+    return result;
+  } catch (e) {
+    return { success: false, msg: "資料抓取失敗: " + e.toString() };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 4. 工具函式組
+// -----------------------------------------------------------------------------
+
+/**
+ * 🗓 彈性日期解析 → 毫秒（失敗回 null）。支援：Date、試算表序號、2026/10/05、2026-10-05、
+ * 民國 115/10/05、2026年10月5日、含「上午/下午」的時間、ISO 字串。
+ */
+function parseFlexDateMs_(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date) { const t0 = v.getTime(); return isNaN(t0) ? null : t0; }
+  if (typeof v === 'number') {
+    if (v > 30000 && v < 80000) return new Date(1899, 11, 30).getTime() + v * 86400000;   // 試算表日期序號
+    const pn = parseDate(String(Math.round(v)));   // 1150425 / 20260425 這類純數字
+    return pn ? pn.getTime() : null;
+  }
+  const s = String(v).trim();
+  if (!s) return null;
+  let m = s.match(/(\d{2,4})\s*[\/\-.年]\s*(\d{1,2})\s*[\/\-.月]\s*(\d{1,2})/);
+  if (m) {
+    let y = parseInt(m[1], 10);
+    if (m[1].length <= 3 || y < 1911) y += 1911;          // 民國年（115 → 2026）
+    const mo = parseInt(m[2], 10), d = parseInt(m[3], 10);
+    let hh = 0, mi = 0;
+    const tm = s.match(/(\d{1,2}):(\d{2})/);
+    if (tm) {
+      hh = parseInt(tm[1], 10); mi = parseInt(tm[2], 10);
+      if (/下午|PM/i.test(s) && hh < 12) hh += 12;
+      if (/上午|AM/i.test(s) && hh === 12) hh = 0;
+    }
+    const dt = new Date(y, mo - 1, d, hh, mi).getTime();
+    return isNaN(dt) ? null : dt;
+  }
+  const pc = parseDate(s);                    // 無分隔符等其他格式（沿用全專案共用解析）
+  if (pc) return pc.getTime();
+  const nd = new Date(s).getTime();
+  return isNaN(nd) ? null : nd;
+}
+
+function getInventoryMapCached(ss) {
+  // 🚀 用 CacheManager（分片）取代原本的單一 key：原本手動限制 90KB，超過就完全沒快取，
+  //    實際上庫存 map 常有十萬字元以上，等於每次都重掃編號價目表。改用新 key v3 避開舊單一值格式。
+  const CACHE_KEY = "inventory_map_v3";
+  try {
+    const cached = CacheManager.getLarge(CACHE_KEY);
+    if (cached) return cached;
+  } catch (e) {}
+
+  const map = getInventoryMap(ss);
+  try { CacheManager.putLarge(CACHE_KEY, map, 1800); } catch (e) {}
+  return map;
+}
+
+/**
+ * 🚀 效能優化：原本這裡是「每個客戶各自一把 5 分鐘快取 key，快取沒中就整張『經銷銷售報表』
+ * （數萬行）重新全表掃描一次」——業務連續點好幾個不同客戶，等於同一張大表在幾分鐘內被重複整張
+ * 重讀好幾次。改成跟 getSalesOverview() 一樣的做法：全公司所有客戶「一次性」掃過整張表、依客戶
+ * 分組成一份共用結果去快取，之後不管查哪個客戶都是直接查表（O(1)），只有快取真的過期時才需要
+ * 重新整張掃一次，且那一次是「幫全公司所有人都算好」，不是「只幫這個客戶算」。
+ */
+function getAllCustomerSalesCached_(ss, inventoryMap) {
+  const cacheKey = "all_customer_sales_v4";   // v2：每個編號多記「最後/首次銷售日」(毫秒)
+  const cached = CacheManager.getLarge(cacheKey);
+  if (cached) return cached;
+
+  const map = calculateAllCustomerSales_(ss, inventoryMap);
+  try { CacheManager.putLarge(cacheKey, map, 1800); } catch (e) {} // 10 分鐘共用快取
+  return map;
+}
+
+function calculateAllCustomerSales_(ss, inventoryMap) {
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_SALES);
+  if (!sheet) return {};
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return {};
+
+  const headers = data[0];
+  const sIdx = {
+    cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
+    sku: findHeaderIndex(headers, ["產品編號", "編號", "序號"]),
+    qty: findHeaderIndex(headers, ["數量", "片數"]),
+    amt: findHeaderIndex(headers, ["金額", "銷售金額"]),
+    date: findHeaderIndex(headers, ["單據日期", "銷貨日期", "日期"])
+  };
+
+  const allMap = {}; // mergedCustomer → { sku: {pings, amt, count} }
+  const rows = data.slice(1);
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const cust = mergeCustomer(row[sIdx.cust]);
+    if (!cust) continue;
+    const rawSku = row[sIdx.sku];
+    if (!rawSku) continue;
+    const sku = String(rawSku).trim().toUpperCase().replace(/[\s\-]/g, '');
+
+    if (!allMap[cust]) allMap[cust] = {};
+    if (!allMap[cust][sku]) allMap[cust][sku] = { pings: 0, amt: 0, count: 0, last: 0, first: 0 };
+    const meta = inventoryMap[sku] || { perPing: 36 };
+    if (sIdx.date !== -1) {
+      const dt = parseFlexDateMs_(row[sIdx.date]);
+      if (dt !== null) {
+        const e = allMap[cust][sku];
+        if (dt > e.last) e.last = dt;
+        if (!e.first || dt < e.first) e.first = dt;
+      }
+    }
+
+    const qty = parseFloat(row[sIdx.qty]) || 0;
+    const amt = parseFloat(row[sIdx.amt]) || 0;
+
+    allMap[cust][sku].pings += qty / (meta.perPing || 36);
+    allMap[cust][sku].amt += amt;
+    allMap[cust][sku].count += 1;
+  }
+  return allMap;
+}
+
+function getCustomerSalesCached(ss, targetMerged, inventoryMap) {
+  const allMap = getAllCustomerSalesCached_(ss, inventoryMap);
+  return allMap[targetMerged] || {};
+}
+
+function calculateSalesManual(ss, targetMerged, inventoryMap) {
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_SALES);
+  if (!sheet) return {};
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return {};
+  
+  const headers = data[0];
+  const sIdx = {
+    cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
+    sku: findHeaderIndex(headers, ["產品編號", "編號", "序號"]),
+    qty: findHeaderIndex(headers, ["數量", "片數"]),
+    amt: findHeaderIndex(headers, ["金額", "銷售金額"]),
+    date: findHeaderIndex(headers, ["單據日期", "銷貨日期", "日期"])
+  };
+
+  const customerSalesMap = {};
+  const rows = data.slice(1);
+  const target = targetMerged.trim();
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (mergeCustomer(row[sIdx.cust]) === target) {
+      const rawSku = row[sIdx.sku];
+      if (!rawSku) continue;
+      const sku = String(rawSku).trim().toUpperCase().replace(/[\s\-]/g, '');
+      
+      if (!customerSalesMap[sku]) customerSalesMap[sku] = { pings: 0, amt: 0, count: 0, last: 0, first: 0 };
+      const meta = inventoryMap[sku] || { perPing: 36 };
+      if (sIdx.date !== -1) {
+        const dt = parseFlexDateMs_(row[sIdx.date]);
+        if (dt !== null) {
+          const e = customerSalesMap[sku];
+          if (dt > e.last) e.last = dt;
+          if (!e.first || dt < e.first) e.first = dt;
+        }
+      }
+      
+      const qty = parseFloat(row[sIdx.qty]) || 0;
+      const amt = parseFloat(row[sIdx.amt]) || 0;
+      
+      customerSalesMap[sku].pings += qty / (meta.perPing || 36);
+      customerSalesMap[sku].amt += amt;
+      customerSalesMap[sku].count += 1;
+    }
+  }
+  return customerSalesMap;
+}
+
+function getInventoryMap(ss) {
+  if (!ss) return {};
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_PRODUCTS);
+  if (!sheet) return {};
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  const idx = {
+    sku: findHeaderIndex(headers, ["編號", "產品編號", "品碼"]),
+    qty: findHeaderIndex(headers, ["庫存片數", "現有片數", "總片數"]),
+    pyeong: findHeaderIndex(headers, ["庫存坪數", "現有坪數", "總坪數"]),
+    safe: findHeaderIndex(headers, ["人工指定安全坪數", "安全庫存", "安全水位"]),
+    salesQty: findHeaderIndex(headers, ["銷售坪數", "累計銷量", "銷量", "銷售數", "銷數"]),
+    salesAmt: findHeaderIndex(headers, ["銷售金額", "成交金額", "銷額", "總金額", "銷價"]),
+    singleImg: findHeaderIndex(headers, ["單片連結網址", "單片連結", "產品縮圖", "圖片"]),
+    sceneFolder: findHeaderIndex(headers, ["雲端圖片", "雲端圖片(實景圖)", "實景照片"]),
+    perPing: findHeaderIndex(headers, ["片/坪", "片坪"]),
+    size: findHeaderIndex(headers, ["尺寸", "SIZE"]),
+    series: findHeaderIndex(headers, ["中文系列", "系列"]),
+    spec: findHeaderIndex(headers, ["規格"])
+  };
+
+  const map = {};
+  data.slice(1).forEach(row => {
+    const rawSku = String(row[idx.sku] || '').trim();
+    if (rawSku) {
+      const skuKey = rawSku.toUpperCase().replace(/[\s\-]/g, '');
+      const qty = parseFloat(row[idx.qty]) || 0;
+      const pyeong = parseFloat(row[idx.pyeong]) || 0;
+      const safe = parseFloat(row[idx.safe]) || 0;
+      const sQty = idx.salesQty !== -1 ? parseFloat(row[idx.salesQty]) || 0 : 0;
+      const sAmt = idx.salesAmt !== -1 ? parseFloat(row[idx.salesAmt]) || 0 : 0;
+      const sImg = idx.singleImg !== -1 ? String(row[idx.singleImg] || '').trim() : '';
+      const sFolder = idx.sceneFolder !== -1 ? String(row[idx.sceneFolder] || '').trim() : '';
+      const perPing = idx.perPing !== -1 ? (parseFloat(row[idx.perPing]) || 36) : 36;
+      const sz = idx.size !== -1 ? String(row[idx.size] || '').trim() : '';
+
+      let level = 3;
+      if (qty <= 0) level = 1;
+      else if (pyeong < safe) level = 2;
+
+      map[skuKey] = { 
+        sku: rawSku, // 保留原始編號供顯示
+        level, qty, pyeong, safe, 
+        salesQty: sQty, salesAmt: sAmt, 
+        singleImg: sImg, sceneFolder: sFolder,
+        perPing: perPing,
+        size: sz,
+        series: idx.series !== -1 ? String(row[idx.series] || '').trim() : '一般',
+        spec: idx.spec !== -1 ? String(row[idx.spec] || '').trim() : ''
+      };
+    }
+  });
+  return map;
+}
+
+/**
+ * 🚮 永久刪除版面 (誤傳專用 - 不留紀錄)
+ */
+function deleteDisplayBatchPermanent_impl_(customerName, skus, photoUrl) {
+  try {
+    const ss = getSafeSsBusiness();
+    const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[1] || data[0];
+
+    const idx = {
+      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
+      sku: findHeaderIndex(headers, ["產品編號", "編號"]),
+      img: findHeaderIndex(headers, ["版面連結", "連結", "圖片", "照片"])
+    };
+
+    const targetMerged = mergeCustomer(customerName);
+    const normalizedSkus = skus.map(s => String(s).replace(/[\s\-]/g, ''));
+    const targetPhotoId = extractIdFromUrl(photoUrl);
+
+    // 🚀 效能優化：先蒐集要刪除的列號，再逆向批次刪除
+    // 避免在迴圈中逐行呼叫 deleteRow（每次皆為一個獨立 API call）
+    const rowsToDelete = [];
+    for (let i = data.length - 1; i >= 2; i--) {
+      const rowCust = mergeCustomer(data[i][idx.cust]);
+      const rowSku = String(data[i][idx.sku] || '').trim().replace(/[\s\-]/g, '');
+      const rowImg = String(data[i][idx.img] || '').trim();
+      const rowImgId = extractIdFromUrl(rowImg);
+
+      const isSkuMatch = normalizedSkus.includes(rowSku);
+      const isImgMatch = (targetPhotoId && rowImgId) ? (targetPhotoId === rowImgId) : (rowImg === photoUrl);
+
+      if (rowCust === targetMerged && isSkuMatch && isImgMatch) {
+        rowsToDelete.push(i + 1); // 記錄 1-based 列號
+      }
+    }
+
+    // 批次刪除：將連續行合併為一次 deleteRows() 呼叫
+    rowsToDelete.sort((a, b) => b - a);
+    const deleted = rowsToDelete.length;
+    if (deleted > 0) {
+      let i = 0;
+      while (i < rowsToDelete.length) {
+        let start = rowsToDelete[i];
+        let count = 1;
+        while (i + count < rowsToDelete.length && rowsToDelete[i + count] === start - count) {
+          count++;
+        }
+        sheet.deleteRows(start - count + 1, count);
+        i += count;
+      }
+    }
+
+    // 嘗試從 Drive 刪除照片
+    if (targetPhotoId) {
+      try { DriveApp.getFileById(targetPhotoId).setTrashed(true); } catch (e) { console.warn("照片刪除失敗", e); }
+    }
+
+    // 🚀 清除版面記錄快取，避免刪除後畫面還顯示舊資料
+    try { CacheManager.removeLarge("displays_v5_" + targetMerged); } catch (e) {}
+    try { CacheManager.removeLarge("layout_rows_v1"); } catch (e) {}
+
+    return { success: true, msg: "已永久刪除 " + deleted + " 筆資料與相關照片" };
+  } catch (e) {
+    return { success: false, msg: "刪除失敗: " + e.toString() };
+  }
+}
+
+function offShelfDisplayBatch_impl_(customerName, skus, salesperson, photoUrl) {
+  try {
+    const ss = getSafeSsBusiness();
+    const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[1] || data[0];
+
+    const idx = {
+      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
+      sku: findHeaderIndex(headers, ["產品編號", "編號"]),
+      img: findHeaderIndex(headers, ["版面連結", "連結", "圖片", "照片"]),
+      offDate: findHeaderIndex(headers, ["下架日期"]),
+      lastUpdate: findHeaderIndex(headers, ["最後更新時間", "更新時間"]),
+      creator: findHeaderIndex(headers, ["建立者"])
+    };
+
+    if (idx.cust === -1 || idx.sku === -1 || idx.offDate === -1) {
+      return { success: false, msg: "工作表格式不支援下架操作" };
+    }
+
+    const targetMerged = mergeCustomer(customerName);
+    const timestamp = new Date();
+    const normalizedSkus = skus.map(s => String(s).replace(/[\s\-]/g, ''));
+    const targetPhotoId = extractIdFromUrl(photoUrl);
+
+    // 🚀 效能優化：蒐集所有需要更新的列資訊，批次寫入取代逐行 setValue
+    const offDateUpdates = []; // { rowNum, offDateCol, lastUpdateCol }
+    for (let i = 2; i < data.length; i++) {
+      const rowCust = mergeCustomer(data[i][idx.cust]);
+      const rowSku = String(data[i][idx.sku] || '').trim().replace(/[\s\-]/g, '');
+      const rowImg = String(data[i][idx.img] || '').trim();
+      const rowImgId = extractIdFromUrl(rowImg);
+
+      const isSkuMatch = normalizedSkus.includes(rowSku);
+      const isImgMatch = (targetPhotoId && rowImgId) ? (targetPhotoId === rowImgId) : (rowImg === photoUrl);
+
+      if (rowCust === targetMerged && isSkuMatch && isImgMatch && !data[i][idx.offDate]) {
+        offDateUpdates.push(i + 1); // 記錄 1-based 列號
+      }
+    }
+
+    // 批次寫入：用 RangeList 一次更新所有匹配列
+    if (offDateUpdates.length > 0) {
+      const offDateA1s = offDateUpdates.map(r => sheet.getRange(r, idx.offDate + 1).getA1Notation());
+      sheet.getRangeList(offDateA1s).setValue(timestamp);
+      if (idx.lastUpdate !== -1) {
+        const updateA1s = offDateUpdates.map(r => sheet.getRange(r, idx.lastUpdate + 1).getA1Notation());
+        sheet.getRangeList(updateA1s).setValue(timestamp);
+      }
+    }
+
+    // 🚀 清除版面記錄快取，避免下架後畫面還顯示舊資料
+    try { CacheManager.removeLarge("displays_v5_" + targetMerged); } catch (e) {}
+    try { CacheManager.removeLarge("layout_rows_v1"); } catch (e) {}
+
+    return { success: true, msg: "已成功下架 " + offDateUpdates.length + " 個品項" };
+  } catch (e) {
+    return { success: false, msg: "後端錯誤: " + e.toString() };
+  }
+}
+
+function updateDisplayBatch_impl_(customerName, photoUrl, newItems, newPhotoData, gpsData, salesperson) {
+  try {
+    // 1. 安全開啟試算表
+    // 🚀 效能優化：只在確實需要時才開啟 ssMain（用快取版 inventoryMap 取代）
+    const ssBusiness = getSafeSsBusiness();
+    const sheet = ssBusiness.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
+    if (!sheet) throw new Error("找不到工作表: " + CONFIG.SHEET_NAME_LAYOUT);
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[1] || data[0];
+
+    const idx = {
+      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
+      sku: findHeaderIndex(headers, ["產品編號", "編號"]),
+      qty: findHeaderIndex(headers, ["片數", "數量"]),
+      img: findHeaderIndex(headers, ["版面連結", "照片", "圖片"]),
+      series: findHeaderIndex(headers, ["系列"]),
+      batch: findHeaderIndex(headers, ["批號"]),
+      offDate: findHeaderIndex(headers, ["下架日期"]),
+      date: findHeaderIndex(headers, ["上架日期", "日期"]),
+      creator: findHeaderIndex(headers, ["建立者"]),
+      createTime: findHeaderIndex(headers, ["建立時間"]),
+      lastUpdate: findHeaderIndex(headers, ["最後更新時間", "更新時間"]),
+      custId: findHeaderIndex(headers, ["客戶編號"]),
+      size: findHeaderIndex(headers, ["尺寸"]),
+      spec: findHeaderIndex(headers, ["規格"]),
+      mode: findHeaderIndex(headers, ["展示方式"])
+    };
+
+    const targetMerged = mergeCustomer(customerName);
+    const today = new Date();
+    const timeStr = Utilities.formatDate(today, "GMT+8", "yyyy/MM/dd HH:mm:ss");
+
+    // 2. 預備變量 (蒐集舊資料作為新資料的基礎)
+    let baseSeries = "一般系列";
+    let baseDate = today;
+    let baseCreator = salesperson || "";
+    let baseCreateTime = today;
+    let baseCustId = "";
+    let baseMode = "版面";
+    let skuSizeMap = {};
+    const deleteRows = []; // 紀錄需要刪除的列號
+
+    const targetPhotoId = extractIdFromUrl(photoUrl);
+
+    // 掃描找出要更新的行
+    for (let i = data.length - 1; i >= 2; i--) {
+      const rowImg = String(data[i][idx.img] || '').trim();
+      const rowCustMerged = mergeCustomer(data[i][idx.cust]);
+      const rowImgId = extractIdFromUrl(rowImg);
+      const isImgMatch = (targetPhotoId && rowImgId) ? (targetPhotoId === rowImgId) : (rowImg === photoUrl);
+      
+      // 🚀 安全性強化：如果沒有照片 ID 且照片網址為空，強制比對系列，防止誤改其他無照片版面
+      let isMatch = isImgMatch;
+      if (!targetPhotoId && (!photoUrl || photoUrl.includes('placehold'))) {
+        const rowSeries = String(data[i][idx.series] || '一般系列');
+        // 從 newItems 取得當前編輯的系列名稱作為參考
+        const targetSeries = (newItems && newItems[0] && newItems[0].series) ? newItems[0].series : "";
+        if (targetSeries && rowSeries !== targetSeries) isMatch = false;
+      }
+
+      if (isMatch && rowCustMerged === targetMerged && !data[i][idx.offDate]) {
+        if (data[i][idx.series]) baseSeries = data[i][idx.series];
+        if (data[i][idx.date]) baseDate = data[i][idx.date];
+        if (idx.creator !== -1 && data[i][idx.creator]) baseCreator = data[i][idx.creator];
+        if (idx.createTime !== -1 && data[i][idx.createTime]) baseCreateTime = data[i][idx.createTime];
+        if (idx.custId !== -1 && !baseCustId) baseCustId = data[i][idx.custId];
+        if (idx.mode !== -1) baseMode = data[i][idx.mode];
+        
+        const s = String(data[i][idx.sku] || '').trim();
+        skuSizeMap[s] = {
+          size: idx.size !== -1 ? data[i][idx.size] : "",
+          spec: idx.spec !== -1 ? data[i][idx.spec] : ""
+        };
+        deleteRows.push(i + 1);
+      }
+    }
+
+    if (!baseCustId && idx.custId !== -1) {
+      for (let i = 2; i < data.length; i++) {
+        if (mergeCustomer(data[i][idx.cust]) === targetMerged && data[i][idx.custId]) {
+          baseCustId = data[i][idx.custId];
+          break;
+        }
+      }
+    }
+
+    // 3. 處理圖片上傳 (交易外預處理，失敗不刪資料)
+    let finalPhotoUrl = photoUrl;
+    if (newPhotoData) {
+      const dateStr = Utilities.formatDate(today, "GMT+8", "yyyyMMdd");
+      const fileName = [customerName, baseSeries, "", dateStr, salesperson].filter(Boolean).join("_") + ".jpg";
+      const blob = Utilities.newBlob(Utilities.base64Decode(newPhotoData.base64), newPhotoData.mimeType || 'image/jpeg', fileName);
+      
+      let file;
+      try {
+        const folder = DriveApp.getFolderById(CONFIG.IMG_FOLDER_ID);
+        file = folder.createFile(blob);
+      } catch (e) {
+        console.warn("圖片上傳至 CONFIG.IMG_FOLDER_ID 失敗，改用 eliTile_Uploads 資料夾:", e);
+        const folders = DriveApp.getFoldersByName("eliTile_Uploads");
+        const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder("eliTile_Uploads");
+        file = folder.createFile(blob);
+      }
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      finalPhotoUrl = file.getUrl();
+
+      // 📍 重新拍照時同步更新 GPS 客戶定位
+      if (gpsData && gpsData.lat) {
+        updateCustomerLocation(customerName, gpsData.lat, gpsData.lng);
+      }
+    }
+
+    // 4. 準備新行數據
+    // 🚀 效能優化：先嘗試快取，只在快取未命中時才開 ssMain
+    const ssMain = getSafeSsMain();
+    const invMap = getInventoryMapCached(ssMain);
+    
+    // 🚀 關鍵修正：優先從 newItems 取得使用者輸入的「系列」與「尺寸」
+    // 如果前端傳入的項目帶有 series/size，則以此為準，不再盲目採用舊資料
+    const finalBaseSeries = (newItems[0] && newItems[0].series) ? newItems[0].series : baseSeries;
+    const finalBaseSize = (newItems[0] && newItems[0].size) ? newItems[0].size : "";
+
+    const newRowsToInsert = newItems.map(item => {
+      const row = new Array(headers.length).fill("");
+      const rawSku = (item.sku || "").trim().toUpperCase();
+      const skuKey = rawSku.replace(/[\s\-]/g, "");
+
+      // 🚀 系列防呆校正：若未填系列、或使用者誤將編號當系列填入、或為英數代碼，且庫存字典中有對應官方中文系列，自動校正為官方系列
+      const officialSeries = (invMap[skuKey] && invMap[skuKey].series && invMap[skuKey].series !== '一般') ? invMap[skuKey].series : "";
+      let itemSeries = (item.series || finalBaseSeries || "").trim();
+      if (!itemSeries || itemSeries.toUpperCase().replace(/[\s\-]/g, "") === skuKey || (officialSeries && /^[A-Za-z0-9\-_]+$/.test(itemSeries))) {
+        if (officialSeries) itemSeries = officialSeries;
+      }
+
+      if (idx.cust !== -1) row[idx.cust] = customerName;
+      if (idx.date !== -1) row[idx.date] = baseDate;
+      if (idx.sku !== -1) row[idx.sku] = rawSku;
+      if (idx.qty !== -1) row[idx.qty] = item.qty || 1;
+      if (idx.img !== -1) row[idx.img] = finalPhotoUrl;
+      if (idx.series !== -1) row[idx.series] = itemSeries;
+      if (idx.batch !== -1) row[idx.batch] = (item.batch || "").trim();
+      if (idx.creator !== -1) row[idx.creator] = baseCreator;
+      if (idx.lastUpdate !== -1) row[idx.lastUpdate] = timeStr;
+      if (idx.custId !== -1) row[idx.custId] = baseCustId;
+      if (idx.mode !== -1) row[idx.mode] = baseMode;
+      if (idx.size !== -1) {
+        row[idx.size] = item.size || finalBaseSize || (skuSizeMap[rawSku] && skuSizeMap[rawSku].size) || (invMap[skuKey] ? invMap[skuKey].size : "");
+      }
+      if (idx.spec !== -1) {
+        row[idx.spec] = item.spec || (skuSizeMap[rawSku] && skuSizeMap[rawSku].spec) || (invMap[skuKey] ? invMap[skuKey].spec : "");
+      }
+      return row;
+    });
+
+    // 5. 🚀 執行寫入 (交易式操作：先確認新資料準備好，最後才刪舊插新)
+    // 批次刪除：將連續行合併為一次 deleteRows() 呼叫
+    deleteRows.sort((a, b) => b - a);
+    if (deleteRows.length > 0) {
+      let i = 0;
+      while (i < deleteRows.length) {
+        let start = deleteRows[i];
+        let count = 1;
+        while (i + count < deleteRows.length && deleteRows[i + count] === start - count) {
+          count++;
+        }
+        sheet.deleteRows(start - count + 1, count);
+        i += count;
+      }
+    }
+
+    // 插入到最上方 (Row 3)
+    if (newRowsToInsert.length > 0) {
+      sheet.insertRowsBefore(3, newRowsToInsert.length);
+      sheet.getRange(3, 1, newRowsToInsert.length, headers.length).setValues(newRowsToInsert);
+    }
+
+    // 6. 🗑️ 刪除舊照片 (僅在有新照片且 ID 不同時執行)
+    if (newPhotoData && targetPhotoId) {
+      try {
+        const oldFile = DriveApp.getFileById(targetPhotoId);
+        oldFile.setTrashed(true);
+        console.log("已刪除舊照片:", targetPhotoId);
+      } catch (e) {
+        console.warn("舊照片刪除失敗 (可能已不存在):", e);
+      }
+    }
+
+    // 7. 📝 寫入工作日誌
+    try {
+      const actionStr = newPhotoData ? "更換版面照片" : "修改版面品項";
+      const skuSummary = newItems.map(i => i.sku).join(", ");
+      
+      // 🚀 統一呼叫核心存儲邏輯，以利自動合併橫列與剪裁
+      saveWorkLog({
+        employeeName: salesperson || "系統",
+        customerName: customerName,
+        result: "業務更新",
+        content: `${actionStr}: [${finalBaseSeries}] ${skuSummary}`,
+        gps: gpsData ? `${gpsData.lat},${gpsData.lng}` : "",
+        _skipHeavyOps: true
+      });
+    } catch (e) {
+      console.warn("工作日誌寫入失敗:", e);
+    }
+
+    // 清除快取
+    // 🚀 原本用 getUserCache() 存到「CUSTOMER_DISPLAYS_」這個 key，但 getCustomerDisplays
+    //    從沒往這個 key 寫過（不同快取空間+不同 key 名），等於清了個空氣，是無效程式碼。
+    //    改用跟 getCustomerDisplays 一致的 CacheManager.removeLarge("displays_v5_"+客戶)。
+    try { CacheManager.removeLarge("displays_v5_" + targetMerged); } catch (e) {}
+    try { CacheManager.removeLarge("layout_rows_v1"); } catch (e) {}
+
+    return { success: true, msg: "已成功更新並移至最上方", finalPhotoUrl: finalPhotoUrl };
+  } catch (e) {
+    console.error("Update Failed:", e);
+    return { success: false, msg: "同步失敗: " + e.toString() };
+  }
+}
+
+function updateLayoutFieldBatch_impl_(customerName, skus, fieldName, newVal) {
+  try {
+    const ss = getSafeSsBusiness();
+    const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[1] || data[0];
+
+    const fieldIdx = findHeaderIndex(headers, [fieldName]);
+    const skuIdx = findHeaderIndex(headers, ["編號", "產品編號"]);
+    const updateIdx = findHeaderIndex(headers, ["最後更新時間", "更新日期"]);
+    const customerIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
+
+    if (fieldIdx === -1 || skuIdx === -1) return { success: false, msg: "找不到欄位: " + fieldName };
+
+    const targetMerged = mergeCustomer(customerName);
+    const timestamp = new Date();
+
+    // 🚀 效能優化：蒐集所有需更新的列，批次一次寫入取代迴圈逐行 setValue
+    const matchedRows = [];
+    for (let i = 2; i < data.length; i++) {
+      const rowSku = String(data[i][skuIdx] || '').trim();
+      const rowCust = mergeCustomer(data[i][customerIdx]);
+      if (rowCust === targetMerged && skus.includes(rowSku)) {
+        matchedRows.push(i + 1); // 記錄 1-based 列號
+      }
+    }
+
+    // 批次寫入：用 RangeList 一次更新所有匹配列
+    if (matchedRows.length > 0) {
+      const fieldA1s = matchedRows.map(r => sheet.getRange(r, fieldIdx + 1).getA1Notation());
+      sheet.getRangeList(fieldA1s).setValue(newVal);
+      if (updateIdx !== -1) {
+        const updateA1s = matchedRows.map(r => sheet.getRange(r, updateIdx + 1).getA1Notation());
+        sheet.getRangeList(updateA1s).setValue(timestamp);
+      }
+    }
+
+    // 🚀 清除版面記錄快取，避免改完畫面還顯示舊資料（這個函式原本完全沒清過快取）
+    try { CacheManager.removeLarge("displays_v5_" + targetMerged); } catch (e) {}
+    try { CacheManager.removeLarge("layout_rows_v1"); } catch (e) {}
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+function extractIdFromUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+
+  // 1. 嘗試匹配常見的 Drive ID 格式 (28-50 字元)
+  const idMatch = url.match(/[-\w]{28,50}/);
+  if (idMatch) return idMatch[0];
+
+  // 2. 備用：匹配特定的 URL 路徑模式
+  const patterns = [
+    /\/d\/([a-zA-Z0-9_-]{25,})/,
+    /id=([a-zA-Z0-9_-]{25,})/,
+    /\/file\/d\/([a-zA-Z0-9_-]{25,})/
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function submitRecord(payload) {
+  // 基礎日誌紀錄功能
+  return { success: true, msg: "紀錄已提交" };
+}
+
+function parseDate(dateStr) {
+  if (!dateStr) return null;
+  if (dateStr instanceof Date) {
+    let y = dateStr.getFullYear();
+    if (y < 1000) y += 1911; // 處理已經是日期物件但年份為民國的情況
+    return new Date(y, dateStr.getMonth(), dateStr.getDate());
+  }
+
+  if (typeof dateStr === 'number' && isFinite(dateStr)) {
+    // Google Sheets 日期序號
+    if (dateStr > 20000 && dateStr < 80000) {
+      return new Date(Math.round((dateStr - 25569) * 86400000));
+    }
+  }
+  
+  let s = String(dateStr).trim();
+  // 支援常見字串格式：2026/05/01、2026-05-01、2026年05月01日、115/05/01、1150501、20260501
+  s = s.replace(/[年\.]/g, '/').replace(/月/g, '/').replace(/日/g, '').replace(/\s+/g, ' ').trim();
+  const slashMatch = s.match(/^(\d{2,4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:\s+.*)?$/);
+  if (slashMatch) {
+    let year = parseInt(slashMatch[1], 10);
+    if (year < 1000) year += 1911;
+    return new Date(year, parseInt(slashMatch[2], 10) - 1, parseInt(slashMatch[3], 10));
+  }
+
+  // 🚀 1. 匹配無分隔符的民國年 (例如 01150425)
+  const compactMatch = s.match(/^(\d{3,4})(\d{2})(\d{2})$/);
+  if (compactMatch) {
+    let year = parseInt(compactMatch[1], 10);
+    if (year < 1000) year += 1911;
+    return new Date(year, parseInt(compactMatch[2], 10) - 1, parseInt(compactMatch[3], 10));
+  }
+  
+  return null;
+}
+
+/**
+ * 🚀 「新增上架」表單自動帶入：輸入系列名稱（或直接輸入其中一個編號）後，回傳該系列所有編號，
+ * 依尺寸分組，供前端渲染成「勾選＋填數量」的清單，加速輸入（不用逐個手打編號）。
+ * 直接複用 getAggregatedInventory() 既有快取（庫存查詢同一份資料），不額外開表。
+ */
+function getSeriesSkuOptions_impl_(seriesName) {
+  try {
+    const target = String(seriesName || '').trim();
+    if (!target) return { success: false, msg: '缺少系列名稱' };
+
+    const invRes = getAggregatedInventory();
+    if (!invRes.success) return { success: false, msg: invRes.msg || '庫存資料讀取失敗' };
+
+    // 先精準比對系列名稱；比對不到才退回模糊比對（雙向 includes，容忍打全名/簡稱）
+    let matched = invRes.data.filter(p => p.sCn === target);
+    if (matched.length === 0) {
+      matched = invRes.data.filter(p => p.sCn && (p.sCn.includes(target) || target.includes(p.sCn)));
+    }
+    // 🚀 都比對不到系列名稱時，改當作「輸入的是編號」試著反查：正規化去空白/連字號後比對編號，
+    // 找到該編號後改用它所屬的系列，再抓整個系列的所有編號（方便只記得編號、不記得系列名稱時使用）。
+    if (matched.length === 0) {
+      const targetSkuKey = target.toUpperCase().replace(/[\s\-]/g, '');
+      const hitProduct = invRes.data.find(p => p.sku && p.sku.toUpperCase().replace(/[\s\-]/g, '') === targetSkuKey);
+      if (hitProduct && hitProduct.sCn) {
+        matched = invRes.data.filter(p => p.sCn === hitProduct.sCn);
+      }
+    }
+    if (matched.length === 0) return { success: true, seriesFound: false, sizes: [] };
+
+    // 依尺寸分組，組內依編號排序
+    const bySize = {};
+    matched.forEach(p => {
+      const sizeKey = p.size || '規格外';
+      if (!bySize[sizeKey]) bySize[sizeKey] = [];
+      // 🚀 該編號目前庫存裡實際存在的批號清單（去重、去空白），供前端批號欄位做「可選也可自打」
+      const batchSet = {};
+      (p.batches || []).forEach(b => {
+        const bv = String(b.batch || '').trim();
+        if (bv && bv !== '無' && bv !== '-' && bv !== 'null' && bv !== 'undefined') batchSet[bv] = true;
+      });
+      bySize[sizeKey].push({
+        sku: p.sku,
+        // 🚀 「顏色」跟「色階」是編號價目表裡不同欄位——色階是等級代碼，顏色才是給業務看的色名，
+        // 沒有「顏色」欄位時才退回「色階」，避免直接空白。
+        color: p.colorName || p.colorTag || '',
+        img: p.img || '',
+        batches: Object.keys(batchSet).sort()
+      });
+    });
+    const sizes = Object.keys(bySize).sort().map(sz => ({
+      size: sz,
+      items: bySize[sz].sort((a, b) => a.sku.localeCompare(b.sku))
+    }));
+
+    return { success: true, seriesFound: true, matchedSeriesName: matched[0].sCn, sizes: sizes };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 🚀 「新增上架」表單系列名稱輸入框的即時建議：輸入任何一個字（或一段編號），回傳所有包含這個字
+ * 的系列名稱，或是編號含這段字的品項所屬系列，供前端渲染成下拉建議清單（邊打邊搜，不用打完整名稱，
+ * 也支援直接打編號片段如「61243」）。同樣直接複用 getAggregatedInventory() 快取。
+ */
+function getSeriesNameSuggestions_impl_(query) {
+  try {
+    const q = String(query || '').trim();
+    if (!q) return { success: true, names: [] };
+    const qUpperNoSep = q.toUpperCase().replace(/[\s\-]/g, '');
+
+    const invRes = getAggregatedInventory();
+    if (!invRes.success) return { success: false, msg: invRes.msg || '庫存資料讀取失敗' };
+
+    const seen = {};
+    const names = [];
+    invRes.data.forEach(p => {
+      const name = p.sCn;
+      if (!name || seen[name]) return;
+      const nameMatch = name.includes(q);
+      const skuMatch = p.sku && p.sku.toUpperCase().replace(/[\s\-]/g, '').includes(qUpperNoSep);
+      if (nameMatch || skuMatch) {
+        seen[name] = true;
+        names.push(name);
+      }
+    });
+    names.sort((a, b) => a.localeCompare(b, 'zh-TW'));
+    return { success: true, names: names.slice(0, 12) }; // 最多回傳 12 筆，避免下拉清單過長
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 🖼 一個版面可以有多張照片（業務反應有些牆實體上是分成兩片）。
+ * 做法是把多個網址放在同一個「版面連結」儲存格裡（換行或逗號分隔），
+ * 不新增欄位——因為分組是依這個儲存格的值，多張照片的品項自然還是同一組，
+ * 系列統計、上下架、批次更新都不受影響。
+ * @return {string[]} 原始網址陣列（未轉縮圖）
+ */
+function parsePhotoUrls_(raw) {
+  return String(raw || '')
+    .split(/[\r\n,、|]+/)
+    .map(function (t) { return t.trim(); })
+    .filter(function (t) { return t !== ''; });
+}
+
+/** 原始 Drive 網址 → lh3 縮圖網址（抓不到 id 就原樣回傳） */
+function toThumbUrl_(raw, width) {
+  const id = extractIdFromUrl(raw);
+  return id ? ('https://lh3.googleusercontent.com/d/' + id + '=w' + (width || 1000)) : raw;
+}
+
+function saveNewLayout_impl_(payload) {
+  const now = new Date(); // 🚀 Move to top to avoid ReferenceError
+  const ss = getSafeSsBusiness();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
+  if (!sheet) return { success: false, msg: "找不到資料表：" + CONFIG.SHEET_NAME_LAYOUT };
+
+  // 🚀 效能優化：這裡只需要標題列，原本 getDataRange().getValues() 會把整張表（可能上萬列）
+  //    全部讀進記憶體，只為了取 2 列標題——改成只讀前 2 列，「新增上架」的儲存速度明顯變快。
+  // 🚀 關鍵：第1列是說明，第2列是標題 (Index 1)
+  const headerRange = sheet.getRange(1, 1, 2, sheet.getLastColumn()).getValues();
+  const headers = headerRange[1] || headerRange[0];
+  const startRow = 2; // 資料從第三行開始
+
+  const idx = {
+    custId: findHeaderIndex(headers, ["客戶編號"]),
+    custName: findHeaderIndex(headers, ["客戶名稱"]),
+    date: findHeaderIndex(headers, ["上架日期", "日期"]),
+    series: findHeaderIndex(headers, ["系列"]),
+    sku: findHeaderIndex(headers, ["編號", "產品編號"]),
+    batch: findHeaderIndex(headers, ["批號"]),
+    qty: findHeaderIndex(headers, ["片數", "數量"]),
+    mode: findHeaderIndex(headers, ["展示方式"]),
+    link: findHeaderIndex(headers, ["版面連結", "連結"]),
+    creator: findHeaderIndex(headers, ["建立者"]),
+    createTime: findHeaderIndex(headers, ["建立時間"]),
+    lastUpdate: findHeaderIndex(headers, ["最後更新時間"]),
+    size: findHeaderIndex(headers, ["尺寸"])
+  };
+
+  // 0. 安全開啟試算表 (再次確保 ss)
+  if (!ss) throw new Error("試算表物件無效");
+
+  // 1. 處理圖片儲存與庫存資料快取
+  const ssMain = getSafeSsMain();
+  const invMap = getInventoryMapCached(ssMain);
+  let imageUrl = "";
+  // 支援一次上傳多張（payload.images 陣列）；仍相容舊的單張 payload.image
+  const imageList = (payload.images && payload.images.length)
+    ? payload.images
+    : (payload.image && payload.image.base64 ? [payload.image] : []);
+  if (imageList.length) {
+    const firstSku = payload.items[0] ? String(payload.items[0].sku || '').trim().toUpperCase() : "";
+    const firstSkuKey = firstSku.replace(/[\s\-]/g, '');
+    const size = (invMap[firstSkuKey] && invMap[firstSkuKey].size) ? invMap[firstSkuKey].size : "";
+    const dateStr = Utilities.formatDate(now, "GMT+8", "yyyyMMdd");
+
+    const urls = [];
+    imageList.forEach(function (img, i) {
+      if (!img || !img.base64) return;
+      const suffix = imageList.length > 1 ? ("_" + (i + 1)) : "";
+      const fileName = [payload.customerName, payload.series, size, dateStr, payload.salesperson]
+        .filter(Boolean).join("_") + suffix + ".jpg";
+      const blob = Utilities.newBlob(Utilities.base64Decode(img.base64), img.mimeType, fileName);
+      try {
+        const parentFolder = DriveApp.getFolderById(CONFIG.IMG_FOLDER_ID || "");
+        const file = parentFolder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        urls.push(file.getUrl());
+      } catch (e) {
+        console.error("圖片上傳失敗，改用備援資料夾:", e);
+        const folders = DriveApp.getFoldersByName("eliTile_Uploads");
+        const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder("eliTile_Uploads");
+        const file = folder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        urls.push(file.getUrl());
+      }
+    });
+    // 多張用換行存在同一格，讓所有品項仍歸屬同一個版面
+    imageUrl = urls.join("\n");
+  }
+
+  // 2. 準備公共欄位
+  // now 已經在函式開頭定義過
+  const dateStrLong = Utilities.formatDate(now, "GMT+8", "yyyy/MM/dd");
+  const timeStr = Utilities.formatDate(now, "GMT+8", "yyyy/MM/dd HH:mm:ss");
+
+  // 3. 逐一寫入 SKU 行 (改為插入到最上方)
+  const rowValues = [];
+  payload.items.forEach(item => {
+    const newRow = new Array(headers.length).fill("");
+    const rawSku = (item.sku || "").trim().toUpperCase();
+    const skuKey = rawSku.replace(/[\s\-]/g, "");
+
+    // 🚀 系列防呆校正：若未填系列、或使用者誤將編號當系列填入、或為英數代碼，且庫存字典中有對應官方中文系列，自動校正為官方系列
+    const officialSeries = (invMap[skuKey] && invMap[skuKey].series && invMap[skuKey].series !== '一般') ? invMap[skuKey].series : "";
+    let itemSeries = (item.series || payload.series || "").trim();
+    if (!itemSeries || itemSeries.toUpperCase().replace(/[\s\-]/g, "") === skuKey || (officialSeries && /^[A-Za-z0-9\-_]+$/.test(itemSeries))) {
+      if (officialSeries) {
+        itemSeries = officialSeries;
+        item.series = officialSeries;
+        if (!payload.series || payload.series.toUpperCase().replace(/[\s\-]/g, "") === skuKey || /^[A-Za-z0-9\-_]+$/.test(payload.series)) {
+          payload.series = officialSeries;
+        }
+      }
+    }
+
+    // 🚀 尺寸防呆補齊：若未填尺寸，自動從庫存字典帶入
+    let itemSize = (item.size || payload.size || "").trim();
+    if (!itemSize && invMap[skuKey] && invMap[skuKey].size) {
+      itemSize = invMap[skuKey].size;
+    }
+
+    if (idx.custId !== -1) newRow[idx.custId] = payload.customerId || "";
+    if (idx.custName !== -1) newRow[idx.custName] = payload.customerName;
+    if (idx.date !== -1) newRow[idx.date] = timeStr;
+    if (idx.series !== -1) newRow[idx.series] = itemSeries;
+    if (idx.sku !== -1) newRow[idx.sku] = rawSku;
+    if (idx.batch !== -1) newRow[idx.batch] = (item.batch || "").trim();
+    if (idx.qty !== -1) newRow[idx.qty] = item.qty || 1;
+    if (idx.size !== -1) newRow[idx.size] = itemSize;
+    if (idx.mode !== -1) newRow[idx.mode] = "版面";
+    if (idx.link !== -1) newRow[idx.link] = imageUrl;
+    if (idx.creator !== -1) newRow[idx.creator] = payload.salesperson;
+    if (idx.lastUpdate !== -1) newRow[idx.lastUpdate] = timeStr;
+    rowValues.push(newRow);
+  });
+
+  if (rowValues.length > 0) {
+    sheet.insertRowsBefore(3, rowValues.length);
+    sheet.getRange(3, 1, rowValues.length, headers.length).setValues(rowValues);
+  }
+
+  // 4. 同步更新 GPS 客戶定位
+  if (payload.gps && payload.gps.lat) {
+    updateCustomerLocation(payload.customerName, payload.gps.lat, payload.gps.lng);
+  }
+
+  // 5. 清理快取
+  // 🚀 這裡原本用 cache.remove()（單一 key）清一個從沒被寫入過的快取，是無效程式碼——
+  //    getCustomerDisplays 現在改用 CacheManager.putLarge（大型資料會切成多個 chunk key），
+  //    要用對應的 removeLarge 才清得乾淨。
+  try { CacheManager.removeLarge("displays_v5_" + mergeCustomer(payload.customerName)); } catch (e) {}
+  try { CacheManager.removeLarge("layout_rows_v1"); } catch (e) {}
+
+  return { success: true, count: payload.items.length };
+}
+
+function updateCustomerLocation(customerName, lat, lng) {
+  try {
+    const ss = getSafeSsBusiness();
+    let sheet = ss.getSheetByName(CONFIG.SHEET_NAME_GPS);
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEET_NAME_GPS);
+      sheet.appendRow(["客戶名稱", "緯度", "經度", "更新時間"]);
+    }
+    const data = sheet.getDataRange().getValues();
+    const targetMerged = mergeCustomer(customerName);
+    let foundRow = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (mergeCustomer(data[i][0]) === targetMerged) {
+        foundRow = i + 1;
+        break;
+      }
+    }
+    const timestamp = new Date();
+    if (foundRow !== -1) {
+      sheet.getRange(foundRow, 1, 1, 4).setValues([[customerName, lat, lng, timestamp]]);
+    } else {
+      sheet.appendRow([customerName, lat, lng, timestamp]);
+    }
+    return true;
+  } catch (e) {
+    console.error("GPS 更新失敗:", e);
+    return false;
+  }
+}
+/**
+ * 📦 大量快取處理工具 (解決 90KB 限制)
+ * 讓大數據量的庫存清單與業績總覽能真正被緩存，避開 90KB 的天花板
+ */
+const CacheManager = {
+  putLarge: function(key, data, expirationInSeconds = 600) {
+    const cache = CacheService.getScriptCache();
+    try {
+      const json = JSON.stringify(data);
+      const chunkSize = 80000; // 設為 80KB 確保穩定
+      const chunks = [];
+      
+      for (let i = 0; i < json.length; i += chunkSize) {
+        chunks.push(json.substring(i, i + chunkSize));
+      }
+      
+      // 1. 存入分片資訊 (Metadata)
+      cache.put(key + "_meta", JSON.stringify({ count: chunks.length, size: json.length, time: new Date().getTime() }), expirationInSeconds);
+      
+      // 2. 依序存入分片
+      chunks.forEach((chunk, idx) => {
+        cache.put(key + "_part_" + idx, chunk, expirationInSeconds);
+      });
+      return true;
+    } catch(e) {
+      console.error("CacheManager 儲存失敗:", e);
+      return false;
+    }
+  },
+  
+  getLarge: function(key) {
+    const cache = CacheService.getScriptCache();
+    try {
+      const metaStr = cache.get(key + "_meta");
+      if (!metaStr) return null;
+      
+      const meta = JSON.parse(metaStr);
+      let fullJson = "";
+      for (let i = 0; i < meta.count; i++) {
+        const part = cache.get(key + "_part_" + i);
+        if (part === null) return null; // 碎片丟失，視為快取過期
+        fullJson += part;
+      }
+      
+      return JSON.parse(fullJson);
+    } catch(e) {
+      console.error("CacheManager 讀取失敗:", e);
+      return null;
+    }
+  },
+  
+  removeLarge: function(key) {
+    const cache = CacheService.getScriptCache();
+    const metaStr = cache.get(key + "_meta");
+    if (metaStr) {
+      const meta = JSON.parse(metaStr);
+      for (let i = 0; i < meta.count; i++) {
+        cache.remove(key + "_part_" + i);
+      }
+      cache.remove(key + "_meta");
+    }
+  }
+};
+
+/**
+ * 🚀 效能優化：自動補建「定時冷啟動預熱」觸發器
+ * prewarmAllCaches（Sales.js）會把業績總覽 / 庫存 map / 上架追蹤 / 全知視角 / 到訪紀錄等
+ * 主要快取預先算好，讓使用者進站時快取早已熱好。原本需要到 Apps Script 編輯器手動跑
+ * setupSalesOverviewPrewarmTrigger，這裡改成任一人進站（doGet）時偵測缺漏就自動補建，
+ * 不再依賴人工記憶。
+ */
+function ensurePrewarmTriggers_() {
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    var has = triggers.some(function (t) { return t.getHandlerFunction() === 'prewarmAllCaches'; });
+    if (!has) {
+      ScriptApp.newTrigger('prewarmAllCaches').timeBased().everyMinutes(30).create();
+      console.log('📡 已自動建立 prewarmAllCaches 每 30 分鐘預熱觸發器');
+    }
+  } catch (e) {}
+}
+
+/**
+ * 📡 取得戰情室最新缺貨新進榜品項
+ */
+/**
+ * 📡 取得最近三筆缺貨新進榜（跑馬燈用）
+ * 讀保留系統維護的新版欄位：品編號 / 產品編號 + 入榜日期/首日進榜日，排除已結案/出清結案
+ */
+/**
+ * 🏷 跑馬燈用的缺貨分類縮寫
+ * 「缺貨進榜追蹤」表的缺貨分類欄是保留系統寫入的原文，像「全新產品觀察」這種
+ * 六個字在手機跑馬燈上會把整行擠爆。這裡只做顯示層縮短，不動原始值，
+ * 所以下面判斷嚴重度的 /完全|嚴重|預防/ 仍然是比對未縮短的 e.cat，行為不變。
+ */
+function shortenStockoutCat_(cat) {
+  const s = String(cat || '').trim();
+  if (!s) return '';
+  if (s.indexOf('全新產品觀察') !== -1 || s.indexOf('新品觀察') !== -1) return '新品';
+  return s;
+}
+
+function getLatestStockoutEntries_impl_() {
+  const cacheKey = 'latest_stockout_v5';
+  try {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return cached;
+  } catch (e) {}
+
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
+    const sh = ss.getSheetByName('缺貨進榜追蹤');
+    if (!sh) return { success: false, msg: "找不到缺貨進榜追蹤表" };
+    const lastRow = sh.getLastRow();
+    if (lastRow < 2) return { success: false, msg: "暫無資料" };
+
+    const rawValues = sh.getRange(1, 1, Math.min(5, lastRow), sh.getLastColumn()).getValues();
+    let headerRowIdx = 0;
+    for (let i = 0; i < rawValues.length; i++) {
+      const rowStr = rawValues[i].join("");
+      if (rowStr.includes("編號") || rowStr.includes("產品") || rowStr.includes("日期") || rowStr.includes("品碼")) {
+        headerRowIdx = i;
+        break;
+      }
+    }
+
+    const headers = rawValues[headerRowIdx].map(v => String(v || '').trim());
+    const idxCode = findHeaderIndex(headers, ['品編號', '產品編號', '編號', '品碼', '料號', '產品', 'SKU']);
+    const idxDate = findHeaderIndex(headers, ['入榜日期', '首日進榜日', '進榜日期', '日期', '最後系統同步時間', '更新日期', '建檔日期', '時間']);
+    const idxCat = findHeaderIndex(headers, ['缺貨分類', '缺貨狀況', '缺貨程度', '分類', '狀態']);
+    const idxClosed = findHeaderIndex(headers, ['是否結案', '結案', '已結案', '啟用中']);
+    const idxClear = findHeaderIndex(headers, ['出清結案', '出清']);
+    const idxStock = findHeaderIndex(headers, ['可用庫存', '現有庫存', '庫存量', '庫存']);
+    const idxReserve = findHeaderIndex(headers, ['保留量', '保留庫存', '保留坪數', '保留']);
+
+    if (idxCode === -1) return { success: false, msg: "缺貨表格式不符" };
+
+    const data = sh.getRange(headerRowIdx + 2, 1, lastRow - (headerRowIdx + 1), sh.getLastColumn()).getValues();
+    const entries = [];
+
+    data.forEach((row, rIdx) => {
+      const code = String(row[idxCode] || '').trim();
+      if (!code) return;
+
+      // 🚫 排除結案/出清
+      if (idxClosed !== -1) {
+        const cVal = String(row[idxClosed] || '').trim().toLowerCase();
+        if (cVal === '是' || cVal === '已結案' || cVal === 'true' || cVal === '1') return;
+      }
+      if (idxClear !== -1) {
+        const clVal = String(row[idxClear] || '').trim().toLowerCase();
+        if (clVal === '是' || clVal === '已結案' || clVal === 'true' || clVal === '1' || clVal === '出清') return;
+      }
+
+      const cat = idxCat !== -1 ? String(row[idxCat] || '').trim() : '';
+      // 🚫 排除已解除或回復狀態（含「已補貨」— 缺貨進榜追蹤表本身會把補貨完成的列標成這個分類，
+      // 不是新的缺貨警示，不該出現在跑馬燈；只排除「已補貨」這種完成式，「補貨中」等進行式仍視為警示）
+      if (cat && /已到貨|已解封|解封|恢復|已復原|復原|已結案|已補貨|補貨完成/.test(cat)) return;
+
+      const rawDate = idxDate !== -1 ? row[idxDate] : null;
+      const d = parseDate(rawDate);
+      
+      let dateStr = "";
+      if (d && !isNaN(d.getTime())) {
+        dateStr = (d.getMonth() + 1) + "/" + d.getDate();
+      } else if (rawDate) {
+        const match = String(rawDate).match(/(\d{1,2})[\/\-\.](\d{1,2})/);
+        dateStr = match ? (parseInt(match[1]) + "/" + parseInt(match[2])) : String(rawDate).trim();
+      }
+      if (!dateStr) dateStr = "最新";
+
+      const rawStock = idxStock !== -1 ? row[idxStock] : null;
+      const rawReserve = idxReserve !== -1 ? row[idxReserve] : null;
+      const stockVal = (rawStock !== null && rawStock !== '') ? parseFloat(rawStock) : NaN;
+      const reserveVal = (rawReserve !== null && rawReserve !== '') ? parseFloat(rawReserve) : NaN;
+
+      let extraInfo = '';
+      if (!isNaN(stockVal) || !isNaN(reserveVal)) {
+        // 手機跑馬燈一行塞不下：坪數取整數不留小數，標籤縮成「庫/保」並拿掉括號
+        const sText = !isNaN(stockVal) ? `${Math.round(stockVal)}坪` : '-';
+        const rText = !isNaN(reserveVal) ? `${Math.round(reserveVal)}坪` : '-';
+        extraInfo = ` 庫${sText}/保${rText}`;
+      }
+
+      entries.push({
+        code: code,
+        cat: cat,
+        extraInfo: extraInfo,
+        ts: (d && !isNaN(d.getTime())) ? d.getTime() : 0,
+        rowIdx: rIdx,
+        dateStr: dateStr
+      });
+    });
+
+    if (!entries.length) return { success: false, msg: "暫無進榜資料" };
+
+    // 優先照日期 (ts) 降冪，日期相同或解析不出時照表格列號 (rowIdx) 降冪（最新列在後）
+    entries.sort((a, b) => (b.ts - a.ts) || (b.rowIdx - a.rowIdx));
+
+    const top3 = entries.slice(0, 3).map(e => ({
+      text: e.dateStr + " " + (shortenStockoutCat_(e.cat) || "新進榜缺貨") + "：" + e.code + e.extraInfo,
+      severe: /完全|嚴重|預防/.test(e.cat)
+    }));
+
+    const result = { success: true, msgs: top3 };
+    try { CacheManager.putLarge(cacheKey, result, 1800); } catch (e) {}
+    return result;
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+function getLatestLayoutActivities_impl_() {
+  const cacheKey = 'latest_layout_activities_v3';
+  try {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return cached;
+  } catch (e) {}
+
+  try {
+    const auditSsId = (typeof AIT_AUDIT_SS_ID !== 'undefined') ? AIT_AUDIT_SS_ID : '1N-tOQEP26akmcGRV34OwDusg0yFrtKfnJ79W3O-uNLM';
+    const ss = SpreadsheetApp.openById(auditSsId);
+    const now = new Date();
+    const curMonthTab = Utilities.formatDate(now, 'GMT+8', 'yyyy-MM');
+
+    // 跨月處理：只有月初前 8 天內（1 週範圍可能跨上個月）才需要讀上個月分頁
+    const tabsToRead = [curMonthTab];
+    if (now.getDate() <= 8) {
+      const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      tabsToRead.push(Utilities.formatDate(prevMonthDate, 'GMT+8', 'yyyy-MM'));
+    }
+    const rawRows = [];
+
+    for (let t = 0; t < tabsToRead.length; t++) {
+      const sh = ss.getSheetByName(tabsToRead[t]);
+      if (!sh) continue;
+      const lastRow = sh.getLastRow();
+      if (lastRow < 2) continue;
+
+      const colCount = Math.min(13, sh.getLastColumn());
+      // 🚀 操作記錄新資料是插入在第 2 列（最上方），因此從第 2 列往下讀取才是最新紀錄
+      const topReadCount = Math.min(1200, lastRow - 1);
+      const topValues = sh.getRange(2, 1, topReadCount, colCount).getValues();
+      for (let i = 0; i < topValues.length; i++) {
+        rawRows.push(topValues[i]);
+      }
+
+      // 備援：若有極少數因鎖定超時而透過 appendRow 寫在表尾的紀錄，補讀最後 100 列
+      if (lastRow - 1 > topReadCount) {
+        const tailCount = Math.min(100, lastRow - 1 - topReadCount);
+        const tailStart = lastRow - tailCount + 1;
+        const tailValues = sh.getRange(tailStart, 1, tailCount, colCount).getValues();
+        for (let j = 0; j < tailValues.length; j++) {
+          rawRows.push(tailValues[j]);
+        }
+      }
+    }
+
+    let cachedInvMap = null;
+    try { cachedInvMap = CacheManager.getLarge('inventory_map_v3'); } catch (eInv) {}
+
+    const nameMap = {
+      '謝博皓': '小謝',
+      '潘右森': '小潘',
+      '陳勁多': '勁多',
+      '高弘治': '小高',
+      '寇仁瀚': 'Titan',
+      '寇翔雲': 'Titan',
+      '主管': '主管',
+      '系統': '系統'
+    };
+
+    function toSalesNick(n) {
+      if (!n) return '業務';
+      n = String(n).trim();
+      if (nameMap[n]) return nameMap[n];
+      if (n.length === 2) return n;
+      if (n.length === 3) return '小' + n.slice(1);
+      return n;
+    }
+
+    function toActionVerb(action, fn) {
+      action = String(action || '');
+      fn = String(fn || '');
+      if (action.includes('建立') || action.includes('新增') || fn === 'saveNewLayout') return '新增了';
+      if (action.includes('下架') || fn === 'offShelfDisplayBatch') return '下架了';
+      if (action.includes('刪除') || fn === 'deleteDisplayBatchPermanent') return '刪除了';
+      if (action.includes('備註') || fn === 'addDisplayNote') return '備註了';
+      return '更新了';
+    }
+
+    function sanitizeSeriesInDetail_(str) {
+      if (!str) return '';
+      var m = str.match(/^系列\s+([A-Za-z0-9\-_]+)\s*[：:|｜]\s*(.*)$/);
+      if (m) {
+        var skuKey = m[1].toUpperCase().replace(/[\s\-]/g, '');
+        var realSeries = (cachedInvMap && cachedInvMap[skuKey] && cachedInvMap[skuKey].series && cachedInvMap[skuKey].series !== '一般') ? cachedInvMap[skuKey].series : '';
+        return realSeries ? ('系列 ' + realSeries + '：' + m[2]) : m[2];
+      }
+      return str;
+    }
+
+    function formatLayoutDetail_(rawDetail, fn) {
+      if (!rawDetail) return '';
+      var s = String(rawDetail).trim();
+      if (!s) return '';
+      if (!s.startsWith('{') && !s.startsWith('[')) return sanitizeSeriesInDetail_(s);
+      try {
+        var parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) {
+          if (parsed.length === 1 && typeof parsed[0] === 'object' && parsed[0] !== null) {
+            parsed = parsed[0];
+          } else if (parsed.length > 1 && typeof parsed[0] === 'string') {
+            if (fn === 'updateLayoutFieldBatch') {
+              var items = Array.isArray(parsed[1]) ? parsed[1].join('、') : String(parsed[1] || '');
+              return '把 ' + items + ' 的「' + (parsed[2] || '') + '」改成 ' + (parsed[3] || '（空白）');
+            } else if (fn === 'offShelfDisplayBatch') {
+              var items = Array.isArray(parsed[1]) ? parsed[1].join('、') : String(parsed[1] || '');
+              return '下架 ' + items;
+            } else if (fn === 'deleteDisplayBatchPermanent') {
+              var items = Array.isArray(parsed[1]) ? parsed[1].join('、') : String(parsed[1] || '');
+              return '永久刪除 ' + items;
+            }
+          }
+        }
+        if (typeof parsed === 'object' && parsed !== null) {
+          var parts = [];
+          if (parsed.series) parts.push('系列 ' + parsed.series);
+          if (parsed.size) parts.push('尺寸 ' + parsed.size);
+          if (Array.isArray(parsed.items) && parsed.items.length > 0) {
+            var skus = parsed.items.map(function(it) {
+              if (typeof it === 'string') return it;
+              if (it && typeof it === 'object') {
+                var code = it.sku || it.code || it.productCode || '';
+                var q = (it.qty != null ? it.qty : it.quantity);
+                return code + (q != null ? '×' + q : '');
+              }
+              return '';
+            }).filter(Boolean);
+            if (skus.length > 0) {
+              parts.push(skus.slice(0, 8).join('、') + (skus.length > 8 ? ' 等 ' + skus.length + ' 項' : ''));
+            }
+          }
+          if (parsed.mode) parts.push('展示方式 ' + parsed.mode);
+          if (parsed.note) parts.push('備註：' + parsed.note);
+          if (parts.length > 0) return sanitizeSeriesInDetail_(parts.join(' ｜ '));
+        }
+      } catch (e) {}
+      return sanitizeSeriesInDetail_(s);
+    }
+
+    const activities = [];
+    const nowMs = now.getTime();
+    const ONE_WEEK_MS = 7 * 24 * 3600 * 1000; // 🚀 超過 1 週（7 天）不顯示
+    let newCount48h = 0;
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const row = rawRows[i];
+      const timeVal = row[0];
+      const name = String(row[1] || '').trim();
+      const action = String(row[4] || '').trim();
+      const target = String(row[5] || '').trim();
+      const detailRaw = String(row[6] || '').trim();
+      const outcome = String(row[8] || '').trim();
+      const fn = String(row[11] || '').trim();
+
+      // 排除非版面動作 (工作日誌、打卡、出勤、行車、加油、請假、查詢、AI 等)
+      const isLayoutFn = /saveNewLayout|updateLayoutFieldBatch|updateDisplayBatch|offShelfDisplayBatch|deleteDisplayBatchPermanent|addDisplayNote/i.test(fn);
+      const isLayoutAction = /版面|陳列/i.test(action) && !/工作日誌|打卡|請假|行車|加油|登入|查詢|白名單|金鑰|薪資|獎金|出勤|AI/.test(action);
+
+      if (!isLayoutFn && !isLayoutAction) continue;
+      if (outcome && outcome !== '成功') continue;
+
+      let d = null;
+      if (timeVal instanceof Date) {
+        d = timeVal;
+      } else if (timeVal) {
+        d = new Date(String(timeVal).replace(/-/g, '/'));
+      }
+      if (!d || isNaN(d.getTime())) continue;
+
+      const rowTimeMs = d.getTime();
+      // 🚀 超過 1 週（7 天）的舊紀錄直接跳過不顯示
+      if (nowMs - rowTimeMs > ONE_WEEK_MS) continue;
+
+      const month = d.getMonth() + 1;
+      const day = d.getDate();
+      const hh = (d.getHours() < 10 ? '0' : '') + d.getHours();
+      const mm = (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+      const timeFmt = (month < 10 ? '0' + month : month) + '/' + (day < 10 ? '0' + day : day) + ' ' + hh + ':' + mm;
+
+      const salesNick = toSalesNick(name);
+      const verb = toActionVerb(action, fn);
+      const cust = target || '客戶';
+      const headline = salesNick + ' ' + verb + ' ' + cust + ' 的版面 ' + timeFmt;
+      const cleanDetail = formatLayoutDetail_(detailRaw, fn);
+
+      if (nowMs - rowTimeMs <= 48 * 3600 * 1000) {
+        newCount48h++;
+      }
+
+      activities.push({
+        id: 'act_' + rowTimeMs + '_' + i,
+        time: Utilities.formatDate(d, 'GMT+8', 'yyyy/MM/dd HH:mm:ss'),
+        timeFormatted: timeFmt,
+        timestamp: rowTimeMs,
+        salesName: name,
+        salesNick: salesNick,
+        action: verb,
+        actionRaw: action,
+        customer: cust,
+        detail: cleanDetail,
+        headline: headline
+      });
+    }
+
+    // 🚀 嚴格依時間降冪排序：愈新的愈上面
+    activities.sort(function(a, b) { return b.timestamp - a.timestamp; });
+    const finalActivities = activities.slice(0, 50);
+
+    const result = {
+      success: true,
+      hasNew: newCount48h > 0,
+      newCount: newCount48h,
+      activities: finalActivities,
+      headlines: finalActivities.map(function(a) { return a.headline; })
+    };
+
+    try {
+      CacheManager.putLarge(cacheKey, result, 120); // 2 分鐘快取
+    } catch (eC) {}
+
+    return result;
+  } catch (err) {
+    return { success: false, msg: err.message || String(err), activities: [], headlines: [] };
+  }
+}
+
+function getLatestStockoutEntry() {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
+    const sh = ss.getSheetByName('缺貨進榜追蹤');
+    if (!sh) return { success: false, msg: "找不到缺貨進榜追蹤表" };
+    
+    const lastRow = sh.getLastRow();
+    if (lastRow < 2) return { success: false, msg: "暫無新缺貨資料" };
+    
+    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const idxCode = headers.indexOf('編號');
+    const idxFirstDate = headers.indexOf('首日進榜日');
+    const idxActive = headers.indexOf('啟用中');
+    
+    if (idxCode === -1 || idxFirstDate === -1 || idxActive === -1) {
+      return { success: false, msg: "格式不符" };
+    }
+    
+    const data = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
+    
+    // 找出所有啟用中，且按最近時間或倒序排列的最新一筆
+    const activeEntries = data.filter(row => {
+      const activeVal = String(row[idxActive] || '').trim().toLowerCase();
+      return activeVal === 'true' || activeVal === '1' || activeVal === 'yes' || activeVal === '啟用';
+    });
+    
+    if (activeEntries.length === 0) return { success: false, msg: "暫無最新缺貨新進榜" };
+    
+    // 取最後一筆 (最新進榜的)
+    const latest = activeEntries[activeEntries.length - 1];
+    const firstDate = latest[idxFirstDate];
+    const code = latest[idxCode];
+    
+    let dateStr = "";
+    if (firstDate instanceof Date) {
+      dateStr = (firstDate.getMonth() + 1) + "/" + firstDate.getDate();
+    } else if (firstDate) {
+      const match = String(firstDate).match(/(\d{1,2})[\/\-\.](\d{1,2})/);
+      if (match) {
+        dateStr = parseInt(match[1]) + "/" + parseInt(match[2]);
+      } else {
+        dateStr = String(firstDate).trim();
+      }
+    }
+    
+    return {
+      success: true,
+      code: code,
+      dateStr: dateStr,
+      msg: `${dateStr} 新進榜缺貨：${code}`
+    };
+  } catch (e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 📧 寄送版面報告 Email (含 JPG 附件)
+ */
+function sendLayoutReport_impl_(recipientEmail, customerName, salesName, imagesJson) {
+  try {
+    var images = JSON.parse(imagesJson);
+    var recipient = recipientEmail || Session.getActiveUser().getEmail();
+    if (!recipient) recipient = Session.getEffectiveUser().getEmail();
+    
+    var attachments = [];
+    images.forEach(function(img, i) {
+      var blob = Utilities.newBlob(
+        Utilities.base64Decode(img.data),
+        'image/jpeg',
+        (img.name || ('版面_' + (i+1))) + '.jpg'
+      );
+      attachments.push(blob);
+    });
+    
+    MailApp.sendEmail(recipient, '版面資料 - ' + (customerName || ''), 
+      '客戶: ' + (customerName || '') + '\n業務: ' + (salesName || '') + '\n共 ' + images.length + ' 張圖片\n\n圖片檔名與系列對照:\n' +
+      images.map(function(img, i){ return (i+1) + '. ' + (img.name || '未命名'); }).join('\n'),
+      { attachments: attachments }
+    );
+    
+    return { success: true, msg: '已寄送至 ' + recipient };
+  } catch(e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+
+/** 🔐 機密中心內容 (只有主管；外殼見 AitGuard.js) */
+function aitKeysPageHtml_impl_() {
     const res = getSalesKeysList();
     if (!res.success) {
-      return HtmlService.createHtmlOutput("<h1 style='color:red;'>無法載入業務名單: " + res.msg + "</h1>");
+      return "<h1 style='color:red;'>無法載入業務名單: " + res.msg + "</h1>";
     }
     const clientRes = getClientWhitelist();
     const clientsData = clientRes.success ? clientRes.data : [];
@@ -2989,19 +5192,62 @@ function doGet(e) {
         }
 
         /**
-         * 🧮 手動改「業績獎金小計」或「內勤提撥」時，即時重算「業務業績實領」與「實領」
+         * 🧮 手動改「當月實銷金額」、「業績獎金小計」或「內勤提撥」時，即時重算「業務業績實領」與「實領」
          */
         function recalcMainBonusRow(el) {
           const row = el.closest('tr');
           if (!row) return;
+          const salesName = row.dataset.salesrow;
+          const salesInput = row.querySelector('.main-monthly-sales-input');
           const bonusInput = row.querySelector('.main-combined-bonus-input');
           const shareInput = row.querySelector('.main-staff-share-input');
           const netPayoutInput = row.querySelector('.main-net-payout-input');
           const totalCell = row.querySelector('.main-total-actual');
+
+          if (el === salesInput) {
+            const salesVal = parseFloat(salesInput?.value) || 0;
+            const p = (window.adminBonusReportData && window.adminBonusReportData.salespeople || [])
+              .find(x => x.name === salesName);
+            if (p && p.rule) {
+              const rule = p.rule;
+              let newBase = 0;
+              if (salesVal >= rule.minThreshold) {
+                const exceed = salesVal - rule.stepBase;
+                if (exceed > 0) newBase = Math.floor(exceed / rule.stepValue) * rule.stepBonus;
+              }
+              let newBreakthrough = 0;
+              let reachedLimit = 0;
+              if (rule.breakthroughs && rule.breakthroughs.length > 0) {
+                rule.breakthroughs.forEach(b => {
+                  if (salesVal >= b.limit && b.bonus > newBreakthrough) {
+                    newBreakthrough = b.bonus;
+                    reachedLimit = b.limit;
+                  }
+                });
+              }
+              p.monthlySales = salesVal;
+              p.exceed = Math.max(0, salesVal - rule.stepBase);
+              p.steps = p.exceed > 0 ? Math.floor(p.exceed / rule.stepValue) : 0;
+              p.baseBonus = newBase;
+              p.breakthroughBonus = newBreakthrough;
+              p.totalBonus = newBase + newBreakthrough;
+              p.reachedBreakthroughLimit = reachedLimit;
+
+              if (bonusInput) bonusInput.value = p.totalBonus;
+
+              const formulaRow = document.querySelector('tr[data-formularow="' + salesName + '"]');
+              if (formulaRow) {
+                const formulaCell = formulaRow.querySelector('td');
+                if (formulaCell) {
+                  formulaCell.innerHTML = '<span style="opacity:0.75;">🧾 系統試算：</span>' + buildBonusFormulaLine(p);
+                }
+              }
+            }
+          }
+
           const bonus = parseFloat(bonusInput?.value) || 0;
 
-          if (el === bonusInput) {
-            // 改「業績獎金小計」：內勤提撥自動抓 10%（可再手動覆蓋）
+          if (el === bonusInput || el === salesInput) {
             const rate = (window.adminBonusReportData && window.adminBonusReportData.globalConfig && window.adminBonusReportData.globalConfig.STAFF_SHARE_RATE) || 0.1;
             if (shareInput) shareInput.value = Math.round(bonus * rate);
           }
@@ -3158,8 +5404,9 @@ function doGet(e) {
                 '<td class="main-net-payout" style="padding: 8px 12px;"><input type="number" class="main-net-payout-input" value="' + p.netPayout + '" style="width:100%;padding:4px 6px;border:1px solid var(--neon-cyan);background:var(--inline-bg);color:var(--pixel-white);text-align:right;" /></td>' +
                 '<td style="color: var(--neon-pink); font-weight: bold; padding: 14px 12px;">$ ' + (p.deliveryBonus || 0).toLocaleString() + '</td>' +
                 '<td class="main-total-actual" style="color: var(--neon-green); font-weight: bold; padding: 14px 12px;">$ ' + totalActualPayout.toLocaleString() + '</td>' +
-                '<td style="padding: 14px 12px;">' +
-                  '<button class="copy-btn" data-name="' + p.name + '" onclick="toggleReportDetail(this)">展開/收合明細</button>' +
+                '<td style="padding: 14px 12px; white-space: nowrap;">' +
+                  '<button class="copy-btn" data-name="' + p.name + '" onclick="toggleReportDetail(this)" style="margin-right:4px;">明細</button>' +
+                  '<button class="copy-btn" data-name="' + p.name + '" onclick="exportBonusJpgDirect(this)">📷 匯出 JPG</button>' +
                 '</td>' +
               '</tr>' +
               '<tr class="bonus-formula-row" data-formularow="' + p.name + '">' +
@@ -3683,16 +5930,25 @@ function doGet(e) {
             const salesName = sheet.dataset.salesname || '';
             const monthLabel = (data.year || '') + '年' + (data.month || '') + '月';
 
-            // 從編輯後的摘要表讀數字
-            let monthlySales = 0, salesBonus = 0, staffShare = 0, netPayout = 0;
+            // 讀取該業務在後台的計算資料 p
+            const p = (window.adminBonusReportData && window.adminBonusReportData.salespeople || [])
+              .find(x => x.name === salesName) || {};
+
+            let monthlySales = p.monthlySales || 0;
+            let baseBonus = p.baseBonus || 0;
+            let breakthroughBonus = p.breakthroughBonus || 0;
+            let salesBonus = p.totalBonus || (baseBonus + breakthroughBonus);
+            let staffShare = p.staffShare || 0;
+            let netPayout = p.netPayout || 0;
+
             const summaryRow = document.querySelector('tr[data-salesrow="' + salesName + '"]');
             if (summaryRow) {
-              monthlySales = parseInt(summaryRow.querySelector('.main-monthly-sales-input')?.value) || 0;
-              salesBonus   = parseInt(summaryRow.querySelector('.main-combined-bonus-input')?.value) || 0;
-              staffShare   = parseInt(summaryRow.querySelector('.main-staff-share-input')?.value) || 0;
-              netPayout    = parseInt(summaryRow.querySelector('.main-net-payout-input')?.value) || 0;
+              monthlySales = parseInt(summaryRow.querySelector('.main-monthly-sales-input')?.value) || monthlySales;
+              salesBonus   = parseInt(summaryRow.querySelector('.main-combined-bonus-input')?.value) || salesBonus;
+              staffShare   = parseInt(summaryRow.querySelector('.main-staff-share-input')?.value) || staffShare;
+              netPayout    = parseInt(summaryRow.querySelector('.main-net-payout-input')?.value) || netPayout;
             }
-            const fmt = n => '$ ' + Math.round(n).toLocaleString();
+            const fmt = n => '$ ' + Math.round(n).toLocaleString();
             const salesWan = Math.round(monthlySales / 10000) + '萬';
 
             // 從預先儲存的資料讀取（比 DOM input 讀取可靠）
@@ -3700,8 +5956,8 @@ function doGet(e) {
             custItems.sort((a, b) => b.settle - a.settle);
 
             // 建立 HTML
-            const cellStyle = 'padding:10px 16px;text-align:right;border:1px solid ' + borderColor + ';font-size:15px;min-width:120px;';
-            const thStyle = 'padding:8px 16px;text-align:center;background:' + headerBg + ';border:1px solid ' + borderColor + ';font-size:13px;color:' + accentColor + ';font-weight:700;';
+            const cellStyle = 'padding:10px 14px;text-align:right;border:1px solid ' + borderColor + ';font-size:14px;min-width:90px;';
+            const thStyle = 'padding:8px 14px;text-align:center;background:' + headerBg + ';border:1px solid ' + borderColor + ';font-size:13px;color:' + accentColor + ';font-weight:700;';
             // 客戶三欄格（table 排版，html2canvas 相容）
             const tdName = 'padding:7px 10px;border:1px solid ' + borderColor + ';background:#ffffff;font-size:14px;font-weight:600;vertical-align:middle;';
             const tdAmt  = 'padding:7px 10px;border:1px solid ' + borderColor + ';background:#ffffff;font-size:14px;text-align:right;vertical-align:middle;white-space:nowrap;';
@@ -3724,22 +5980,26 @@ function doGet(e) {
             custRows += '</table>';
 
             const exportHtml =
-              '<div style="font-family:Arial,sans-serif;background:' + bgColor + ';color:' + textColor + ';padding:28px 32px;box-sizing:border-box;width:900px;">' +
+              '<div style="font-family:Arial,sans-serif;background:' + bgColor + ';color:' + textColor + ';padding:28px 32px;box-sizing:border-box;width:920px;">' +
                 // 標題
                 '<div style="font-size:26px;font-weight:900;color:' + accentColor + ';margin-bottom:18px;letter-spacing:1px;">' +
                   monthLabel + ' 獎金計算　' + salesName +
                 '</div>' +
-                // 摘要表
+                // 摘要表（含 達成獎金、突破獎金、業績獎金小計、內勤提撥、業務實領）
                 '<table style="border-collapse:collapse;margin-bottom:24px;width:100%;">' +
                   '<thead><tr>' +
                     '<th style="' + thStyle + '">實銷</th>' +
+                    '<th style="' + thStyle + '">達成獎金</th>' +
+                    '<th style="' + thStyle + '">突破獎金</th>' +
                     '<th style="' + thStyle + '">業績獎金</th>' +
                     '<th style="' + thStyle + '">內勤提撥</th>' +
                     '<th style="' + thStyle + '">業務實領</th>' +
                   '</tr></thead>' +
                   '<tbody><tr>' +
-                    '<td style="' + cellStyle + 'font-size:18px;font-weight:700;">' + salesWan + '</td>' +
-                    '<td style="' + cellStyle + '">' + fmt(salesBonus) + '</td>' +
+                    '<td style="' + cellStyle + 'font-size:16px;font-weight:700;">' + salesWan + '</td>' +
+                    '<td style="' + cellStyle + '">' + fmt(baseBonus) + '</td>' +
+                    '<td style="' + cellStyle + 'color:#e67e22;font-weight:700;">' + fmt(breakthroughBonus) + '</td>' +
+                    '<td style="' + cellStyle + 'font-weight:700;">' + fmt(salesBonus) + '</td>' +
                     '<td style="' + cellStyle + 'color:#c0392b;">' + fmt(staffShare) + '</td>' +
                     '<td style="' + cellStyle + 'font-weight:700;color:' + accentColor + ';">' + fmt(netPayout) + '</td>' +
                   '</tr></tbody>' +
@@ -3773,9 +6033,34 @@ function doGet(e) {
             });
           }
 
+          function exportBonusJpgDirect(btn) {
+            const salesName = btn ? btn.getAttribute('data-name') : '';
+            if (!salesName) return;
+            const detail = document.getElementById('report-detail-' + salesName);
+            if (detail && detail.style.display === 'none') {
+              detail.style.display = 'block';
+            }
+            const sheetWrap = document.querySelector('.bonus-sheet-wrap[data-salesname="' + salesName + '"]');
+            if (sheetWrap) {
+              exportBonusSheetJpg(sheetWrap.querySelector('button[onclick*="exportBonusSheetJpg"]') || btn);
+            } else {
+              const detailBtn = document.querySelector('button[data-name="' + salesName + '"][onclick*="toggleReportDetail"]');
+              if (detailBtn) {
+                toggleReportDetail(detailBtn);
+                setTimeout(function() {
+                  const sheetWrap2 = document.querySelector('.bonus-sheet-wrap[data-salesname="' + salesName + '"]');
+                  if (sheetWrap2) {
+                    exportBonusSheetJpg(sheetWrap2.querySelector('button[onclick*="exportBonusSheetJpg"]') || btn);
+                  }
+                }, 120);
+              }
+            }
+          }
+
           window.recalcBonusWorksheet = recalcBonusWorksheet;
           window.sortBonusSheet = sortBonusSheet;
           window.exportBonusSheetJpg = exportBonusSheetJpg;
+          window.exportBonusJpgDirect = exportBonusJpgDirect;
           window.addBonusSheetRow = addBonusSheetRow;
           window.insertBonusSheetRow = insertBonusSheetRow;
           window.deleteBonusSheetRow = deleteBonusSheetRow;
@@ -4332,15 +6617,15 @@ function doGet(e) {
       <div class="wrap">
         <!-- 💎 Tabs 控制區 -->
         <div class="tabs-container">
-          <button class="tab-btn active" onclick="switchTab('sales-tab', this)">業務app金鑰管理</button>
-          <button class="tab-btn" onclick="switchTab('client-tab', this)">客戶查庫存金鑰管理</button>
+          <!-- 2026-09-30 業務改用 LINE / Google 登入，「業務app金鑰管理」拿掉 (分頁內容保留但隱藏) -->
+          <button class="tab-btn active" onclick="switchTab('client-tab', this)">客戶查庫存金鑰管理</button>
           <button class="tab-btn" onclick="switchTab('line-tab', this)">LINE 機器人白名單</button>
           <button class="tab-btn" onclick="switchTab('bonus-tab', this)">獎金計算</button>
           <button class="tab-btn" onclick="switchTab('attendance-tab', this); initAttendanceTab();">出缺勤管理</button>
         </div>
         
         <!-- 👔 業務app金鑰管理分頁 -->
-        <div id="sales-tab" class="tab-content active">
+        <div id="sales-tab" class="tab-content" style="display:none !important;">
           <div class="dashboard-grid">
             <!-- Left Side: Register -->
             <div class="panel-card">
@@ -4420,7 +6705,7 @@ function doGet(e) {
         </div>
         
         <!-- 👥 客戶查庫存金鑰管理分頁 -->
-        <div id="client-tab" class="tab-content">
+        <div id="client-tab" class="tab-content active">
           <div class="dashboard-grid">
             <!-- Left Side: Ingest -->
             <div class="panel-card" style="display: flex; flex-direction: column; gap: 16px;">
@@ -4947,1796 +7232,5 @@ function doGet(e) {
     </body>
     </html>
     `;
-    return HtmlService.createHtmlOutput(html).setTitle("高雅瓷機密中心");
-  }
-  
-  // 🔐 獨立單獨查庫存安全金鑰驗證
-  if (params.view === 'inventory') {
-    const sales = params.sales || '';
-    const key = params.key || '';
-    const expectedKey = getSalesDirectKey(sales);
-    
-    // 🛡️ 檢查是否在黑名單中
-    let blockedSales = [];
-    try {
-      blockedSales = JSON.parse(PropertiesService.getScriptProperties().getProperty("DIRECT_ACCESS_BLOCKED") || "[]");
-    } catch(e){}
-    const isBlocked = blockedSales.includes(sales);
-    
-    if (!sales || key !== expectedKey || isBlocked) {
-      return HtmlService.createHtmlOutput(
-        "<body style='background:#000; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; font-family:sans-serif;'>" +
-        "<div style='text-align:center; padding:30px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,59,48,0.3); border-radius:20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);'>" +
-        "<h1 style='color:#ff3b30; font-size:60px; margin:0 0 20px;'>🔒</h1>" +
-        "<h2 style='margin:0 0 10px; color:#fff;'>" + (isBlocked ? "存取遭拒：此專屬網址已被停用" : "存取遭拒：安全金鑰無效") + "</h2>" +
-        "<p style='color:rgba(255,255,255,0.4); font-size:13px; margin:0;'>請確認您的直達專屬網址是否正確，或聯繫系統管理員。</p>" +
-        "</div>" +
-        "</body>"
-      )
-      .setTitle("AIT 存取拒絕")
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-    }
-  }
-  
-  // 🔐 獨立客戶直達安全驗證 (免 LINE 登入登出)
-  if (params.view === 'client' && params.clientName && params.key) {
-    const expectedKey = getClientDirectKey(params.clientName);
-    if (!params.key || params.key !== expectedKey) {
-      return HtmlService.createHtmlOutput(
-        "<body style='background:#000; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; font-family:sans-serif;'>" +
-        "<div style='text-align:center; padding:30px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,59,48,0.3); border-radius:20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);'>" +
-        "<h1 style='color:#ff3b30; font-size:60px; margin:0 0 20px;'>🔒</h1>" +
-        "<h2 style='margin:0 0 10px; color:#fff;'>存取遭拒：安全金鑰無效</h2>" +
-        "<p style='color:rgba(255,255,255,0.4); font-size:13px; margin:0;'>請確認您的直達專屬網址是否正確，或聯繫服務業務。</p>" +
-        "</div>" +
-        "</body>"
-      )
-      .setTitle("AIT 存取拒絕")
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-    }
-  }
-  
-  // 🚀 獨立分流：分公司/員工專用入口
-  if (params.view === 'staff') {
-    const template = HtmlService.createTemplateFromFile('Staff_Portal');
-    template.params = params;
-    template.scriptUrl = ScriptApp.getService().getUrl();
-    return template.evaluate()
-      .setTitle('AIT-內部查詢')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  }
-
-  let clientInfo = { name: "", company: "", level: "LEVEL 2" };
-  try {
-    const targetName = params.clientName || params.customer || "";
-    if (targetName) {
-      const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
-      const wlSheet = ss.getSheetByName("白名單");
-      if (wlSheet) {
-        const data = wlSheet.getDataRange().getValues();
-        const h = data[0].map(v => String(v || '').replace(/[\s\uFEFF]/g, '').trim());
-        const idx = {
-          name: findHeaderIndex(h, ["名字", "姓名"]),
-          company: findHeaderIndex(h, ["公司", "客戶"]),
-          level: findHeaderIndex(h, ["等級", "權限等級", "LEVEL"])
-        };
-        const userRow = data.find(r => idx.name !== -1 && String(r[idx.name]).trim() === targetName.trim());
-        if (userRow) {
-          clientInfo.name = targetName;
-          clientInfo.company = idx.company !== -1 ? String(userRow[idx.company]).trim() : "未知公司";
-          clientInfo.level = idx.level !== -1 && String(userRow[idx.level]).trim() ? String(userRow[idx.level]).trim().toUpperCase() : "LEVEL 2";
-        } else {
-          // 白名單中如果沒找到，至少保留網址上的姓名以作記錄
-          clientInfo.name = targetName;
-          clientInfo.company = "訪客客戶";
-          clientInfo.level = "LEVEL 2";
-        }
-      }
-    }
-  } catch(e) {
-    console.warn("doGet 預解析客戶公司失敗:", e);
-  }
-
-  const template = HtmlService.createTemplateFromFile('index');
-  template.params = params;
-  template.clientInfo = clientInfo;
-  template.scriptUrl = ScriptApp.getService().getUrl();
-  template.clientLiffId = getScriptPropOrDefault_('CLIENT_LIFF_ID', '2007666611-y2vJrdKu');
-  
-  let title = 'AIT-業務專用';
-  if (params.view === 'client') {
-    title = 'AIT-查詢系統';
-  }
-  
-  return template.evaluate()
-    .setTitle(title)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-
-/**
- * 👔 取得業務員清單 (從業務分區自動讀取)
- */
-function getSalesList(onlySales = false) {
-  try {
-    // 🚀 效能優化：加入 Script Cache（5 分鐘），避免每次登入都重掃業務分區全表
-    const cacheKey = onlySales ? 'sales_list_only' : 'sales_list_all';
-    const cache = CacheService.getScriptCache();
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return { success: true, data: JSON.parse(cached) };
-    }
-
-    const ss = getSafeSsMain();
-    const sheet = ss.getSheetByName("業務分區");
-    if (!sheet) return { success: false, msg: "找不到業務分區工作表" };
-    const data = sheet.getDataRange().getValues();
-    const h = data[0].map(v => String(v || '').trim());
-    
-    const salesSet = new Set();
-    const salesColIdx = findHeaderIndex(h, ["負責業務", "業務", "負責人"]);
-    
-    if (salesColIdx !== -1) {
-      // --- 縱向佈局 ---
-      for (let i = 1; i < data.length; i++) {
-        const val = String(data[i][salesColIdx] || '').trim();
-        if (val && val !== "負責業務") salesSet.add(val);
-      }
-    } else {
-      // --- 水平佈局 (舊版兜底) ---
-      h.forEach(val => {
-        if (val && val !== "序號" && val !== "客戶名稱" && !/^\d+$/.test(val)) {
-          salesSet.add(val);
-        }
-      });
-    }
-
-    // 🚀 核心強化：合併 SALES_CONFIG 中的固定名單 (確保即使沒分配客戶也能看到按鈕)
-    if (typeof SALES_CONFIG !== 'undefined' && SALES_CONFIG.SALES_PEOPLE) {
-      SALES_CONFIG.SALES_PEOPLE.forEach(p => {
-        if (p.name) salesSet.add(p.name);
-      });
-    }
-
-    // 🚀 核心增強：合併手動新增的業務/助理名單 (由管理後台金鑰發行而來)
-    if (!onlySales) {
-      try {
-        const customSales = JSON.parse(PropertiesService.getScriptProperties().getProperty("DIRECT_ACCESS_CUSTOM") || "[]");
-        customSales.forEach(name => {
-          if (name) salesSet.add(name);
-        });
-      } catch(e){}
-    }
-
-    const result = Array.from(salesSet);
-    // 快取 5 分鐘（業務名單變動頻率低）
-    try { cache.put(cacheKey, JSON.stringify(result), 300); } catch(e){}
-    return { success: true, data: result };
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-
-function include(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
-}
-
-// -----------------------------------------------------------------------------
-// 1. 戰情室旗艦邏輯移植 (歸併與標題)
-// -----------------------------------------------------------------------------
-
-function mergeCustomer(name) {
-  let s = String(name || "").trim();
-  if (s.includes('漢樺') || s.includes('波爾泰')) return '漢樺';
-  if (s.includes('大永') || s.includes('新大永')) return '大永';
-  if (s.includes('錦義') || s.includes('睿敏')) return '錦義';
-  if (s.includes('滿財') || s.includes('東春')) return '滿財';
-  if (s.includes('傅邦') || s.includes('盛邦')) return '傅邦';
-  if (s.includes('喬翌') || s.includes('伊特')) return '伊特';
-  if (s.includes('太爾') || s.includes('信義星')) return '信義星';
-  if (s.includes('鼎康') || s.includes('鼎晨')) return '鼎晨';
-  if (s.includes('高頓') || s.includes('馬來高')) return '馬來高';
-  if (s.includes('鏷城') || s.includes('璞城')) return '鏷城';
-  if (s.includes('今冠') || s.includes('金冠')) return '金冠';
-  if (s.includes('琮達') || s.includes('琮威')) return '琮威';
-
-  // 🚀 核心規則：特定客戶不抓前二字（保留完整名稱）
-  const exceptions = ['夏綠蒂', '德思特尼', '百事得', '百達富麗', '鑫東聖', '海格斯', '信義星', '好仕齊', '新睦豐', '富利鴻', '金豪益'];
-  for (const ex of exceptions) {
-    if (s.includes(ex)) return ex;
-  }
-
-  const suffixes = ['企業','建材','國際','磁磚','工程','股份有限公司','有限公司','公司','實業','精品'];
-  for (const suf of suffixes) {
-    const idx = s.indexOf(suf);
-    if (idx !== -1) { s = s.substring(0, idx); break; }
-  }
-  return s.slice(0, 2);
-}
-
-function getCustomerShortName(name) {
-  let s = String(name || "").trim();
-  if (!s) return '';
-  // 固定合併對照（比照 mergeCustomer，統一顯示為單一名稱）
-  if (s.includes('漢樺') || s.includes('波爾泰')) return '漢樺';
-  if (s.includes('大永') || s.includes('新大永')) return '大永';
-  if (s.includes('錦義') || s.includes('睿敏')) return '錦義';
-  if (s.includes('滿財') || s.includes('東春')) return '滿財';
-  if (s.includes('傅邦') || s.includes('盛邦')) return '傅邦';
-  if (s.includes('喬翌') || s.includes('伊特')) return '伊特';
-  if (s.includes('太爾') || s.includes('信義星')) return '信義星';
-  if (s.includes('鼎康') || s.includes('鼎晨')) return '鼎晨';
-  if (s.includes('高頓') || s.includes('馬來高')) return '馬來高';
-  if (s.includes('鏷城') || s.includes('璞城')) return '鏷城';
-  if (s.includes('今冠') || s.includes('金冠')) return '金冠';
-  if (s.includes('琮達') || s.includes('琮威')) return '琮威';
-
-  const exceptions = ['夏綠蒂', '德思特尼', '百事得', '百達富麗', '鑫東聖', '海格斯', '信義星', '好仕齊', '新睦豐', '富利鴻', '金豪益'];
-  for (const ex of exceptions) {
-    if (s.includes(ex)) return ex;
-  }
-
-  s = s
-    .replace(/[()（）\[\]【】]/g, '')
-    .replace(/[-_－—–\s]*(出貨|樣品|門市|倉庫)$/g, '')
-    .trim();
-
-  const suffixes = [
-    '股份有限公司', '有限公司', '公司', '企業', '實業', '國際',
-    '工程行', '材料行', '建材行', '磁磚行', '衛浴行', '展示中心', '旗艦店',
-    '工程', '建材', '材料', '磁磚', '精品', '商行', '貿易', '門市',
-    '建設', '開發', '設計', '裝潢', '裝修', '工業', '綜合', '有限', '股份',
-    '五金', '衛浴', '展覽', '展服', '展示', '展場', '全館', '生活', '家居', '居家',
-    '美學', '空間', '工作坊', '工作室', '總店', '分店', '行'
-  ];
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const suf of suffixes) {
-      if (s.endsWith(suf)) {
-        s = s.slice(0, -suf.length).trim();
-        changed = true;
-        break;
-      }
-    }
-  }
-
-  s = s.replace(/[-_－—–\s]+$/g, '').trim();
-  s = s.replace(/(股份有限公司|有限公司|公司|企業|實業|國際|工程|建材|材料|磁磚|精品|商行|貿易|建設|開發|設計|裝潢|裝修|工業|綜合|有限|股份|五金|衛浴|展覽|展服|展示|展場|全館|生活|家居|居家|美學|空間|工作坊|工作室|總店|分店|行)$/g, '').trim();
-  if (s.length > 4) s = s.slice(0, 4);
-  return s || String(name || '').trim().slice(0, 4);
-}
-
-function getSharedSalesWeight(name) {
-  const s = String(name || '').trim();
-  return (s.includes('漢樺') || s.includes('波爾泰')) ? 1 / 3 : 1;
-}
-
-function findHeaderIndex(headers, candidates) {
-  if (!headers || headers.length === 0) return -1;
-  const cleanHeaders = headers.map(h =>
-    String(h).replace(/[\s\uFEFF\xA0"()（）]/g, '').trim().toUpperCase()
-  );
-  for (const cand of candidates) {
-    const target = String(cand).replace(/[\s"()（）]/g, '').toUpperCase();
-    const idx = cleanHeaders.indexOf(target);
-    if (idx !== -1) return idx;
-  }
-  for (const cand of candidates) {
-    const target = String(cand).replace(/[\s"()（）]/g, '').toUpperCase();
-    const idx = cleanHeaders.findIndex(h => h.includes(target));
-    if (idx !== -1) return idx;
-  }
-  return -1;
-}
-
-/**
- * 🚀 共用工具：把保留單登記到貨用的「暫記編號」還原成正式編號，供比對「編號價目表」用。
- * 保留單分頁的「編號」欄常見 "RS61280-掛"、"ED45751-F-期" 這種格式——「-掛」「-期」是
- * 保留系統用來標記「尚未有正式批號、先登記到貨」的暫記後綴，不是真正編號的一部分；
- * 若直接拿去比對編號價目表（只有去除空白/連字號，沒去掉這個後綴），一律比對不到，
- * 圖片/系列/尺寸等資料就會全部拿到空值。原本只有 Inventory.js 內部有一份（供到貨日期比對用），
- * 這裡拉出來做全域共用，Code_Customer.js 的保留單明細（陳列牆→保留單分頁）圖片抓取同樣需要。
- */
-function normalizeIncomingSkuKey_(raw) {
-  let s = String(raw || '').trim();
-  s = s.replace(/[-\s]*(掛|期)\s*$/, ''); // 去除保留單登記到貨用的暫記後綴
-  return s.replace(/[\s\-]/g, '');
-}
-
-// -----------------------------------------------------------------------------
-// 2. 業務清單同步 (採戰情室對位邏輯)
-// -----------------------------------------------------------------------------
-
-/**
- * ➕ 新增客戶到內部管理「業務分區」（App 內新增，馬上可選來上架）
- */
-function addCustomerToZoning(custName, salesName) {
-  try {
-    const name = String(custName || '').trim();
-    const sales = String(salesName || '').trim();
-    if (!name) return { success: false, msg: "客戶名稱不可為空" };
-    if (!sales) return { success: false, msg: "業務名稱不可為空" };
-
-    const ss = getSafeSsMain();
-    const sheet = ss.getSheetByName("業務分區");
-    if (!sheet) return { success: false, msg: "找不到業務分區表" };
-
-    const data = sheet.getDataRange().getValues();
-    const headers = data[0];
-    const custColIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
-    const salesColIdx = findHeaderIndex(headers, ["負責業務", "業務", "負責人"]);
-    if (custColIdx === -1 || salesColIdx === -1) return { success: false, msg: "業務分區表格式不符" };
-
-    // 重複檢查（合併名比對）
-    const targetMerged = mergeCustomer(name);
-    for (let i = 1; i < data.length; i++) {
-      const rowCust = String(data[i][custColIdx] || '').trim();
-      if (rowCust && mergeCustomer(rowCust) === targetMerged) {
-        return { success: false, msg: "客戶「" + rowCust + "」已存在（負責業務：" + String(data[i][salesColIdx] || '') + "）" };
-      }
-    }
-
-    // 寫入新列（只填客戶名稱與負責業務）
-    const newRow = new Array(headers.length).fill('');
-    newRow[custColIdx] = name;
-    newRow[salesColIdx] = sales;
-    sheet.appendRow(newRow);
-
-    // 清快取讓列表立即更新
-    const cacheKey = 'cust_list_v2_' + sales.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
-    try { CacheService.getScriptCache().remove(cacheKey); } catch (e) {}
-
-    return { success: true, msg: "已新增客戶「" + name + "」" };
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-/**
- * 👁️ 設定客戶版面顯示與否（寫入內部管理「業務分區」的「版面顯示」欄）
- * visible=false → 填 N；visible=true → 清空
- */
-function setCustomerVisibility(custName, visible, salesName) {
-  try {
-    const ss = getSafeSsMain();
-    const sheet = ss.getSheetByName("業務分區");
-    if (!sheet) return { success: false, msg: "找不到業務分區表" };
-
-    const data = sheet.getDataRange().getValues();
-    const headers = data[0];
-    const custColIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
-    let showColIdx = findHeaderIndex(headers, ["版面顯示", "上架顯示"]);
-
-    // 沒有「版面顯示」欄就自動在最後面建立
-    if (showColIdx === -1) {
-      showColIdx = headers.length;
-      sheet.getRange(1, showColIdx + 1).setValue("版面顯示").setFontWeight("bold");
-    }
-
-    const targetMerged = mergeCustomer(String(custName || '').trim());
-    let updated = 0;
-    for (let i = 1; i < data.length; i++) {
-      const rowCust = String(data[i][custColIdx] || '').trim();
-      if (rowCust && mergeCustomer(rowCust) === targetMerged) {
-        sheet.getRange(i + 1, showColIdx + 1).setValue(visible ? '' : 'N');
-        updated++;
-      }
-    }
-    if (updated === 0) return { success: false, msg: "業務分區找不到客戶：" + custName };
-
-    // 清該業務的客戶列表快取
-    if (salesName) {
-      const cacheKey = 'cust_list_v2_' + String(salesName).replace(/[^a-zA-Z一-龥]/g, '');
-      try { CacheService.getScriptCache().remove(cacheKey); } catch (e) {}
-    }
-    return { success: true, msg: (visible ? "已顯示" : "已隱藏") + "「" + custName + "」" };
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-function getCustomerList(salesName) {
-  try {
-    // 🚀 效能優化：加入 Script Cache（10 分鐘），業務點選後不再每次重掃業務分區全表
-    const cacheKey = 'cust_list_v2_' + salesName.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
-    const cache = CacheService.getScriptCache();
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return { success: true, data: JSON.parse(cached) };
-    }
-
-    const ss = getSafeSsMain();
-    const zoningSheet = ss.getSheetByName("業務分區");
-    const customerMap = {};
-
-    if (zoningSheet) {
-      const data = zoningSheet.getDataRange().getValues();
-      const headers = data[0];
-      
-      const salesColIdx = findHeaderIndex(headers, ["負責業務", "業務", "負責人"]);
-      const custColIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
-      const showColIdx = findHeaderIndex(headers, ["版面顯示", "上架顯示"]);
-      const levelColIdx = findHeaderIndex(headers, ["等級"]);
-
-      if (salesColIdx !== -1 && custColIdx !== -1) {
-        // --- 縱向佈局 (一列一個客戶) ---
-        for (let i = 1; i < data.length; i++) {
-          const rowSales = String(data[i][salesColIdx] || '').trim();
-          const rowCust = String(data[i][custColIdx] || '').trim();
-          if (!(rowSales.includes(salesName.trim()) && rowCust)) continue;
-
-          // 🙈 版面顯示欄填 N/否 → hidden（仍回傳，由前端收進「未顯示版面」區）
-          let hidden = false;
-          if (showColIdx !== -1) {
-            const showVal = String(data[i][showColIdx] || '').trim().toLowerCase();
-            hidden = (showVal === 'n' || showVal === 'no' || showVal === '否' || showVal === '隱藏' || showVal === '0' || showVal === 'false');
-          }
-          const level = levelColIdx !== -1 ? String(data[i][levelColIdx] || '').trim() : '';
-
-          const merged = mergeCustomer(rowCust);
-          if (!customerMap[merged]) {
-            customerMap[merged] = { name: rowCust, salesperson: rowSales, level: level, hidden: hidden };
-          }
-        }
-      } else {
-        // --- 橫向佈局 (舊版) ---
-        const repCols = [];
-        headers.forEach((h, idx) => {
-          if (h && h.includes(salesName)) {
-            repCols.push({ name: h, col: idx });
-          }
-        });
-        if (repCols.length === 0) return { success: false, msg: "找不到業務: " + salesName };
-        for (let i = 1; i < data.length; i++) {
-          repCols.forEach(rep => {
-            let nameRaw = String(data[i][rep.col + 1] || '').trim(); 
-            if (!nameRaw || /^\d+$/.test(nameRaw)) {
-               const fallback = String(data[i][rep.col] || '').trim();
-               if (fallback && !/^\d+$/.test(fallback)) nameRaw = fallback;
-            }
-            if (nameRaw && nameRaw !== "客戶名稱" && nameRaw !== "序號" && nameRaw !== "客戶" && !/^\d+$/.test(nameRaw)) {
-              const merged = mergeCustomer(nameRaw);
-              if (!customerMap[merged]) {
-                customerMap[merged] = { name: nameRaw, salesperson: rep.name };
-              }
-            }
-          });
-        }
-      }
-    }
-    
-    const result = Object.values(customerMap);
-    // 快取 10 分鐘（客戶分區調整頻率低）
-    try { cache.put(cacheKey, JSON.stringify(result), 600); } catch(e){}
-    return { success: true, data: result };
-  } catch (e) {
-    return { success: false, msg: "清單載入失敗: " + e.toString() };
-  }
-}
-
-// -----------------------------------------------------------------------------
-// 3. 版面抓取 (100% 複刻戰情室圖片解析)
-// -----------------------------------------------------------------------------
-
-function getCustomerDisplays(customerName) {
-  try {
-    const targetMerged = mergeCustomer(customerName);
-
-    // 🚀 效能優化：整包回應快取 3 分鐘（業務反應版面記錄讀取很慢，根因是這裡完全沒快取，
-    //    每次開客戶頁都重新全表掃描＋跨表讀保留單）。所有會改到這個客戶版面資料的寫入路徑
-    //    （saveNewLayout / updateDisplayBatch / offShelfDisplayBatch / deleteDisplayBatchPermanent /
-    //    updateLayoutFieldBatch）都會主動呼叫 CacheManager.removeLarge 清除，不會看到舊資料。
-    const cacheKey = "displays_" + targetMerged;
-    try {
-      const cached = CacheManager.getLarge(cacheKey);
-      if (cached) return cached;
-    } catch (e) {}
-
-    const ssBusiness = getSafeSsBusiness();
-    const ssMain = getSafeSsMain();
-    const sheet = ssBusiness.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
-    const data = sheet.getDataRange().getValues();
-
-    // 🚀 對齊戰情室標號：標題在第二列 (Index 1)，數據從第三列 (Index 2) 開始
-    const headers = data[1] || data[0];
-    const startRow = 2;
-
-    const idx = {
-      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
-      series: findHeaderIndex(headers, ["中文系列", "系列"]),
-      sku: findHeaderIndex(headers, ["編號", "產品編號"]),
-      img: findHeaderIndex(headers, ["版面連結", "連結", "圖片", "照片"]),
-      date: findHeaderIndex(headers, ["上架日期", "日期"]),
-      qty: findHeaderIndex(headers, ["片數", "數量"]),
-      batch: findHeaderIndex(headers, ["批號"]),
-      size: findHeaderIndex(headers, ["尺寸"]),
-      mode: findHeaderIndex(headers, ["展示方式"]),
-      lastUpdate: findHeaderIndex(headers, ["最後更新時間", "更新時間"]),
-      offDate: findHeaderIndex(headers, ["下架日期"])
-    };
-
-    if (idx.cust === -1) return { success: false, msg: "找不到客戶欄位", debug_headers: headers };
-
-    // 🚀 優化 1：快取庫存與單磚圖資料 (10 分鐘)
-    let inventoryMap = {};
-    try {
-      inventoryMap = getInventoryMapCached(ssMain);
-    } catch (e) {
-      console.warn("Cache Error:", e);
-      inventoryMap = getInventoryMap(ssMain); // 失敗則讀取實體
-    }
-
-    // 🚀 優化 2：快取銷售合計數據 (避免每次遍歷數萬行)
-    let customerSalesMap = {};
-    try {
-      customerSalesMap = getCustomerSalesCached(ssMain, targetMerged, inventoryMap);
-    } catch (e) {
-      console.warn("Sales Cache Error:", e);
-      customerSalesMap = calculateSalesManual(ssMain, targetMerged, inventoryMap);
-    }
-
-    // 🚀 新增：取得此客戶的專屬保留資料 (用於版面頁面標註)
-    let customerReservedMap = {};
-    try {
-      if (typeof getReservedOrdersGrouped === 'function') {
-        // 🚀 傳入已算好的 inventoryMap，避免函式內部再開一次主表、重掃一次編號價目表
-        const reservedGroups = getReservedOrdersGrouped(ssMain, targetMerged, inventoryMap);
-        reservedGroups.forEach(group => {
-          group.items.forEach(item => {
-            // 🚀 跟圖片抓取同一個根因：保留單的「-掛」「-期」暫記編號要先去後綴，
-            // 才能對回版面上架清單的正式編號 key，不然這個客戶的保留標註會悄悄對不到。
-            const skuKey = normalizeIncomingSkuKey_(item.sku);
-            if (!customerReservedMap[skuKey]) {
-              customerReservedMap[skuKey] = { qty: 0, cases: new Set(), details: [] };
-            }
-            customerReservedMap[skuKey].qty += item.qty;
-            if (group.name) customerReservedMap[skuKey].cases.add(group.name);
-            
-            // 🚀 紀錄詳細資訊：編號 數量片 業務 (使用 group.biz 修正 item.biz 遺漏問題)
-            customerReservedMap[skuKey].details.push(item.sku + " " + item.qty + "片 " + (group.biz || '未指定'));
-          });
-        });
-      }
-    } catch (e) {
-      console.warn("Reservation Load Error:", e);
-    }
-
-    const today = new Date().getTime();
-
-    const allData = data.slice(startRow)
-      .filter(row => {
-        const rowCust = row[idx.cust];
-        return rowCust && mergeCustomer(rowCust) === targetMerged;
-      })
-      .map(row => {
-        const fullSku = String(row[idx.sku] || '').trim();
-        const skuKey = fullSku.replace(/[\s\-]/g, '');
-        const rawImg = String(row[idx.img] || '').trim();
-        const date = row[idx.date] instanceof Date ? row[idx.date] : new Date();
-        const days = Math.floor((today - date.getTime()) / 86400000);
-        const offDateRaw = idx.offDate !== -1 ? row[idx.offDate] : null;
-
-        const stock = inventoryMap[skuKey] || { level: 2, qty: 0, pyeong: 0, safe: 0, salesQty: 0, salesAmt: 0, singleImg: "" };
-        const cSales = customerSalesMap[skuKey] || { pings: 0, amt: 0, count: 0 };
-
-        // 一個版面可能有多張照片（同一個儲存格用換行分隔），全部轉成縮圖網址；
-        // photoUrl 仍維持「第一張」，既有的分組、上下架比對邏輯完全不用改。
-        const rawPhotoList = parsePhotoUrls_(rawImg);
-        const photoUrlList = rawPhotoList.map(function (u) { return toThumbUrl_(u, 1000); });
-        const thumbUrl = photoUrlList.length ? photoUrlList[0] : rawImg;
-
-        let singleImgUrl = '';
-        if (stock.singleImg && stock.singleImg.trim() !== '') {
-          const singleDriveId = extractIdFromUrl(stock.singleImg);
-          singleImgUrl = singleDriveId ? "https://lh3.googleusercontent.com/d/" + singleDriveId + "=w200" : stock.singleImg;
-        }
-
-        return {
-          sku: fullSku,
-          series: idx.series !== -1 ? String(row[idx.series] || '一般系列') : '一般系列',
-          photoUrl: thumbUrl,
-          photoUrls: photoUrlList,
-          daysOnDisplay: Math.max(0, days),
-          installDate: Utilities.formatDate(date, "GMT+8", "yyyy/MM/dd"),
-          offDate: offDateRaw ? Utilities.formatDate(new Date(offDateRaw), "GMT+8", "yyyy/MM/dd HH:mm") : null,
-          stockLevel: stock.level,
-          currentStock: stock.qty,
-          currentPyeong: stock.pyeong,
-          safeStock: stock.safe,
-          salesQty: cSales.pings > 0 ? cSales.pings : stock.salesQty,
-          salesAmt: cSales.amt > 0 ? cSales.amt : stock.salesAmt,
-          customerSalesAmt: cSales.amt,
-          customerSalesQty: cSales.pings,
-          frequency: cSales.count || 0,
-          customerReservedQty: customerReservedMap[skuKey] ? customerReservedMap[skuKey].qty : 0,
-          customerReservedCases: customerReservedMap[skuKey] ? Array.from(customerReservedMap[skuKey].cases).join(', ') : '',
-          customerReservedSummary: customerReservedMap[skuKey] ? customerReservedMap[skuKey].details.join('\n') : '',
-          singleImg: singleImgUrl,
-          originalQty: idx.qty !== -1 ? (row[idx.qty] || 1) : 1,
-          batch: idx.batch !== -1 ? String(row[idx.batch] || '') : '',
-          size: idx.size !== -1 ? String(row[idx.size] || '') : '',
-          spec: idx.spec !== -1 ? String(row[idx.spec] || '') : '',
-          mode: idx.mode !== -1 ? String(row[idx.mode] || '版面') : '版面',
-          lastUpdate: idx.lastUpdate !== -1 && row[idx.lastUpdate]
-            ? Utilities.formatDate(new Date(row[idx.lastUpdate]), "GMT+8", "yyyy/MM/dd HH:mm")
-            : ''
-        };
-      });
-
-    const active = allData.filter(d => !d.offDate);
-    const history = allData.filter(d => d.offDate);
-
-    const result = {
-      success: true,
-      active: active,
-      history: history,
-      debug: { active: active.length, history: history.length, target: targetMerged }
-    };
-    try { CacheManager.putLarge(cacheKey, result, 180); } catch (e) {}
-    return result;
-  } catch (e) {
-    return { success: false, msg: "資料抓取失敗: " + e.toString() };
-  }
-}
-
-// -----------------------------------------------------------------------------
-// 4. 工具函式組
-// -----------------------------------------------------------------------------
-
-function getInventoryMapCached(ss) {
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get("inventory_map");
-  if (cached) return JSON.parse(cached);
-
-  const map = getInventoryMap(ss);
-  const json = JSON.stringify(map);
-  // GAS 快取限制 100KB (約 50,000 字元)
-  if (json.length < 90000) {
-    cache.put("inventory_map", json, 600);
-  }
-  return map;
-}
-
-/**
- * 🚀 效能優化：原本這裡是「每個客戶各自一把 5 分鐘快取 key，快取沒中就整張『經銷銷售報表』
- * （數萬行）重新全表掃描一次」——業務連續點好幾個不同客戶，等於同一張大表在幾分鐘內被重複整張
- * 重讀好幾次。改成跟 getSalesOverview() 一樣的做法：全公司所有客戶「一次性」掃過整張表、依客戶
- * 分組成一份共用結果去快取，之後不管查哪個客戶都是直接查表（O(1)），只有快取真的過期時才需要
- * 重新整張掃一次，且那一次是「幫全公司所有人都算好」，不是「只幫這個客戶算」。
- */
-function getAllCustomerSalesCached_(ss, inventoryMap) {
-  const cacheKey = "all_customer_sales_v1";
-  const cached = CacheManager.getLarge(cacheKey);
-  if (cached) return cached;
-
-  const map = calculateAllCustomerSales_(ss, inventoryMap);
-  try { CacheManager.putLarge(cacheKey, map, 600); } catch (e) {} // 10 分鐘共用快取
-  return map;
-}
-
-function calculateAllCustomerSales_(ss, inventoryMap) {
-  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_SALES);
-  if (!sheet) return {};
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return {};
-
-  const headers = data[0];
-  const sIdx = {
-    cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
-    sku: findHeaderIndex(headers, ["產品編號", "編號", "序號"]),
-    qty: findHeaderIndex(headers, ["數量", "片數"]),
-    amt: findHeaderIndex(headers, ["金額", "銷售金額"]),
-    date: findHeaderIndex(headers, ["單據日期", "日期"])
-  };
-
-  const allMap = {}; // mergedCustomer → { sku: {pings, amt, count} }
-  const rows = data.slice(1);
-
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const cust = mergeCustomer(row[sIdx.cust]);
-    if (!cust) continue;
-    const rawSku = row[sIdx.sku];
-    if (!rawSku) continue;
-    const sku = String(rawSku).trim().replace(/[\s\-]/g, '');
-
-    if (!allMap[cust]) allMap[cust] = {};
-    if (!allMap[cust][sku]) allMap[cust][sku] = { pings: 0, amt: 0, count: 0 };
-    const meta = inventoryMap[sku] || { perPing: 36 };
-
-    const qty = parseFloat(row[sIdx.qty]) || 0;
-    const amt = parseFloat(row[sIdx.amt]) || 0;
-
-    allMap[cust][sku].pings += qty / (meta.perPing || 36);
-    allMap[cust][sku].amt += amt;
-    allMap[cust][sku].count += 1;
-  }
-  return allMap;
-}
-
-function getCustomerSalesCached(ss, targetMerged, inventoryMap) {
-  const allMap = getAllCustomerSalesCached_(ss, inventoryMap);
-  return allMap[targetMerged] || {};
-}
-
-function calculateSalesManual(ss, targetMerged, inventoryMap) {
-  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_SALES);
-  if (!sheet) return {};
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return {};
-  
-  const headers = data[0];
-  const sIdx = {
-    cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
-    sku: findHeaderIndex(headers, ["產品編號", "編號", "序號"]),
-    qty: findHeaderIndex(headers, ["數量", "片數"]),
-    amt: findHeaderIndex(headers, ["金額", "銷售金額"]),
-    date: findHeaderIndex(headers, ["單據日期", "日期"])
-  };
-
-  const customerSalesMap = {};
-  const rows = data.slice(1);
-  const target = targetMerged.trim();
-  
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (mergeCustomer(row[sIdx.cust]) === target) {
-      const rawSku = row[sIdx.sku];
-      if (!rawSku) continue;
-      const sku = String(rawSku).trim().replace(/[\s\-]/g, '');
-      
-      if (!customerSalesMap[sku]) customerSalesMap[sku] = { pings: 0, amt: 0, count: 0 };
-      const meta = inventoryMap[sku] || { perPing: 36 };
-      
-      const qty = parseFloat(row[sIdx.qty]) || 0;
-      const amt = parseFloat(row[sIdx.amt]) || 0;
-      
-      customerSalesMap[sku].pings += qty / (meta.perPing || 36);
-      customerSalesMap[sku].amt += amt;
-      customerSalesMap[sku].count += 1;
-    }
-  }
-  return customerSalesMap;
-}
-
-function getInventoryMap(ss) {
-  if (!ss) return {};
-  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_PRODUCTS);
-  if (!sheet) return {};
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-
-  const idx = {
-    sku: findHeaderIndex(headers, ["編號", "產品編號", "品碼"]),
-    qty: findHeaderIndex(headers, ["庫存片數", "現有片數", "總片數"]),
-    pyeong: findHeaderIndex(headers, ["庫存坪數", "現有坪數", "總坪數"]),
-    safe: findHeaderIndex(headers, ["人工指定安全坪數", "安全庫存", "安全水位"]),
-    salesQty: findHeaderIndex(headers, ["銷售坪數", "累計銷量", "銷量", "銷售數", "銷數"]),
-    salesAmt: findHeaderIndex(headers, ["銷售金額", "成交金額", "銷額", "總金額", "銷價"]),
-    singleImg: findHeaderIndex(headers, ["單片連結網址", "單片連結", "產品縮圖", "圖片"]),
-    sceneFolder: findHeaderIndex(headers, ["雲端圖片", "雲端圖片(實景圖)", "實景照片"]),
-    perPing: findHeaderIndex(headers, ["片/坪", "片坪"]),
-    size: findHeaderIndex(headers, ["尺寸", "SIZE"]),
-    series: findHeaderIndex(headers, ["中文系列", "系列"]),
-    spec: findHeaderIndex(headers, ["規格"])
-  };
-
-  const map = {};
-  data.slice(1).forEach(row => {
-    const rawSku = String(row[idx.sku] || '').trim();
-    if (rawSku) {
-      const skuKey = rawSku.replace(/[\s\-]/g, '');
-      const qty = parseFloat(row[idx.qty]) || 0;
-      const pyeong = parseFloat(row[idx.pyeong]) || 0;
-      const safe = parseFloat(row[idx.safe]) || 0;
-      const sQty = idx.salesQty !== -1 ? parseFloat(row[idx.salesQty]) || 0 : 0;
-      const sAmt = idx.salesAmt !== -1 ? parseFloat(row[idx.salesAmt]) || 0 : 0;
-      const sImg = idx.singleImg !== -1 ? String(row[idx.singleImg] || '').trim() : '';
-      const sFolder = idx.sceneFolder !== -1 ? String(row[idx.sceneFolder] || '').trim() : '';
-      const perPing = idx.perPing !== -1 ? (parseFloat(row[idx.perPing]) || 36) : 36;
-      const sz = idx.size !== -1 ? String(row[idx.size] || '').trim() : '';
-
-      let level = 3;
-      if (qty <= 0) level = 1;
-      else if (pyeong < safe) level = 2;
-
-      map[skuKey] = { 
-        sku: rawSku, // 保留原始編號供顯示
-        level, qty, pyeong, safe, 
-        salesQty: sQty, salesAmt: sAmt, 
-        singleImg: sImg, sceneFolder: sFolder,
-        perPing: perPing,
-        size: sz,
-        series: idx.series !== -1 ? String(row[idx.series] || '').trim() : '一般',
-        spec: idx.spec !== -1 ? String(row[idx.spec] || '').trim() : ''
-      };
-    }
-  });
-  return map;
-}
-
-/**
- * 🚮 永久刪除版面 (誤傳專用 - 不留紀錄)
- */
-function deleteDisplayBatchPermanent(customerName, skus, photoUrl) {
-  try {
-    const ss = getSafeSsBusiness();
-    const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
-    const data = sheet.getDataRange().getValues();
-    const headers = data[1] || data[0];
-
-    const idx = {
-      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
-      sku: findHeaderIndex(headers, ["產品編號", "編號"]),
-      img: findHeaderIndex(headers, ["版面連結", "連結", "圖片", "照片"])
-    };
-
-    const targetMerged = mergeCustomer(customerName);
-    const normalizedSkus = skus.map(s => String(s).replace(/[\s\-]/g, ''));
-    const targetPhotoId = extractIdFromUrl(photoUrl);
-
-    // 🚀 效能優化：先蒐集要刪除的列號，再逆向批次刪除
-    // 避免在迴圈中逐行呼叫 deleteRow（每次皆為一個獨立 API call）
-    const rowsToDelete = [];
-    for (let i = data.length - 1; i >= 2; i--) {
-      const rowCust = mergeCustomer(data[i][idx.cust]);
-      const rowSku = String(data[i][idx.sku] || '').trim().replace(/[\s\-]/g, '');
-      const rowImg = String(data[i][idx.img] || '').trim();
-      const rowImgId = extractIdFromUrl(rowImg);
-
-      const isSkuMatch = normalizedSkus.includes(rowSku);
-      const isImgMatch = (targetPhotoId && rowImgId) ? (targetPhotoId === rowImgId) : (rowImg === photoUrl);
-
-      if (rowCust === targetMerged && isSkuMatch && isImgMatch) {
-        rowsToDelete.push(i + 1); // 記錄 1-based 列號
-      }
-    }
-
-    // 批次刪除：將連續行合併為一次 deleteRows() 呼叫
-    rowsToDelete.sort((a, b) => b - a);
-    const deleted = rowsToDelete.length;
-    if (deleted > 0) {
-      let i = 0;
-      while (i < rowsToDelete.length) {
-        let start = rowsToDelete[i];
-        let count = 1;
-        while (i + count < rowsToDelete.length && rowsToDelete[i + count] === start - count) {
-          count++;
-        }
-        sheet.deleteRows(start - count + 1, count);
-        i += count;
-      }
-    }
-
-    // 嘗試從 Drive 刪除照片
-    if (targetPhotoId) {
-      try { DriveApp.getFileById(targetPhotoId).setTrashed(true); } catch (e) { console.warn("照片刪除失敗", e); }
-    }
-
-    // 🚀 清除版面記錄快取，避免刪除後畫面還顯示舊資料
-    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
-
-    return { success: true, msg: "已永久刪除 " + deleted + " 筆資料與相關照片" };
-  } catch (e) {
-    return { success: false, msg: "刪除失敗: " + e.toString() };
-  }
-}
-
-function offShelfDisplayBatch(customerName, skus, salesperson, photoUrl) {
-  try {
-    const ss = getSafeSsBusiness();
-    const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
-    const data = sheet.getDataRange().getValues();
-    const headers = data[1] || data[0];
-
-    const idx = {
-      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
-      sku: findHeaderIndex(headers, ["產品編號", "編號"]),
-      img: findHeaderIndex(headers, ["版面連結", "連結", "圖片", "照片"]),
-      offDate: findHeaderIndex(headers, ["下架日期"]),
-      lastUpdate: findHeaderIndex(headers, ["最後更新時間", "更新時間"]),
-      creator: findHeaderIndex(headers, ["建立者"])
-    };
-
-    if (idx.cust === -1 || idx.sku === -1 || idx.offDate === -1) {
-      return { success: false, msg: "工作表格式不支援下架操作" };
-    }
-
-    const targetMerged = mergeCustomer(customerName);
-    const timestamp = new Date();
-    const normalizedSkus = skus.map(s => String(s).replace(/[\s\-]/g, ''));
-    const targetPhotoId = extractIdFromUrl(photoUrl);
-
-    // 🚀 效能優化：蒐集所有需要更新的列資訊，批次寫入取代逐行 setValue
-    const offDateUpdates = []; // { rowNum, offDateCol, lastUpdateCol }
-    for (let i = 2; i < data.length; i++) {
-      const rowCust = mergeCustomer(data[i][idx.cust]);
-      const rowSku = String(data[i][idx.sku] || '').trim().replace(/[\s\-]/g, '');
-      const rowImg = String(data[i][idx.img] || '').trim();
-      const rowImgId = extractIdFromUrl(rowImg);
-
-      const isSkuMatch = normalizedSkus.includes(rowSku);
-      const isImgMatch = (targetPhotoId && rowImgId) ? (targetPhotoId === rowImgId) : (rowImg === photoUrl);
-
-      if (rowCust === targetMerged && isSkuMatch && isImgMatch && !data[i][idx.offDate]) {
-        offDateUpdates.push(i + 1); // 記錄 1-based 列號
-      }
-    }
-
-    // 批次寫入：用 RangeList 一次更新所有匹配列
-    if (offDateUpdates.length > 0) {
-      const offDateA1s = offDateUpdates.map(r => sheet.getRange(r, idx.offDate + 1).getA1Notation());
-      sheet.getRangeList(offDateA1s).setValue(timestamp);
-      if (idx.lastUpdate !== -1) {
-        const updateA1s = offDateUpdates.map(r => sheet.getRange(r, idx.lastUpdate + 1).getA1Notation());
-        sheet.getRangeList(updateA1s).setValue(timestamp);
-      }
-    }
-
-    // 🚀 清除版面記錄快取，避免下架後畫面還顯示舊資料
-    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
-
-    return { success: true, msg: "已成功下架 " + offDateUpdates.length + " 個品項" };
-  } catch (e) {
-    return { success: false, msg: "後端錯誤: " + e.toString() };
-  }
-}
-
-function updateDisplayBatch(customerName, photoUrl, newItems, newPhotoData, gpsData, salesperson) {
-  try {
-    // 1. 安全開啟試算表
-    // 🚀 效能優化：只在確實需要時才開啟 ssMain（用快取版 inventoryMap 取代）
-    const ssBusiness = getSafeSsBusiness();
-    const sheet = ssBusiness.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
-    if (!sheet) throw new Error("找不到工作表: " + CONFIG.SHEET_NAME_LAYOUT);
-    
-    const data = sheet.getDataRange().getValues();
-    const headers = data[1] || data[0];
-
-    const idx = {
-      cust: findHeaderIndex(headers, ["客戶名稱", "客戶"]),
-      sku: findHeaderIndex(headers, ["產品編號", "編號"]),
-      qty: findHeaderIndex(headers, ["片數", "數量"]),
-      img: findHeaderIndex(headers, ["版面連結", "照片", "圖片"]),
-      series: findHeaderIndex(headers, ["系列"]),
-      batch: findHeaderIndex(headers, ["批號"]),
-      offDate: findHeaderIndex(headers, ["下架日期"]),
-      date: findHeaderIndex(headers, ["上架日期", "日期"]),
-      creator: findHeaderIndex(headers, ["建立者"]),
-      createTime: findHeaderIndex(headers, ["建立時間"]),
-      lastUpdate: findHeaderIndex(headers, ["最後更新時間", "更新時間"]),
-      custId: findHeaderIndex(headers, ["客戶編號"]),
-      size: findHeaderIndex(headers, ["尺寸"]),
-      spec: findHeaderIndex(headers, ["規格"]),
-      mode: findHeaderIndex(headers, ["展示方式"])
-    };
-
-    const targetMerged = mergeCustomer(customerName);
-    const today = new Date();
-    const timeStr = Utilities.formatDate(today, "GMT+8", "yyyy/MM/dd HH:mm:ss");
-
-    // 2. 預備變量 (蒐集舊資料作為新資料的基礎)
-    let baseSeries = "一般系列";
-    let baseDate = today;
-    let baseCreator = salesperson || "";
-    let baseCreateTime = today;
-    let baseCustId = "";
-    let baseMode = "版面";
-    let skuSizeMap = {};
-    const deleteRows = []; // 紀錄需要刪除的列號
-
-    const targetPhotoId = extractIdFromUrl(photoUrl);
-
-    // 掃描找出要更新的行
-    for (let i = data.length - 1; i >= 2; i--) {
-      const rowImg = String(data[i][idx.img] || '').trim();
-      const rowCustMerged = mergeCustomer(data[i][idx.cust]);
-      const rowImgId = extractIdFromUrl(rowImg);
-      const isImgMatch = (targetPhotoId && rowImgId) ? (targetPhotoId === rowImgId) : (rowImg === photoUrl);
-      
-      // 🚀 安全性強化：如果沒有照片 ID 且照片網址為空，強制比對系列，防止誤改其他無照片版面
-      let isMatch = isImgMatch;
-      if (!targetPhotoId && (!photoUrl || photoUrl.includes('placehold'))) {
-        const rowSeries = String(data[i][idx.series] || '一般系列');
-        // 從 newItems 取得當前編輯的系列名稱作為參考
-        const targetSeries = (newItems && newItems[0] && newItems[0].series) ? newItems[0].series : "";
-        if (targetSeries && rowSeries !== targetSeries) isMatch = false;
-      }
-
-      if (isMatch && rowCustMerged === targetMerged && !data[i][idx.offDate]) {
-        if (data[i][idx.series]) baseSeries = data[i][idx.series];
-        if (data[i][idx.date]) baseDate = data[i][idx.date];
-        if (idx.creator !== -1 && data[i][idx.creator]) baseCreator = data[i][idx.creator];
-        if (idx.createTime !== -1 && data[i][idx.createTime]) baseCreateTime = data[i][idx.createTime];
-        if (idx.custId !== -1 && !baseCustId) baseCustId = data[i][idx.custId];
-        if (idx.mode !== -1) baseMode = data[i][idx.mode];
-        
-        const s = String(data[i][idx.sku] || '').trim();
-        skuSizeMap[s] = {
-          size: idx.size !== -1 ? data[i][idx.size] : "",
-          spec: idx.spec !== -1 ? data[i][idx.spec] : ""
-        };
-        deleteRows.push(i + 1);
-      }
-    }
-
-    if (!baseCustId && idx.custId !== -1) {
-      for (let i = 2; i < data.length; i++) {
-        if (mergeCustomer(data[i][idx.cust]) === targetMerged && data[i][idx.custId]) {
-          baseCustId = data[i][idx.custId];
-          break;
-        }
-      }
-    }
-
-    // 3. 處理圖片上傳 (交易外預處理，失敗不刪資料)
-    let finalPhotoUrl = photoUrl;
-    if (newPhotoData) {
-      const dateStr = Utilities.formatDate(today, "GMT+8", "yyyyMMdd");
-      const fileName = [customerName, baseSeries, "", dateStr, salesperson].filter(Boolean).join("_") + ".jpg";
-      const blob = Utilities.newBlob(Utilities.base64Decode(newPhotoData.base64), newPhotoData.mimeType || 'image/jpeg', fileName);
-      
-      let file;
-      try {
-        const folder = DriveApp.getFolderById(CONFIG.IMG_FOLDER_ID);
-        file = folder.createFile(blob);
-      } catch (e) {
-        console.warn("圖片上傳至 CONFIG.IMG_FOLDER_ID 失敗，改用 eliTile_Uploads 資料夾:", e);
-        const folders = DriveApp.getFoldersByName("eliTile_Uploads");
-        const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder("eliTile_Uploads");
-        file = folder.createFile(blob);
-      }
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      finalPhotoUrl = file.getUrl();
-
-      // 📍 重新拍照時同步更新 GPS 客戶定位
-      if (gpsData && gpsData.lat) {
-        updateCustomerLocation(customerName, gpsData.lat, gpsData.lng);
-      }
-    }
-
-    // 4. 準備新行數據
-    // 🚀 效能優化：先嘗試快取，只在快取未命中時才開 ssMain
-    const cachedInv = CacheService.getScriptCache().get("inventory_map");
-    const invMap = cachedInv ? JSON.parse(cachedInv) : getInventoryMapCached(getSafeSsMain());
-    
-    // 🚀 關鍵修正：優先從 newItems 取得使用者輸入的「系列」與「尺寸」
-    // 如果前端傳入的項目帶有 series/size，則以此為準，不再盲目採用舊資料
-    const finalBaseSeries = (newItems[0] && newItems[0].series) ? newItems[0].series : baseSeries;
-    const finalBaseSize = (newItems[0] && newItems[0].size) ? newItems[0].size : "";
-
-    const newRowsToInsert = newItems.map(item => {
-      const row = new Array(headers.length).fill("");
-      if (idx.cust !== -1) row[idx.cust] = customerName;
-      if (idx.date !== -1) row[idx.date] = baseDate;
-      if (idx.sku !== -1) row[idx.sku] = item.sku.trim().toUpperCase();
-      if (idx.qty !== -1) row[idx.qty] = item.qty || 1;
-      if (idx.img !== -1) row[idx.img] = finalPhotoUrl;
-      if (idx.series !== -1) row[idx.series] = finalBaseSeries;
-      if (idx.batch !== -1) row[idx.batch] = item.batch || '';
-      if (idx.creator !== -1) row[idx.creator] = baseCreator;
-      if (idx.lastUpdate !== -1) row[idx.lastUpdate] = timeStr;
-      if (idx.custId !== -1) row[idx.custId] = baseCustId;
-      if (idx.mode !== -1) row[idx.mode] = baseMode;
-      if (idx.size !== -1) {
-        row[idx.size] = item.size || finalBaseSize || (skuSizeMap[item.sku] && skuSizeMap[item.sku].size) || (invMap[item.sku] ? invMap[item.sku].size : "");
-      }
-      if (idx.spec !== -1) {
-        row[idx.spec] = item.spec || (skuSizeMap[item.sku] && skuSizeMap[item.sku].spec) || (invMap[item.sku] ? invMap[item.sku].spec : "");
-      }
-      return row;
-    });
-
-    // 5. 🚀 執行寫入 (交易式操作：先確認新資料準備好，最後才刪舊插新)
-    // 批次刪除：將連續行合併為一次 deleteRows() 呼叫
-    deleteRows.sort((a, b) => b - a);
-    if (deleteRows.length > 0) {
-      let i = 0;
-      while (i < deleteRows.length) {
-        let start = deleteRows[i];
-        let count = 1;
-        while (i + count < deleteRows.length && deleteRows[i + count] === start - count) {
-          count++;
-        }
-        sheet.deleteRows(start - count + 1, count);
-        i += count;
-      }
-    }
-
-    // 插入到最上方 (Row 3)
-    if (newRowsToInsert.length > 0) {
-      sheet.insertRowsBefore(3, newRowsToInsert.length);
-      sheet.getRange(3, 1, newRowsToInsert.length, headers.length).setValues(newRowsToInsert);
-    }
-
-    // 6. 🗑️ 刪除舊照片 (僅在有新照片且 ID 不同時執行)
-    if (newPhotoData && targetPhotoId) {
-      try {
-        const oldFile = DriveApp.getFileById(targetPhotoId);
-        oldFile.setTrashed(true);
-        console.log("已刪除舊照片:", targetPhotoId);
-      } catch (e) {
-        console.warn("舊照片刪除失敗 (可能已不存在):", e);
-      }
-    }
-
-    // 7. 📝 寫入工作日誌
-    try {
-      const actionStr = newPhotoData ? "更換版面照片" : "修改版面品項";
-      const skuSummary = newItems.map(i => i.sku).join(", ");
-      
-      // 🚀 統一呼叫核心存儲邏輯，以利自動合併橫列與剪裁
-      saveWorkLog({
-        employeeName: salesperson || "系統",
-        customerName: customerName,
-        result: "業務更新",
-        content: `${actionStr}: [${finalBaseSeries}] ${skuSummary}`,
-        gps: gpsData ? `${gpsData.lat},${gpsData.lng}` : "",
-        _skipHeavyOps: true
-      });
-    } catch (e) {
-      console.warn("工作日誌寫入失敗:", e);
-    }
-
-    // 清除快取
-    // 🚀 原本用 getUserCache() 存到「CUSTOMER_DISPLAYS_」這個 key，但 getCustomerDisplays
-    //    從沒往這個 key 寫過（不同快取空間+不同 key 名），等於清了個空氣，是無效程式碼。
-    //    改用跟 getCustomerDisplays 一致的 CacheManager.removeLarge("displays_"+客戶)。
-    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
-
-    return { success: true, msg: "已成功更新並移至最上方", finalPhotoUrl: finalPhotoUrl };
-  } catch (e) {
-    console.error("Update Failed:", e);
-    return { success: false, msg: "同步失敗: " + e.toString() };
-  }
-}
-
-function updateLayoutFieldBatch(customerName, skus, fieldName, newVal) {
-  try {
-    const ss = getSafeSsBusiness();
-    const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
-    const data = sheet.getDataRange().getValues();
-    const headers = data[1] || data[0];
-
-    const fieldIdx = findHeaderIndex(headers, [fieldName]);
-    const skuIdx = findHeaderIndex(headers, ["編號", "產品編號"]);
-    const updateIdx = findHeaderIndex(headers, ["最後更新時間", "更新日期"]);
-    const customerIdx = findHeaderIndex(headers, ["客戶名稱", "客戶"]);
-
-    if (fieldIdx === -1 || skuIdx === -1) return { success: false, msg: "找不到欄位: " + fieldName };
-
-    const targetMerged = mergeCustomer(customerName);
-    const timestamp = new Date();
-
-    // 🚀 效能優化：蒐集所有需更新的列，批次一次寫入取代迴圈逐行 setValue
-    const matchedRows = [];
-    for (let i = 2; i < data.length; i++) {
-      const rowSku = String(data[i][skuIdx] || '').trim();
-      const rowCust = mergeCustomer(data[i][customerIdx]);
-      if (rowCust === targetMerged && skus.includes(rowSku)) {
-        matchedRows.push(i + 1); // 記錄 1-based 列號
-      }
-    }
-
-    // 批次寫入：用 RangeList 一次更新所有匹配列
-    if (matchedRows.length > 0) {
-      const fieldA1s = matchedRows.map(r => sheet.getRange(r, fieldIdx + 1).getA1Notation());
-      sheet.getRangeList(fieldA1s).setValue(newVal);
-      if (updateIdx !== -1) {
-        const updateA1s = matchedRows.map(r => sheet.getRange(r, updateIdx + 1).getA1Notation());
-        sheet.getRangeList(updateA1s).setValue(timestamp);
-      }
-    }
-
-    // 🚀 清除版面記錄快取，避免改完畫面還顯示舊資料（這個函式原本完全沒清過快取）
-    try { CacheManager.removeLarge("displays_" + targetMerged); } catch (e) {}
-
-    return { success: true };
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-function extractIdFromUrl(url) {
-  if (!url || typeof url !== 'string') return null;
-
-  // 1. 嘗試匹配常見的 Drive ID 格式 (28-50 字元)
-  const idMatch = url.match(/[-\w]{28,50}/);
-  if (idMatch) return idMatch[0];
-
-  // 2. 備用：匹配特定的 URL 路徑模式
-  const patterns = [
-    /\/d\/([a-zA-Z0-9_-]{25,})/,
-    /id=([a-zA-Z0-9_-]{25,})/,
-    /\/file\/d\/([a-zA-Z0-9_-]{25,})/
-  ];
-
-  for (const pattern of patterns) {
-    const match = url.match(pattern);
-    if (match) return match[1];
-  }
-  return null;
-}
-
-function submitRecord(payload) {
-  // 基礎日誌紀錄功能
-  return { success: true, msg: "紀錄已提交" };
-}
-
-function parseDate(dateStr) {
-  if (!dateStr) return null;
-  if (dateStr instanceof Date) {
-    let y = dateStr.getFullYear();
-    if (y < 1000) y += 1911; // 處理已經是日期物件但年份為民國的情況
-    return new Date(y, dateStr.getMonth(), dateStr.getDate());
-  }
-
-  if (typeof dateStr === 'number' && isFinite(dateStr)) {
-    // Google Sheets 日期序號
-    if (dateStr > 20000 && dateStr < 80000) {
-      return new Date(Math.round((dateStr - 25569) * 86400000));
-    }
-  }
-  
-  let s = String(dateStr).trim();
-  // 支援常見字串格式：2026/05/01、2026-05-01、2026年05月01日、115/05/01、1150501、20260501
-  s = s.replace(/[年\.]/g, '/').replace(/月/g, '/').replace(/日/g, '').replace(/\s+/g, ' ').trim();
-  const slashMatch = s.match(/^(\d{2,4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:\s+.*)?$/);
-  if (slashMatch) {
-    let year = parseInt(slashMatch[1], 10);
-    if (year < 1000) year += 1911;
-    return new Date(year, parseInt(slashMatch[2], 10) - 1, parseInt(slashMatch[3], 10));
-  }
-
-  // 🚀 1. 匹配無分隔符的民國年 (例如 01150425)
-  const compactMatch = s.match(/^(\d{3,4})(\d{2})(\d{2})$/);
-  if (compactMatch) {
-    let year = parseInt(compactMatch[1], 10);
-    if (year < 1000) year += 1911;
-    return new Date(year, parseInt(compactMatch[2], 10) - 1, parseInt(compactMatch[3], 10));
-  }
-  
-  return null;
-}
-
-/**
- * 🚀 「新增上架」表單自動帶入：輸入系列名稱（或直接輸入其中一個編號）後，回傳該系列所有編號，
- * 依尺寸分組，供前端渲染成「勾選＋填數量」的清單，加速輸入（不用逐個手打編號）。
- * 直接複用 getAggregatedInventory() 既有快取（庫存查詢同一份資料），不額外開表。
- */
-function getSeriesSkuOptions(seriesName) {
-  try {
-    const target = String(seriesName || '').trim();
-    if (!target) return { success: false, msg: '缺少系列名稱' };
-
-    const invRes = getAggregatedInventory();
-    if (!invRes.success) return { success: false, msg: invRes.msg || '庫存資料讀取失敗' };
-
-    // 先精準比對系列名稱；比對不到才退回模糊比對（雙向 includes，容忍打全名/簡稱）
-    let matched = invRes.data.filter(p => p.sCn === target);
-    if (matched.length === 0) {
-      matched = invRes.data.filter(p => p.sCn && (p.sCn.includes(target) || target.includes(p.sCn)));
-    }
-    // 🚀 都比對不到系列名稱時，改當作「輸入的是編號」試著反查：正規化去空白/連字號後比對編號，
-    // 找到該編號後改用它所屬的系列，再抓整個系列的所有編號（方便只記得編號、不記得系列名稱時使用）。
-    if (matched.length === 0) {
-      const targetSkuKey = target.toUpperCase().replace(/[\s\-]/g, '');
-      const hitProduct = invRes.data.find(p => p.sku && p.sku.toUpperCase().replace(/[\s\-]/g, '') === targetSkuKey);
-      if (hitProduct && hitProduct.sCn) {
-        matched = invRes.data.filter(p => p.sCn === hitProduct.sCn);
-      }
-    }
-    if (matched.length === 0) return { success: true, seriesFound: false, sizes: [] };
-
-    // 依尺寸分組，組內依編號排序
-    const bySize = {};
-    matched.forEach(p => {
-      const sizeKey = p.size || '規格外';
-      if (!bySize[sizeKey]) bySize[sizeKey] = [];
-      // 🚀 該編號目前庫存裡實際存在的批號清單（去重、去空白），供前端批號欄位做「可選也可自打」
-      const batchSet = {};
-      (p.batches || []).forEach(b => { const bv = String(b.batch || '').trim(); if (bv) batchSet[bv] = true; });
-      bySize[sizeKey].push({
-        sku: p.sku,
-        // 🚀 「顏色」跟「色階」是編號價目表裡不同欄位——色階是等級代碼，顏色才是給業務看的色名，
-        // 沒有「顏色」欄位時才退回「色階」，避免直接空白。
-        color: p.colorName || p.colorTag || '',
-        img: p.img || '',
-        batches: Object.keys(batchSet)
-      });
-    });
-    const sizes = Object.keys(bySize).sort().map(sz => ({
-      size: sz,
-      items: bySize[sz].sort((a, b) => a.sku.localeCompare(b.sku))
-    }));
-
-    return { success: true, seriesFound: true, matchedSeriesName: matched[0].sCn, sizes: sizes };
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-/**
- * 🚀 「新增上架」表單系列名稱輸入框的即時建議：輸入任何一個字（或一段編號），回傳所有包含這個字
- * 的系列名稱，或是編號含這段字的品項所屬系列，供前端渲染成下拉建議清單（邊打邊搜，不用打完整名稱，
- * 也支援直接打編號片段如「61243」）。同樣直接複用 getAggregatedInventory() 快取。
- */
-function getSeriesNameSuggestions(query) {
-  try {
-    const q = String(query || '').trim();
-    if (!q) return { success: true, names: [] };
-    const qUpperNoSep = q.toUpperCase().replace(/[\s\-]/g, '');
-
-    const invRes = getAggregatedInventory();
-    if (!invRes.success) return { success: false, msg: invRes.msg || '庫存資料讀取失敗' };
-
-    const seen = {};
-    const names = [];
-    invRes.data.forEach(p => {
-      const name = p.sCn;
-      if (!name || seen[name]) return;
-      const nameMatch = name.includes(q);
-      const skuMatch = p.sku && p.sku.toUpperCase().replace(/[\s\-]/g, '').includes(qUpperNoSep);
-      if (nameMatch || skuMatch) {
-        seen[name] = true;
-        names.push(name);
-      }
-    });
-    names.sort((a, b) => a.localeCompare(b, 'zh-TW'));
-    return { success: true, names: names.slice(0, 12) }; // 最多回傳 12 筆，避免下拉清單過長
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-/**
- * 🖼 一個版面可以有多張照片（業務反應有些牆實體上是分成兩片）。
- * 做法是把多個網址放在同一個「版面連結」儲存格裡（換行或逗號分隔），
- * 不新增欄位——因為分組是依這個儲存格的值，多張照片的品項自然還是同一組，
- * 系列統計、上下架、批次更新都不受影響。
- * @return {string[]} 原始網址陣列（未轉縮圖）
- */
-function parsePhotoUrls_(raw) {
-  return String(raw || '')
-    .split(/[\r\n,、|]+/)
-    .map(function (t) { return t.trim(); })
-    .filter(function (t) { return t !== ''; });
-}
-
-/** 原始 Drive 網址 → lh3 縮圖網址（抓不到 id 就原樣回傳） */
-function toThumbUrl_(raw, width) {
-  const id = extractIdFromUrl(raw);
-  return id ? ('https://lh3.googleusercontent.com/d/' + id + '=w' + (width || 1000)) : raw;
-}
-
-function saveNewLayout(payload) {
-  const now = new Date(); // 🚀 Move to top to avoid ReferenceError
-  const ss = getSafeSsBusiness();
-  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME_LAYOUT);
-  if (!sheet) return { success: false, msg: "找不到資料表：" + CONFIG.SHEET_NAME_LAYOUT };
-
-  // 🚀 效能優化：這裡只需要標題列，原本 getDataRange().getValues() 會把整張表（可能上萬列）
-  //    全部讀進記憶體，只為了取 2 列標題——改成只讀前 2 列，「新增上架」的儲存速度明顯變快。
-  // 🚀 關鍵：第1列是說明，第2列是標題 (Index 1)
-  const headerRange = sheet.getRange(1, 1, 2, sheet.getLastColumn()).getValues();
-  const headers = headerRange[1] || headerRange[0];
-  const startRow = 2; // 資料從第三行開始
-
-  const idx = {
-    custId: findHeaderIndex(headers, ["客戶編號"]),
-    custName: findHeaderIndex(headers, ["客戶名稱"]),
-    date: findHeaderIndex(headers, ["上架日期", "日期"]),
-    series: findHeaderIndex(headers, ["系列"]),
-    sku: findHeaderIndex(headers, ["編號", "產品編號"]),
-    batch: findHeaderIndex(headers, ["批號"]),
-    qty: findHeaderIndex(headers, ["片數", "數量"]),
-    mode: findHeaderIndex(headers, ["展示方式"]),
-    link: findHeaderIndex(headers, ["版面連結", "連結"]),
-    creator: findHeaderIndex(headers, ["建立者"]),
-    createTime: findHeaderIndex(headers, ["建立時間"]),
-    lastUpdate: findHeaderIndex(headers, ["最後更新時間"]),
-    size: findHeaderIndex(headers, ["尺寸"])
-  };
-
-  // 0. 安全開啟試算表 (再次確保 ss)
-  if (!ss) throw new Error("試算表物件無效");
-
-  // 1. 處理圖片儲存
-  // 🚀 效能優化：移除 catch 區塊重複的 getInventoryMap 呼叫，改為先取快取再計算檔名
-  let imageUrl = "";
-  // 支援一次上傳多張（payload.images 陣列）；仍相容舊的單張 payload.image
-  const imageList = (payload.images && payload.images.length)
-    ? payload.images
-    : (payload.image && payload.image.base64 ? [payload.image] : []);
-  if (imageList.length) {
-    const ssMain = getSafeSsMain();
-    const invMap = getInventoryMapCached(ssMain);
-    const firstSku = payload.items[0] ? payload.items[0].sku : "";
-    const size = (invMap[firstSku] && invMap[firstSku].size) ? invMap[firstSku].size : "";
-    const dateStr = Utilities.formatDate(now, "GMT+8", "yyyyMMdd");
-
-    const urls = [];
-    imageList.forEach(function (img, i) {
-      if (!img || !img.base64) return;
-      const suffix = imageList.length > 1 ? ("_" + (i + 1)) : "";
-      const fileName = [payload.customerName, payload.series, size, dateStr, payload.salesperson]
-        .filter(Boolean).join("_") + suffix + ".jpg";
-      const blob = Utilities.newBlob(Utilities.base64Decode(img.base64), img.mimeType, fileName);
-      try {
-        const parentFolder = DriveApp.getFolderById(CONFIG.IMG_FOLDER_ID || "");
-        const file = parentFolder.createFile(blob);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        urls.push(file.getUrl());
-      } catch (e) {
-        console.error("圖片上傳失敗，改用備援資料夾:", e);
-        const folders = DriveApp.getFoldersByName("eliTile_Uploads");
-        const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder("eliTile_Uploads");
-        const file = folder.createFile(blob);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        urls.push(file.getUrl());
-      }
-    });
-    // 多張用換行存在同一格，讓所有品項仍歸屬同一個版面
-    imageUrl = urls.join("\n");
-  }
-
-  // 2. 準備公共欄位
-  // now 已經在函式開頭定義過
-  const dateStrLong = Utilities.formatDate(now, "GMT+8", "yyyy/MM/dd");
-  const timeStr = Utilities.formatDate(now, "GMT+8", "yyyy/MM/dd HH:mm:ss");
-
-  // 3. 逐一寫入 SKU 行 (改為插入到最上方)
-  const rowValues = [];
-  payload.items.forEach(item => {
-    const newRow = new Array(headers.length).fill("");
-    if (idx.custId !== -1) newRow[idx.custId] = payload.customerId || "";
-    if (idx.custName !== -1) newRow[idx.custName] = payload.customerName;
-    if (idx.date !== -1) newRow[idx.date] = timeStr;
-    // 🚀 支援多系列一次送出：每個品項可帶自己的 series/size（來自「系列自動帶入」多個系列區塊），
-    //    沒帶就退回整包共用的 payload.series/size（相容舊版單系列送出方式）。
-    if (idx.series !== -1) newRow[idx.series] = item.series || payload.series;
-    if (idx.sku !== -1) newRow[idx.sku] = item.sku.trim().toUpperCase();
-    if (idx.batch !== -1) newRow[idx.batch] = item.batch || "";
-    if (idx.qty !== -1) newRow[idx.qty] = item.qty || 1;
-    if (idx.size !== -1) newRow[idx.size] = item.size || payload.size || ""; // 🚀 寫入尺寸
-    if (idx.mode !== -1) newRow[idx.mode] = "版面";
-    if (idx.link !== -1) newRow[idx.link] = imageUrl;
-    if (idx.creator !== -1) newRow[idx.creator] = payload.salesperson;
-    if (idx.lastUpdate !== -1) newRow[idx.lastUpdate] = timeStr;
-    rowValues.push(newRow);
-  });
-
-  if (rowValues.length > 0) {
-    sheet.insertRowsBefore(3, rowValues.length);
-    sheet.getRange(3, 1, rowValues.length, headers.length).setValues(rowValues);
-  }
-
-  // 4. 同步更新 GPS 客戶定位
-  if (payload.gps && payload.gps.lat) {
-    updateCustomerLocation(payload.customerName, payload.gps.lat, payload.gps.lng);
-  }
-
-  // 5. 清理快取
-  // 🚀 這裡原本用 cache.remove()（單一 key）清一個從沒被寫入過的快取，是無效程式碼——
-  //    getCustomerDisplays 現在改用 CacheManager.putLarge（大型資料會切成多個 chunk key），
-  //    要用對應的 removeLarge 才清得乾淨。
-  try { CacheManager.removeLarge("displays_" + mergeCustomer(payload.customerName)); } catch (e) {}
-
-  return { success: true, count: payload.items.length };
-}
-
-function updateCustomerLocation(customerName, lat, lng) {
-  try {
-    const ss = getSafeSsBusiness();
-    let sheet = ss.getSheetByName(CONFIG.SHEET_NAME_GPS);
-    if (!sheet) {
-      sheet = ss.insertSheet(CONFIG.SHEET_NAME_GPS);
-      sheet.appendRow(["客戶名稱", "緯度", "經度", "更新時間"]);
-    }
-    const data = sheet.getDataRange().getValues();
-    const targetMerged = mergeCustomer(customerName);
-    let foundRow = -1;
-    for (let i = 1; i < data.length; i++) {
-      if (mergeCustomer(data[i][0]) === targetMerged) {
-        foundRow = i + 1;
-        break;
-      }
-    }
-    const timestamp = new Date();
-    if (foundRow !== -1) {
-      sheet.getRange(foundRow, 1, 1, 4).setValues([[customerName, lat, lng, timestamp]]);
-    } else {
-      sheet.appendRow([customerName, lat, lng, timestamp]);
-    }
-    return true;
-  } catch (e) {
-    console.error("GPS 更新失敗:", e);
-    return false;
-  }
-}
-/**
- * 📦 大量快取處理工具 (解決 90KB 限制)
- * 讓大數據量的庫存清單與業績總覽能真正被緩存，避開 90KB 的天花板
- */
-const CacheManager = {
-  putLarge: function(key, data, expirationInSeconds = 600) {
-    const cache = CacheService.getScriptCache();
-    try {
-      const json = JSON.stringify(data);
-      const chunkSize = 80000; // 設為 80KB 確保穩定
-      const chunks = [];
-      
-      for (let i = 0; i < json.length; i += chunkSize) {
-        chunks.push(json.substring(i, i + chunkSize));
-      }
-      
-      // 1. 存入分片資訊 (Metadata)
-      cache.put(key + "_meta", JSON.stringify({ count: chunks.length, size: json.length, time: new Date().getTime() }), expirationInSeconds);
-      
-      // 2. 依序存入分片
-      chunks.forEach((chunk, idx) => {
-        cache.put(key + "_part_" + idx, chunk, expirationInSeconds);
-      });
-      return true;
-    } catch(e) {
-      console.error("CacheManager 儲存失敗:", e);
-      return false;
-    }
-  },
-  
-  getLarge: function(key) {
-    const cache = CacheService.getScriptCache();
-    try {
-      const metaStr = cache.get(key + "_meta");
-      if (!metaStr) return null;
-      
-      const meta = JSON.parse(metaStr);
-      let fullJson = "";
-      for (let i = 0; i < meta.count; i++) {
-        const part = cache.get(key + "_part_" + i);
-        if (part === null) return null; // 碎片丟失，視為快取過期
-        fullJson += part;
-      }
-      
-      return JSON.parse(fullJson);
-    } catch(e) {
-      console.error("CacheManager 讀取失敗:", e);
-      return null;
-    }
-  },
-  
-  removeLarge: function(key) {
-    const cache = CacheService.getScriptCache();
-    const metaStr = cache.get(key + "_meta");
-    if (metaStr) {
-      const meta = JSON.parse(metaStr);
-      for (let i = 0; i < meta.count; i++) {
-        cache.remove(key + "_part_" + i);
-      }
-      cache.remove(key + "_meta");
-    }
-  }
-};
-
-/**
- * 📡 取得戰情室最新缺貨新進榜品項
- */
-/**
- * 📡 取得最近三筆缺貨新進榜（跑馬燈用）
- * 讀保留系統維護的新版欄位：品編號 / 產品編號 + 入榜日期/首日進榜日，排除已結案/出清結案
- */
-/**
- * 🏷 跑馬燈用的缺貨分類縮寫
- * 「缺貨進榜追蹤」表的缺貨分類欄是保留系統寫入的原文，像「全新產品觀察」這種
- * 六個字在手機跑馬燈上會把整行擠爆。這裡只做顯示層縮短，不動原始值，
- * 所以下面判斷嚴重度的 /完全|嚴重|預防/ 仍然是比對未縮短的 e.cat，行為不變。
- */
-function shortenStockoutCat_(cat) {
-  const s = String(cat || '').trim();
-  if (!s) return '';
-  if (s.indexOf('全新產品觀察') !== -1 || s.indexOf('新品觀察') !== -1) return '新品';
-  return s;
-}
-
-function getLatestStockoutEntries() {
-  const cacheKey = 'latest_stockout_v4';
-  try {
-    const cached = CacheManager.get(cacheKey);
-    if (cached) return JSON.parse(cached);
-  } catch (e) {}
-
-  try {
-    const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
-    const sh = ss.getSheetByName('缺貨進榜追蹤');
-    if (!sh) return { success: false, msg: "找不到缺貨進榜追蹤表" };
-    const lastRow = sh.getLastRow();
-    if (lastRow < 2) return { success: false, msg: "暫無資料" };
-
-    const rawValues = sh.getRange(1, 1, Math.min(5, lastRow), sh.getLastColumn()).getValues();
-    let headerRowIdx = 0;
-    for (let i = 0; i < rawValues.length; i++) {
-      const rowStr = rawValues[i].join("");
-      if (rowStr.includes("編號") || rowStr.includes("產品") || rowStr.includes("日期") || rowStr.includes("品碼")) {
-        headerRowIdx = i;
-        break;
-      }
-    }
-
-    const headers = rawValues[headerRowIdx].map(v => String(v || '').trim());
-    const idxCode = findHeaderIndex(headers, ['品編號', '產品編號', '編號', '品碼', '料號', '產品', 'SKU']);
-    const idxDate = findHeaderIndex(headers, ['入榜日期', '首日進榜日', '進榜日期', '日期', '最後系統同步時間', '更新日期', '建檔日期', '時間']);
-    const idxCat = findHeaderIndex(headers, ['缺貨分類', '缺貨狀況', '缺貨程度', '分類', '狀態']);
-    const idxClosed = findHeaderIndex(headers, ['是否結案', '結案', '已結案', '啟用中']);
-    const idxClear = findHeaderIndex(headers, ['出清結案', '出清']);
-    const idxStock = findHeaderIndex(headers, ['可用庫存', '現有庫存', '庫存量', '庫存']);
-    const idxReserve = findHeaderIndex(headers, ['保留量', '保留庫存', '保留坪數', '保留']);
-
-    if (idxCode === -1) return { success: false, msg: "缺貨表格式不符" };
-
-    const data = sh.getRange(headerRowIdx + 2, 1, lastRow - (headerRowIdx + 1), sh.getLastColumn()).getValues();
-    const entries = [];
-
-    data.forEach((row, rIdx) => {
-      const code = String(row[idxCode] || '').trim();
-      if (!code) return;
-
-      // 🚫 排除結案/出清
-      if (idxClosed !== -1) {
-        const cVal = String(row[idxClosed] || '').trim().toLowerCase();
-        if (cVal === '是' || cVal === '已結案' || cVal === 'true' || cVal === '1') return;
-      }
-      if (idxClear !== -1) {
-        const clVal = String(row[idxClear] || '').trim().toLowerCase();
-        if (clVal === '是' || clVal === '已結案' || clVal === 'true' || clVal === '1' || clVal === '出清') return;
-      }
-
-      const cat = idxCat !== -1 ? String(row[idxCat] || '').trim() : '';
-      // 🚫 排除已解除或回復狀態（含「已補貨」— 缺貨進榜追蹤表本身會把補貨完成的列標成這個分類，
-      // 不是新的缺貨警示，不該出現在跑馬燈；只排除「已補貨」這種完成式，「補貨中」等進行式仍視為警示）
-      if (cat && /已到貨|已解封|解封|恢復|已復原|復原|已結案|已補貨|補貨完成/.test(cat)) return;
-
-      const rawDate = idxDate !== -1 ? row[idxDate] : null;
-      const d = parseDate(rawDate);
-      
-      let dateStr = "";
-      if (d && !isNaN(d.getTime())) {
-        dateStr = (d.getMonth() + 1) + "/" + d.getDate();
-      } else if (rawDate) {
-        const match = String(rawDate).match(/(\d{1,2})[\/\-\.](\d{1,2})/);
-        dateStr = match ? (parseInt(match[1]) + "/" + parseInt(match[2])) : String(rawDate).trim();
-      }
-      if (!dateStr) dateStr = "最新";
-
-      const rawStock = idxStock !== -1 ? row[idxStock] : null;
-      const rawReserve = idxReserve !== -1 ? row[idxReserve] : null;
-      const stockVal = (rawStock !== null && rawStock !== '') ? parseFloat(rawStock) : NaN;
-      const reserveVal = (rawReserve !== null && rawReserve !== '') ? parseFloat(rawReserve) : NaN;
-
-      let extraInfo = '';
-      if (!isNaN(stockVal) || !isNaN(reserveVal)) {
-        // 手機跑馬燈一行塞不下：坪數取整數不留小數，標籤縮成「庫/保」並拿掉括號
-        const sText = !isNaN(stockVal) ? `${Math.round(stockVal)}坪` : '-';
-        const rText = !isNaN(reserveVal) ? `${Math.round(reserveVal)}坪` : '-';
-        extraInfo = ` 庫${sText}/保${rText}`;
-      }
-
-      entries.push({
-        code: code,
-        cat: cat,
-        extraInfo: extraInfo,
-        ts: (d && !isNaN(d.getTime())) ? d.getTime() : 0,
-        rowIdx: rIdx,
-        dateStr: dateStr
-      });
-    });
-
-    if (!entries.length) return { success: false, msg: "暫無進榜資料" };
-
-    // 優先照日期 (ts) 降冪，日期相同或解析不出時照表格列號 (rowIdx) 降冪（最新列在後）
-    entries.sort((a, b) => (b.ts - a.ts) || (b.rowIdx - a.rowIdx));
-
-    const top3 = entries.slice(0, 3).map(e => ({
-      text: e.dateStr + " " + (shortenStockoutCat_(e.cat) || "新進榜缺貨") + "：" + e.code + e.extraInfo,
-      severe: /完全|嚴重|預防/.test(e.cat)
-    }));
-
-    const result = { success: true, msgs: top3 };
-    try { CacheManager.put(cacheKey, JSON.stringify(result), 300); } catch (e) {}
-    return result;
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-function getLatestStockoutEntry() {
-  try {
-    const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
-    const sh = ss.getSheetByName('缺貨進榜追蹤');
-    if (!sh) return { success: false, msg: "找不到缺貨進榜追蹤表" };
-    
-    const lastRow = sh.getLastRow();
-    if (lastRow < 2) return { success: false, msg: "暫無新缺貨資料" };
-    
-    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-    const idxCode = headers.indexOf('編號');
-    const idxFirstDate = headers.indexOf('首日進榜日');
-    const idxActive = headers.indexOf('啟用中');
-    
-    if (idxCode === -1 || idxFirstDate === -1 || idxActive === -1) {
-      return { success: false, msg: "格式不符" };
-    }
-    
-    const data = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
-    
-    // 找出所有啟用中，且按最近時間或倒序排列的最新一筆
-    const activeEntries = data.filter(row => {
-      const activeVal = String(row[idxActive] || '').trim().toLowerCase();
-      return activeVal === 'true' || activeVal === '1' || activeVal === 'yes' || activeVal === '啟用';
-    });
-    
-    if (activeEntries.length === 0) return { success: false, msg: "暫無最新缺貨新進榜" };
-    
-    // 取最後一筆 (最新進榜的)
-    const latest = activeEntries[activeEntries.length - 1];
-    const firstDate = latest[idxFirstDate];
-    const code = latest[idxCode];
-    
-    let dateStr = "";
-    if (firstDate instanceof Date) {
-      dateStr = (firstDate.getMonth() + 1) + "/" + firstDate.getDate();
-    } else if (firstDate) {
-      const match = String(firstDate).match(/(\d{1,2})[\/\-\.](\d{1,2})/);
-      if (match) {
-        dateStr = parseInt(match[1]) + "/" + parseInt(match[2]);
-      } else {
-        dateStr = String(firstDate).trim();
-      }
-    }
-    
-    return {
-      success: true,
-      code: code,
-      dateStr: dateStr,
-      msg: `${dateStr} 新進榜缺貨：${code}`
-    };
-  } catch (e) {
-    return { success: false, msg: e.toString() };
-  }
-}
-
-/**
- * 📧 寄送版面報告 Email (含 JPG 附件)
- */
-function sendLayoutReport(recipientEmail, customerName, salesName, imagesJson) {
-  try {
-    var images = JSON.parse(imagesJson);
-    var recipient = recipientEmail || Session.getActiveUser().getEmail();
-    if (!recipient) recipient = Session.getEffectiveUser().getEmail();
-    
-    var attachments = [];
-    images.forEach(function(img, i) {
-      var blob = Utilities.newBlob(
-        Utilities.base64Decode(img.data),
-        'image/jpeg',
-        (img.name || ('版面_' + (i+1))) + '.jpg'
-      );
-      attachments.push(blob);
-    });
-    
-    MailApp.sendEmail(recipient, '版面資料 - ' + (customerName || ''), 
-      '客戶: ' + (customerName || '') + '\n業務: ' + (salesName || '') + '\n共 ' + images.length + ' 張圖片\n\n圖片檔名與系列對照:\n' +
-      images.map(function(img, i){ return (i+1) + '. ' + (img.name || '未命名'); }).join('\n'),
-      { attachments: attachments }
-    );
-    
-    return { success: true, msg: '已寄送至 ' + recipient };
-  } catch(e) {
-    return { success: false, msg: e.toString() };
-  }
+    return html;
 }

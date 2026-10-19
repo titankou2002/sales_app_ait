@@ -51,7 +51,7 @@ function getAllReservedOrdersCached_(ss, metaMap) {
   if (cached) return cached;
 
   var map = buildAllReservedOrders_(ss, metaMap);
-  try { CacheManager.putLarge(cacheKey, map, 300); } catch (e) {}
+  try { CacheManager.putLarge(cacheKey, map, 1800); } catch (e) {}
   return map;
 }
 
@@ -180,7 +180,7 @@ function getReservedOrdersGrouped(ss, cleanName, metaMapOverride) {
 /**
  * 🚀 批量更新保留單進度
  */
-function updateReservedStatus(rowIndices, newStatus) {
+function updateReservedStatus_impl_(rowIndices, newStatus) {
   try {
     var ss = null;
     if (CONFIG.RESERVE_SS_ID) {
@@ -221,7 +221,7 @@ function updateReservedStatus(rowIndices, newStatus) {
  * @param {Object} payload { customerName, salesperson, caseName, date, items, note, hasDeposit }
  * items: Array of { sku, qty }
  */
-function createReservation(payload) {
+function createReservation_impl_(payload) {
   try {
     var ss = null;
     if (CONFIG.RESERVE_SS_ID) {

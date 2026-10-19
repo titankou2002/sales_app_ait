@@ -13,13 +13,13 @@
  */
 
 const SHELF_REGION_SHEET = "業務分區";
-const SHELF_CACHE_KEY = "shelf_tracking_v12"; // 新增保留單資料（有保留篩選），快取升代強制失效
+const SHELF_CACHE_KEY = "shelf_tracking_v13"; // v13: 系列名稱標準化防呆與 SKU 大小寫正規化
 
 // ⛔ 2026-07-27：上架追蹤的缺貨判別先暫時關閉不顯示（來源「缺貨進榜追蹤」資料有誤，保留系統端查修中）。
 //    確認源頭修好後，把這裡改回 true 即可整批復原。
 const SHELF_SHORTAGE_ENABLED = false;
 
-function getShelfTrackingData(forceRefresh) {
+function getShelfTrackingData_impl_(forceRefresh) {
   try {
     if (!forceRefresh) {
       const cached = CacheManager.getLarge(SHELF_CACHE_KEY);
@@ -44,7 +44,7 @@ function getShelfTrackingData(forceRefresh) {
       const iSleep = findHeaderIndex(h, ["睡美人"]);
       const iStop = findHeaderIndex(h, ["不續辦"]);
       data.slice(1).forEach(r => {
-        const sku = String(r[iSku] || "").trim().replace(/[\s\-]/g, "");
+        const sku = String(r[iSku] || "").trim().toUpperCase().replace(/[\s\-]/g, "");
         const series = String(r[iSeries] || "").trim();
         if (sku && series) {
           skuToSeries[sku] = series;
@@ -80,7 +80,7 @@ function getShelfTrackingData(forceRefresh) {
           const sevRank = c => /完全/.test(c) ? 0 : /嚴重/.test(c) ? 1 : /快要/.test(c) ? 2 : 3;
           shS.getRange(2, 1, shS.getLastRow() - 1, shS.getLastColumn()).getValues().forEach(r => {
             const rawCode = String(r[iC] || '').trim();
-            const code = rawCode.replace(/[\s\-]/g, '');
+            const code = rawCode.toUpperCase().replace(/[\s\-]/g, '');
             if (!code) return;
             if (iClosed !== -1 && String(r[iClosed] || '').trim() === '是') return;
             if (iClear !== -1 && String(r[iClear] || '').trim()) return;
@@ -125,11 +125,9 @@ function getShelfTrackingData(forceRefresh) {
       data.slice(2).forEach(r => {
         const cust = mergeCustomer(String(r[idx.cust] || "").trim());
         if (!cust) return;
-        let series = idx.series !== -1 ? String(r[idx.series] || "").trim() : "";
-        if (!series && idx.sku !== -1) {
-          const sku = String(r[idx.sku] || "").trim().replace(/[\s\-]/g, "");
-          series = skuToSeries[sku] || "";
-        }
+        const sku = idx.sku !== -1 ? String(r[idx.sku] || "").trim().toUpperCase().replace(/[\s\-]/g, "") : "";
+        // 🚀 關鍵：優先透過編號查出「編號價目表」標準官方中文系列，徹底消除人為輸入錯誤或混合名稱（例如「尼彩染霞」、「沙漠玫瑰 浮光月影」）
+        let series = (sku && skuToSeries[sku]) ? skuToSeries[sku] : (idx.series !== -1 ? String(r[idx.series] || "").trim() : "");
         if (!series) return;
         allSeriesSet[series] = true;
         layoutCustSet[cust] = true;
@@ -183,7 +181,7 @@ function getShelfTrackingData(forceRefresh) {
         const cust = mergeCustomer(String(r[idx.cust] || "").trim());
         if (!cust) continue;
         const rawCode = String(r[idx.code] || "").trim();
-        const sku = rawCode.replace(/[\s\-]/g, "");
+        const sku = rawCode.toUpperCase().replace(/[\s\-]/g, "");
         const series = skuToSeries[sku];
         const d = parseDate(r[idx.date]);
         const dStr = d ? Utilities.formatDate(d, "GMT+8", "yyyy-MM-dd") : "";
@@ -358,7 +356,7 @@ function getShelfTrackingData(forceRefresh) {
       reserve: custSeriesReserve
     };
 
-    CacheManager.putLarge(SHELF_CACHE_KEY, result, 600);
+    CacheManager.putLarge(SHELF_CACHE_KEY, result, 1800);
     return result;
   } catch (e) {
     return { success: false, msg: e.toString() };
@@ -368,7 +366,15 @@ function getShelfTrackingData(forceRefresh) {
 /**
  * 🔍 查證用：列出某客戶 × 某系列實際匹配到的出貨明細
  */
-function getShelfSalesRows(custName, seriesName) {
+function getShelfSalesRows_impl_(custName, seriesName) {
+  // 🚀 效能優化：逐客戶×系列把匹配結果快取 5 分鐘（這支是「查證用」，銷售報表是唯讀大表，
+  //    反覆點開同一客戶會讓全表被重掃好幾次）
+  const cacheKey = "shelf_rows_" + mergeCustomer(String(custName || "").trim()) + "_" + String(seriesName || "").trim();
+  try {
+    const cached = CacheManager.getLarge(cacheKey);
+    if (cached) return cached;
+  } catch (e) {}
+
   try {
     const ssM = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
 
@@ -423,7 +429,9 @@ function getShelfSalesRows(custName, seriesName) {
         });
       }
     }
-    return { success: true, rows: rows };
+    const result = { success: true, rows: rows };
+    try { CacheManager.putLarge(cacheKey, result, 900); } catch (e) {}
+    return result;
   } catch (e) {
     return { success: false, msg: e.toString() };
   }

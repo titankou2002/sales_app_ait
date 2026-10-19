@@ -19,7 +19,7 @@ const DELIVERY_FOLDER_ID = getScriptPropOrDefault_('DELIVERY_FOLDER_ID', '1hbNDk
  * @param {string} salesName 目前登入的業務姓名
  * @param {string} targetDateStr 指定日期 (yyyy/MM/dd)，若不傳則預設今日
  */
-function getSalesDeliveryTasks(salesName, targetDateStr) {
+function getSalesDeliveryTasks_impl_(salesName, targetDateStr) {
   try {
     if (!salesName) return { success: false, msg: "未傳入業務姓名" };
     
@@ -273,7 +273,7 @@ function _loadAllPickingItemsMap(ss) {
 /**
  * 輕量化任務計數器 (供 Dashboard Badge 使用)
  */
-function getSalesDeliveryTaskCount(salesName) {
+function getSalesDeliveryTaskCount_impl_(salesName) {
   try {
     if (!salesName) return 0;
     var res = getSalesDeliveryTasks(salesName);
@@ -291,7 +291,7 @@ function getSalesDeliveryTaskCount(salesName) {
 /**
  * 更換任務負責業務 (轉派單據)
  */
-function transferSalesDeliveryTask(rowIdx, newSalesName) {
+function transferSalesDeliveryTask_impl_(rowIdx, newSalesName) {
   var lock = LockService.getScriptLock();
   try {
     if (!lock.tryLock(15000)) return { success: false, msg: "系統正在忙碌，請稍候再試" };
@@ -328,7 +328,7 @@ function transferSalesDeliveryTask(rowIdx, newSalesName) {
 /**
  * 上傳完工照並完成任務
  */
-function completeSalesDeliveryTask(rowIdx, imageData, reportNote, isDamaged) {
+function completeSalesDeliveryTask_impl_(rowIdx, imageData, reportNote, isDamaged) {
   try {
     var ss = SpreadsheetApp.openById(LOGISTICS_SS_ID);
     var sheet = ss.getSheetByName("業務配送清單");
@@ -422,7 +422,7 @@ function completeSalesDeliveryTask(rowIdx, imageData, reportNote, isDamaged) {
 /**
  * ⚡ 樣品快速打勾結案 (不需拍照，直接結案並寫入日誌)
  */
-function completeSampleTask(rowIdx) {
+function completeSampleTask_impl_(rowIdx) {
   try {
     var ss = SpreadsheetApp.openById(LOGISTICS_SS_ID);
     var sheet = ss.getSheetByName("業務配送清單");
@@ -513,7 +513,7 @@ function _writeToLogSheet(ss, logData) {
  * 🏆 核心分析：統計業務配送獎金與歷史
  * 規則：每天第 2 個點起，每個點 50 元 (即：當日配送點數 - 1) * 50
  */
-function getDeliveryBonusData(yearParam) {
+function getDeliveryBonusData_impl_(yearParam) {
   try {
     var ss = SpreadsheetApp.openById(LOGISTICS_SS_ID);
     var sheet = ss.getSheetByName("業務配送清單");

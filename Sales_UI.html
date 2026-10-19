@@ -111,11 +111,12 @@
               </select>
             </div>
             <div style="display: flex; gap: 8px;">
-              <input id="cust-input-salesui" type="text" placeholder="搜尋客戶名稱" style="flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; color: #fff; padding: 8px; font-size: 13px; font-weight: 700;" onkeypress="if(event.key==='Enter') window.searchSalesUiCustSales()">
+              <input id="cust-input-salesui" type="text" autocomplete="off" placeholder="搜尋客戶名稱" oninput="window.suggestSalesUiCust(this.value)" onfocus="window.suggestSalesUiCust(this.value)" style="flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; color: #fff; padding: 8px; font-size: 13px; font-weight: 700;" onkeypress="if(event.key==='Enter') window.searchSalesUiCustSales()">
               <button onclick="window.searchSalesUiCustSales()" style="background: #a855f7; border: none; border-radius: 8px; color: #fff; padding: 8px 16px; font-size: 13px; font-weight: 800; cursor: pointer;">🔍 查詢</button>
             </div>
           </div>
 
+          <div id="cust-suggest-salesui" style="display:none; margin:-6px 0 12px; background:#1c1c24; border:1px solid rgba(168,85,247,0.4); border-radius:10px; max-height:240px; overflow-y:auto;"></div>
           <!-- 局部非阻塞載入動畫 -->
           <div id="cust-inline-loader-salesui" style="display: none; text-align: center; padding: 20px;">
             <div style="width: 24px; height: 24px; border: 2px solid rgba(168,85,247,0.3); border-top-color: #a855f7; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 10px;"></div>
@@ -601,7 +602,7 @@
                 <div style="width: 100%;">
                   <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px;">
                     <span style="font-weight: 800;">${c.name}</span>
-                    <span style="font-weight: 900; opacity: 0.7;">${c.ytd.toLocaleString()}</span>
+                    <span style="font-weight: 900; opacity: 0.85;">${c.ytd.toLocaleString()}<small style="font-size:10px; opacity:0.6; font-weight:600; margin-left:2px;">萬</small><span style="margin-left:8px; color:#a5b4fc; font-size:12px;">${d.ytd > 0 ? (Math.round(c.ytd / d.ytd * 1000) / 10) : 0}%</span></span>
                   </div>
                   <div style="height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px;">
                     <div style="width: ${d.ytd > 0 ? Math.round(c.ytd / d.ytd * 100) : 0}%; height: 100%; background: #fff; opacity: 0.4;"></div>
@@ -620,22 +621,81 @@
     }
   };
 
+  /** 客戶名稱合併規則（與後端 mergeCustomer 一致） */
+  window.aitMergeCust = function(name) {
+    var s = String(name || '').trim();
+    var fixed = [['漢樺','波爾泰','漢樺'],['大永','新大永','大永'],['錦義','睿敏','錦義'],['滿財','東春','滿財'],['傅邦','盛邦','傅邦'],['喬翌','伊特','伊特'],['太爾','信義星','信義星'],['鼎康','鼎晨','鼎晨'],['高頓','馬來高','馬來高'],['鏷城','璞城','鏷城'],['今冠','金冠','金冠'],['琮達','琮威','琮威']];
+    for (var i = 0; i < fixed.length; i++) if (s.indexOf(fixed[i][0]) !== -1 || s.indexOf(fixed[i][1]) !== -1) return fixed[i][2];
+    var ex = ['夏綠蒂','德思特尼','百事得','百達富麗','鑫東聖','海格斯','信義星','好仕齊','新睦豐','富利鴻','金豪益'];
+    for (var j = 0; j < ex.length; j++) if (s.indexOf(ex[j]) !== -1) return ex[j];
+    var suf = ['企業','建材','國際','磁磚','工程','股份有限公司','有限公司','公司','實業','精品'];
+    for (var k = 0; k < suf.length; k++) { var ix = s.indexOf(suf[k]); if (ix !== -1) { s = s.substring(0, ix); break; } }
+    return s.slice(0, 2);
+  };
+
+  /** 輸入關鍵字即時帶出符合的客戶（依合併規則合併同一客戶，依業績大到小；原始名稱含關鍵字或合併名含關鍵字皆算） */
+  window.suggestSalesUiCust = function(q) {
+    var box = document.getElementById('cust-suggest-salesui');
+    if (!box) return;
+    q = String(q || '').trim();
+    var list = (window.currentSalesUiPerfData && window.currentSalesUiPerfData.customerList) || [];
+    if (!q) { box.style.display = 'none'; return; }
+    if (!list.length) {
+      box.innerHTML = '<div style="padding:10px 12px; font-size:12px; opacity:0.6;">客戶清單讀取中，稍後再輸入一次…</div>';
+      box.style.display = 'block';
+      if (!window._suggestLoading) { window._suggestLoading = true; window.loadSalesUiCustPerformance(''); setTimeout(function(){ window._suggestLoading = false; }, 8000); }
+      return;
+    }
+    var seen = {}, out = [];
+    list.forEach(function(raw) {           // list 已依業績由大到小
+      if (raw.indexOf(q) === -1 && window.aitMergeCust(raw).indexOf(q) === -1) return;
+      var m = window.aitMergeCust(raw) || raw;
+      if (seen[m]) { seen[m].n++; return; }
+      seen[m] = { name: m, n: 1 };
+      out.push(seen[m]);
+    });
+    if (!out.length) { box.innerHTML = '<div style="padding:10px 12px; font-size:12px; opacity:0.5;">找不到符合的客戶</div>'; box.style.display = 'block'; return; }
+    box.innerHTML = out.slice(0, 12).map(function(o) {
+      return '<div data-n="' + encodeURIComponent(o.name) + '" onclick="window.pickSalesUiCust(this)" style="padding:10px 12px; font-size:14px; font-weight:700; border-bottom:1px solid rgba(255,255,255,0.06); cursor:pointer; display:flex; justify-content:space-between;">' +
+        '<span>' + o.name.replace(/</g, '&lt;') + '</span>' + (o.n > 1 ? '<span style="font-size:11px; opacity:0.5;">合併 ' + o.n + ' 個名稱</span>' : '') + '</div>';
+    }).join('');
+    box.style.display = 'block';
+  };
+  window.pickSalesUiCust = function(el) {
+    var name = decodeURIComponent(el.getAttribute('data-n'));
+    document.getElementById('cust-input-salesui').value = name;
+    document.getElementById('cust-suggest-salesui').style.display = 'none';
+    window.openFullCustomerAnalysis(name);
+  };
+
+  /** 日期顯示成 10/3/2026（月/日/年，不補零） */
+  window.fmtMDY = function(s) {
+    if (!s) return '-';
+    var m = String(s).match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    return m ? (parseInt(m[2], 10) + '/' + parseInt(m[3], 10) + '/' + m[1]) : String(s);
+  };
+
+  /** 直接進入完整「客戶分析」（與睡美人戰情室同一套），返回時回到目前頁面 */
+  window.openFullCustomerAnalysis = function(name) {
+    name = (name || '').trim();
+    if (!name) { showToast('請輸入或選擇客戶名稱'); return; }
+    if (typeof window.openCustomerAnalysisFor === 'function') window.openCustomerAnalysisFor(name);
+    else showToast('客戶分析模組尚未載入');
+  };
+
   window.onSalesUiCustSelectChange = function() {
     var val = document.getElementById('cust-select-salesui').value;
     document.getElementById('cust-input-salesui').value = val;
     if (val) {
-      window.searchSalesUiCustSales(val);
+      window.openFullCustomerAnalysis(val);
     }
   };
 
   window.searchSalesUiCustSales = function(custName) {
     var target = custName || document.getElementById('cust-input-salesui').value || document.getElementById('cust-select-salesui').value;
-    target = (target || '').trim();
-    if (!target) {
-      showToast('請輸入或選擇客戶名稱');
-      return;
-    }
-    window.loadSalesUiCustPerformance(target);
+    var sg = document.getElementById('cust-suggest-salesui');
+    if (sg) sg.style.display = 'none';
+    window.openFullCustomerAnalysis(window.aitMergeCust(target) || target);
   };
 
   window.activeSalesUiTimeRange = '1y';
@@ -754,12 +814,12 @@
     var items = win.items || [];
     iBody.innerHTML = items.map(function(it) {
       return '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
-        '<td style="padding:6px;"><span style="background:rgba(168,85,247,0.15);color:#a855f7;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;">' + (it.series || '-') + '</span></td>' +
+        '<td style="padding:6px;"><span style="background:rgba(168,85,247,0.15);color:#a855f7;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;">' + (it.series || '未分類') + '</span></td>' +
         '<td style="padding:6px;"><b style="color:#a855f7;">' + it.sku + '</b></td>' +
         '<td style="padding:6px;">' + (Math.round((it.totalPings || 0) * 10) / 10) + ' 坪</td>' +
         '<td style="padding:6px;">' + fmtWanNum(it.totalAmount || 0) + ' 萬</td>' +
         '<td style="padding:6px;"><span style="color:#facc15;font-weight:800;">' + it.sharePercent + '%</span></td>' +
-        '<td style="padding:6px;opacity:0.5;">' + (it.lastTxDate || '-') + '</td>' +
+        '<td style="padding:6px;opacity:0.5;">' + window.fmtMDY(it.lastTxDate) + '</td>' +
       '</tr>';
     }).join('') || '<tr><td colspan="6" style="text-align:center;">在「' + win.label + '」區間無銷售紀錄</td></tr>';
   };

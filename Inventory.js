@@ -23,9 +23,9 @@ function _shortenArrivalDate_(dVal) {
   return (d.getMonth() + 1) + '/' + d.getDate();
 }
 
-function getAggregatedInventory() {
+function getAggregatedInventory_impl_() {
   try {
-    const cacheKey = "inv_full_v13"; // v13: 新增 isStop（「不續辦」欄），供陳列牆卡片判斷是否顯示「補貨安排中」用
+    const cacheKey = "inv_full_v14"; // v14: 大小寫正規化與批號關聯強化
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return { success: true, data: cached };
 
@@ -53,10 +53,39 @@ function getAggregatedInventory() {
       data = data.concat(extData);
     }
 
-    CacheManager.putLarge(cacheKey, data, 600); // 主快取 10 分鐘
+    CacheManager.putLarge(cacheKey, data, 1800); // 主快取 10 分鐘
 
     return { success: true, data: data };
   } catch(e) {
+    return { success: false, msg: e.toString() };
+  }
+}
+
+/**
+ * 🚀 效能優化：庫存「輕量版」— 進場秒繪用
+ * 完整 getAggregatedInventory 內含每個 SKU 的實景清單(scenes)、批號明細(batches)、
+ * folderId 等超大欄位，整包動輒數 MB。在裝置第一次進來（localStorage 還沒有舊快取）時，
+ * 傳輸＋手機 parse 一整包會吃掉好幾秒，讓「正在讀取」轉圈很久。
+ * 這支只回「陳列牆/搜尋/浮水印這些首屏就需要的欄位」，資料量小一大截，先回來先渲染；
+ * 完整包由背景 getAggregatedInventory 接手（到齊後前端會覆蓋並存入 localStorage）。
+ * 標記 light: true 讓前端知道 scenes/batches 尚未就緒，不要點開畫廊/批號。
+ */
+function getInventoryLightData_impl_() {
+  try {
+    const res = getAggregatedInventory();
+    if (!res || !res.success) return res;
+    const light = (res.data || []).map(p => {
+      return {
+        sku: p.sku, hSku: p.hSku, sCn: p.sCn, sEn: p.sEn, size: p.size,
+        origin: p.origin, colorTag: p.colorTag, colorName: p.colorName, isStop: p.isStop,
+        ratio: p.ratio, qty: p.qty, pyeong: p.pyeong, physical: p.physical,
+        reserved: p.reserved, reserveCount: p.reserveCount, safe: p.safe, level: p.level,
+        hasArrival: p.hasArrival, eta: p.eta, etaShort: p.etaShort, etaQty: p.etaQty, etaPing: p.etaPing,
+        img: p.img, pack: p.pack, weight: p.weight, perPing: p.perPing
+      };
+    });
+    return { success: true, light: true, data: light };
+  } catch (e) {
     return { success: false, msg: e.toString() };
   }
 }
@@ -81,7 +110,7 @@ function _buildInventoryData(ss) {
       if (!sku) continue;
       if (si.name !== -1 && String(sd[i][si.name]).includes('小計')) continue;
 
-      const key = sku.replace(/[\s\-]/g, '');
+      const key = sku.toUpperCase().replace(/[\s\-]/g, '');
       if (!stockMap[key]) stockMap[key] = [];
       stockMap[key].push({
         batch:  si.batch  !== -1 ? String(sd[i][si.batch]  || '').trim() : '',
@@ -123,7 +152,7 @@ function _buildInventoryData(ss) {
       for (let i = 1; i < rd.length; i++) {
         const sku = String(rd[i][ri.sku] || '').trim();
         if (!sku) continue;
-        const key = sku.replace(/[\s\-]/g, '');
+        const key = sku.toUpperCase().replace(/[\s\-]/g, '');
         if (!reserveMap[key]) reserveMap[key] = { qty: 0, count: 0 };
         reserveMap[key].qty += (parseFloat(rd[i][ri.qty]) || 0);
         reserveMap[key].count += 1;
@@ -181,7 +210,7 @@ function _buildInventoryData(ss) {
       const skuRaw = String(pd[i][pi.sku] || '').trim();
       if (!skuRaw) continue;
 
-      const key = skuRaw.replace(/[\s\-]/g, '');
+      const key = skuRaw.toUpperCase().replace(/[\s\-]/g, '');
       if (seenSkus.has(key)) continue; // 🚀 關鍵：偵測到重複編號即跳過，避免重複卡片
       seenSkus.add(key);
 
@@ -377,7 +406,7 @@ function _buildJinYouLiData(ss) {
 /**
  * 🎞️ 從雲端資料夾抓取並分類圖片 (實景 vs 單片 vs 模面)
  */
-function getFolderImages(folderId) {
+function getFolderImages_impl_(folderId) {
   if (!folderId) return { scenes: [], singles: [], molds: [], intros: [], catalogs: [] };
   try {
     const rootFolder = DriveApp.getFolderById(folderId);
@@ -498,7 +527,7 @@ function _extractDriveId(url) {
 /**
  * 🚀 取得特定商品 (SKU) 的所有保留單明細
  */
-function getSkuReservations(sku) {
+function getSkuReservations_impl_(sku) {
   try {
     let ss = null;
     if (CONFIG.RESERVE_SS_ID) {
@@ -627,7 +656,7 @@ function getSkuReservations(sku) {
 /**
  * 🚀 取得指定業務人員或全公司的保留單清單
  */
-function getUserReservations(company) {
+function getUserReservations_impl_(company) {
   try {
     const ssMain = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
 

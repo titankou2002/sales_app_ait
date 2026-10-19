@@ -18,7 +18,8 @@
     inventoryLoadFailed: false,    // 🐛 庫存查詢逾時/失敗保護用
     inventoryLoadTimeoutTimer: null,
     salesOverviewData: null,    // ✅ 新增業績快取
-    salesOverviewLoaded: false  // ✅ 新增載入狀態
+    salesOverviewLoaded: false, // ✅ 新增載入狀態
+    custLayoutCache: {}         // 🚀 session 內已開過的客戶版面快取（切換客戶秒顯用）
   };
 
   function normalizeSkuKey(value) {
@@ -446,6 +447,7 @@
     if (isClientFlow) {
       // 🚀 對齊客戶端身分，確保分享連結進入 (deep link) 也可正常反查真實名稱與扣減次數
       const targetClientName = params.clientName || params.customer;
+      const isClientPortal = params.view === 'client';
       if (targetClientName) {
         window.clientState = window.clientState || { userId: '', userName: '', userCompany: '', isAuthorized: false };
         const info = (window.APP_CONFIG && APP_CONFIG.clientInfo) ? APP_CONFIG.clientInfo : { name: targetClientName, company: "訪客客戶", level: "LEVEL 2" };
@@ -462,28 +464,37 @@
           localStorage.setItem('AIT_CLIENT_LEVEL', window.clientState.level);
         } catch(e){}
         
-        // 異步向後端獲取詳細白名單身分 (為 LOG 工作表作準備的備用 fallback)
-        google.script.run
-          .withSuccessHandler(function (res) {
-            if (res && res.success && res.isAuthorized) {
-              window.clientState.userName = res.name;
-              window.clientState.userCompany = res.company;
-              window.clientState.level = res.level;
-              window.clientState.isAuthorized = true;
-              try {
-                localStorage.setItem('AIT_CLIENT_USER_ID', window.clientState.userId);
-                localStorage.setItem('AIT_CLIENT_USER_NAME', window.clientState.userName);
-                localStorage.setItem('AIT_CLIENT_USER_COMPANY', window.clientState.userCompany);
-                localStorage.setItem('AIT_CLIENT_LEVEL', window.clientState.level);
-              } catch(e){}
-            }
-          })
-          .verifyClientDirectAccess(targetClientName, params.key || '');
+        // 🚀 效能優化：客戶端門戶 (=view client) 的權威身分驗證與產品資料由 initClientPortal()
+        //    內的 verifyClientDirectAccess 一次完成，這裡的背景 RPC 只會讓同一包資料重複抓取，
+        //    所以只保留給「業務 deep-link 看待客戶版面」的流程使用。
+        if (!isClientPortal) {
+          // 異步向後端獲取詳細白名單身分 (為 LOG 工作表作準備的備用 fallback)
+          google.script.run
+            .withSuccessHandler(function (res) {
+              if (res && res.success && res.isAuthorized) {
+                window.clientState.userName = res.name;
+                window.clientState.userCompany = res.company;
+                window.clientState.level = res.level;
+                window.clientState.isAuthorized = true;
+                try {
+                  localStorage.setItem('AIT_CLIENT_USER_ID', window.clientState.userId);
+                  localStorage.setItem('AIT_CLIENT_USER_NAME', window.clientState.userName);
+                  localStorage.setItem('AIT_CLIENT_USER_COMPANY', window.clientState.userCompany);
+                  localStorage.setItem('AIT_CLIENT_LEVEL', window.clientState.level);
+                } catch(e){}
+              }
+            })
+            .verifyClientDirectAccess(targetClientName, params.key || '');
+        }
       }
       
       // 🚀 外部客戶/訪客查詢：放行進入，但功能受限（必須輸入坪數且無具體庫存）
       _startAppFlow();
-      loadInventoryData();
+      // 🚀 效能優化：客戶端門戶畫面完全由 window.allProducts 驅動（initClientPortal 載入），
+      //    不依賴 state.inventoryData，這裡再跑 loadInventoryData() 只是白抓一整包庫存，故跳過。
+      if (!isClientPortal) {
+        loadInventoryData();
+      }
       return;
     }
     
@@ -505,42 +516,40 @@
       return;
     }
 
-    // 顯示連接中動畫
-    const pb = document.getElementById('progressBar');
-    const pt = document.getElementById('progressText');
-    if (pb) pb.style.width = '45%';
-    if (pt) pt.innerText = 'VERIFYING SECURITY KEY...';
+    // 🚀 極速秒進（Optimistic Instant Launch）：
+    // 若已有金鑰，無需在門口等待 RPC 網路往返！
+    // 立即預填身份、觸發過場與背景資料載入，同時在背景併發校驗金鑰！
+    state.currentSales = sales;
+    const disp = document.getElementById('sales-name-display');
+    if (disp) disp.innerText = sales;
+    if (typeof checkDeliveryBadge === 'function') checkDeliveryBadge(sales);
 
-    // 呼叫後端異步比對金鑰狀態
+    if (params.view === 'inventory') {
+      _startAppFlow();
+    } else {
+      runSplashScreen();
+    }
+
+    loadInventoryData();
+    loadStockoutSubtitleAlert();
+    loadLayoutActivities();
+    setTimeout(function () { if (typeof warmupCustomerData_ === 'function') warmupCustomerData_(state.currentSales); }, 2500);
+    if (typeof loadSalesOverview === 'function') loadSalesOverview();
+
+    _runVerifySalesKey(sales, key, params, 0);
+  }
+
+  // 🚀 背景金鑰驗證：驗證通過更新 LocalStorage；若已被後端註銷停用，才將頁面鎖定。
+  function _runVerifySalesKey(sales, key, params, attempt) {
     google.script.run
       .withSuccessHandler(function(res) {
         if (res && res.success) {
-          // 🚀 驗證成功：業務身分核對通過！
           state.currentSales = sales;
           try {
             localStorage.setItem('ag_current_sales', sales);
             localStorage.setItem('ag_current_key', key);
           } catch(e){}
-          
-          const disp = document.getElementById('sales-name-display');
-          if (disp) disp.innerText = sales;
-          if (typeof checkDeliveryBadge === 'function') checkDeliveryBadge(sales);
-
-          // 🌟 完美分流：
-          // 如果 URL 帶有 view=inventory，我們就帶他去「庫存頁面」鎖定使用！
-          // 如果 URL 沒有帶 view=inventory，我們就帶他去「業務 APP 主選單首頁（Dashboard）」！
-          if (params.view === 'inventory') {
-            _startAppFlow();
-          } else {
-            runSplashScreen();
-          }
-          // 🚀 效能優化：這幾個背景預載不用等splash動畫播完才開始——動畫只是視覺效果（setInterval
-          // 純裝飾用，不會阻塞），跟這裡是同步呼叫、立刻併發送出，讓真正的資料載入越早開始越好。
-          loadInventoryData();
-          loadStockoutSubtitleAlert();
-          if (typeof loadSalesOverview === 'function') loadSalesOverview();
         } else {
-          // 🚀 驗證失敗 ➡️ 直接封鎖並清除快取
           try {
             localStorage.removeItem('ag_current_sales');
             localStorage.removeItem('ag_current_key');
@@ -549,19 +558,23 @@
         }
       })
       .withFailureHandler(function(err) {
-        lockSystem("系統連線異常，無法驗證您的身分。請檢查網路後重試。");
+        if (attempt < 2) {
+          setTimeout(function() { _runVerifySalesKey(sales, key, params, attempt + 1); }, 1200 * (attempt + 1));
+          return;
+        }
       })
       .verifySalesKey(sales, key);
   }
 
-  function lockSystem(reasonText) {
+  function lockSystem(reasonText, opts) {
+    opts = opts || {};
     // 隱藏 Splash 載入頁
     const splash = document.getElementById('splash-page');
     if (splash) splash.style.display = 'none';
-    
+
     // 隱藏 Loading
     showLoading(false);
-    
+
     // 顯示全局「存取遭拒」磨砂警告層
     const mask = document.getElementById('global-access-denied-mask');
     if (mask) {
@@ -571,9 +584,23 @@
       if (pEl && reasonText) {
         pEl.innerText = reasonText;
       }
+      // 🚀 網路/連線類失敗（可能只是暫時的）：標題別再嚇人地寫「金鑰無效」，並提供重試按鈕，
+      // 讓業務不用整個關掉重開連結，一鍵就能再試一次。
+      const titleEl = document.getElementById('access-denied-title');
+      if (titleEl) {
+        titleEl.innerText = opts.retryable ? '存取暫時失敗：連線異常' : '存取遭拒：安全金鑰無效';
+      }
+      const retryBtn = document.getElementById('access-denied-retry-btn');
+      if (retryBtn) {
+        retryBtn.style.display = opts.retryable ? 'inline-block' : 'none';
+      }
     }
     console.error("🔒 系統已安全鎖定：", reasonText);
   }
+
+  window.retryAccessCheck = function() {
+    location.reload();
+  };
 
   function _startAppFlow() {
     const params = APP_CONFIG.params || {};
@@ -657,32 +684,49 @@
   function loadSalesList() {
     const grid = document.getElementById('salesSelection');
     if (!grid) return;
-    grid.innerHTML = '<div style="color:white; font-size: 20px; font-weight: 700; text-align:center; padding:40px; width:100%; letter-spacing: 4px;">正在讀取雲端名單...</div>';
-    
+
+    // 🚀 秒顯：先渲染上次抓過的名單（localStorage），背景再抓最新，不必等 RPC
+    let localList = null;
+    try { localList = JSON.parse(localStorage.getItem('ag_sales_list_cache') || 'null'); } catch (e) {}
+    if (localList && Array.isArray(localList) && localList.length) {
+      renderSalesButtons_(grid, localList);
+    } else {
+      grid.innerHTML = '<div style="color:white; font-size: 20px; font-weight: 700; text-align:center; padding:40px; width:100%; letter-spacing: 4px;">正在讀取雲端名單...</div>';
+    }
+
     google.script.run.withSuccessHandler(function(res) {
-      if (res && res.success && res.data) {
-        grid.innerHTML = '';
-        res.data.forEach(function(name) {
-          var btn = document.createElement('button');
-          btn.className = 'btn-sales-premium';
-          btn.textContent = name;
-          btn.onclick = function() { selectSales(name); };
-          grid.appendChild(btn);
-        });
+      if (res && res.success && res.data && res.data.length) {
+        try { localStorage.setItem('ag_sales_list_cache', JSON.stringify(res.data)); } catch(e){}
+        renderSalesButtons_(grid, res.data);
+        setTimeout(prewarmCustomerLists_, 4000);   // 🔥 開機後背景預熱各業務客戶清單
       } else {
-        grid.textContent = '載入失敗: ' + ((res && res.msg) || '未知錯誤');
-        grid.style.cssText = 'color:white; opacity:0.5; text-align:center; padding:20px; width:100%;';
+        // 已有秒顯名單就保留，不再蓋成錯誤訊息
+        if (!grid.querySelector('.btn-sales-premium')) {
+          grid.textContent = '載入失敗: ' + ((res && res.msg) || '未知錯誤');
+          grid.style.cssText = 'color:white; opacity:0.5; text-align:center; padding:20px; width:100%;';
+        }
       }
     }).getSalesList(true);
+  }
+
+  function renderSalesButtons_(grid, list) {
+    grid.innerHTML = '';
+    list.forEach(function(name) {
+      var btn = document.createElement('button');
+      btn.className = 'btn-sales-premium';
+      btn.textContent = name;
+      btn.onclick = function() { selectSales(name); };
+      grid.appendChild(btn);
+    });
   }
 
   function runSplashScreen() {
     const pb = document.getElementById('progressBar');
     const pt = document.getElementById('progressText');
     const steps = [
-      { p: 30, t: 'CONNECTING...' },
-      { p: 60, t: 'LOADING ASSETS...' },
-      { p: 100, t: 'READY' }
+      { p: 35, t: '系統連線中...' },
+      { p: 75, t: '載入系統元件...' },
+      { p: 100, t: '準備就緒' }
     ];
     let step = 0;
     const interval = setInterval(() => {
@@ -692,44 +736,43 @@
         step++;
       } else {
         clearInterval(interval);
-        // 🚀 效能優化：READY 停留時間從 500ms 縮短到 150ms——純視覺效果，跟真正的資料載入無關
-        // （資料載入已經在 verifySalesKey 成功當下就併發送出了，不受這個停留時間影響）
-        setTimeout(showSalesSelection, 150);
+        // 🚀 效能優化：極速過場，停留時間縮短至 60ms
+        setTimeout(showSalesSelection, 60);
       }
-    }, 200);
+    }, 70);
   }
 
   function showSalesSelection() {
+    // 🚀 關鍵一：即刻喚醒目標頁面（讓主畫面卡片在 Splash 淡出前立刻就位，無縫過場）
+    if (APP_CONFIG.params && APP_CONFIG.params.view === 'client') {
+      showPage('page-client-view');
+    } else if (APP_CONFIG.params && APP_CONFIG.params.rsv) {
+      // 📦 保留系統的連結 (Email 按鈕、複製篩選連結)：bigt.cc/ait/inventory.html?rsv=篩選 → 登入後直接開保留日誌
+      openReserveWithFilter(APP_CONFIG.params.rsv);
+    } else {
+      showPage('page-dashboard');
+    }
+
+    const grid = document.getElementById('dashboardGrid');
+    if (grid) {
+      grid.style.display = 'grid';
+      grid.style.opacity = '1';
+      grid.style.transform = 'none';
+    }
+
+    // 🚀 關鍵二：極速淡出並隱藏 Splash
     const splash = document.getElementById('splash-page');
     if (splash) {
-      splash.style.transition = 'opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+      splash.style.transition = 'opacity 0.18s linear';
       splash.style.opacity = '0';
-      
       setTimeout(() => {
         splash.style.display = 'none';
-        
-        // 🚀 修正：分流進入主畫面或客戶頁面
-        if (APP_CONFIG.params.view === 'client') {
-          showPage('page-client-view');
-        } else {
-          showPage('page-dashboard');
-        }
-        
-        // 🚀 關鍵：讓四個功能框延遲浮現
-        const grid = document.getElementById('dashboardGrid');
-        if (grid) {
-          grid.style.display = 'grid'; // 確保顯示網格
-          setTimeout(() => {
-            grid.style.opacity = '1';
-            grid.style.transform = 'translateY(0)';
-          }, 100);
-        }
-
-        // 🚀 效能優化：loadInventoryData/loadSalesOverview 現在改成在 verifySalesKey 一驗證成功
-        // 就立刻併發呼叫（見上方），不用等 splash 動畫播完才開始。這裡原本的重複呼叫拿掉
-        // （兩支函式內部都有 state.xxxLoaded 防重複載入的判斷，留著也不會出錯，但已經沒必要）。
-      }, 300);
+      }, 180);
     }
+
+    // 🚀 關鍵三：顯式確保關閉任何全局載入遮罩
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.classList.remove('active');
   }
 
   function loadInventoryData() {
@@ -754,6 +797,26 @@
       } catch(e) {
         console.warn('讀取本地庫存快取失敗:', e);
       }
+    }
+
+    // 🚀 效能優化：第一次進場（無本地快取可秒顯）時先把「輕量版庫存」抓回來秒繪陳列牆，
+    //    完整包（含 scenes/batches 圖片明細、數 MB）由底下的 getAggregatedInventory 背景接手，
+    //    到齊後覆蓋並寫回 localStorage。light=true 表示細圖/批號尚未就緒，相關互動會提示載入中。
+    if (!state.inventoryData || state.inventoryData.length === 0) {
+      google.script.run
+        .withSuccessHandler(function (lres) {
+          if (lres && lres.success && lres.data && lres.data.length) {
+            state.inventoryData = lres.data;
+            state.inventoryLoadFailed = false;
+            console.log('⚡ 輕量版庫存先行秒繪 (' + lres.data.length + ' 筆, scenes/batches 待完整包)');
+            if (document.getElementById('page-album') && document.getElementById('page-album').classList.contains('active')) {
+              renderAlbum();
+              renderHistory();
+            }
+          }
+        })
+        .withFailureHandler(function () {})
+        .getInventoryLightData();
     }
 
     google.script.run
@@ -894,7 +957,210 @@
     }
 
     if (pageId === 'sales-page') loadSalesList();
+
+    // 🚀 保留日誌秒進：App 打開幾秒後已在背景載好 (loadReserveFrame_)，按進去直接顯示；
+    //    30 分鐘內不重載，超過或換了登入、帶了篩選才重新載入。
+    if (pageId === 'page-reserve') loadReserveFrame_(true);
   }
+
+  /**
+   * 載入保留日誌 iframe。show=true：使用者按進來 (還沒載好就顯示讀取動畫)；show=false：背景預先載入。
+   * 帶上版面神器的登入憑證 (保留系統用它確認是誰)；window.__RSV_EXTRA__ 是要套用的篩選 (例如 &tab=reserve&q=客戶)，用一次就清掉。
+   */
+  window.loadReserveFrame_ = function (show) {
+    const f = document.querySelector('#page-reserve iframe');
+    if (!f || !f.getAttribute('data-base-src')) return;
+    const aitTok = (window.AIT && AIT.token && AIT.token()) || '';
+    if (!aitTok && !show) return; // 背景預載一定要有登入憑證
+    const extra = show ? (window.__RSV_EXTRA__ || '') : '';
+    if (show) window.__RSV_EXTRA__ = '';
+    const rl = document.getElementById('reserve-loading');
+    const rlText = document.getElementById('reserve-loading-text');
+    const rlSub = document.getElementById('reserve-loading-sub');
+    const loadedAt = Number(f.getAttribute('data-loaded-at') || 0);
+    const reuse = loadedAt && Date.now() - loadedAt < 30 * 60 * 1000 && f.getAttribute('data-tok') === aitTok && !extra;
+    const showSpinner = function () {
+      if (!rl || !show) return;
+      rl.style.display = 'flex';
+      if (rlText) rlText.textContent = '正在打開保留日誌…';
+      if (rlSub) rlSub.textContent = '第一次打開約需 5～10 秒';
+      clearTimeout(window.__rlSlowTimer);
+      window.__rlSlowTimer = setTimeout(function () {
+        if (rl.style.display !== 'none' && rlText) { rlText.textContent = '網路較慢，還在載入…'; if (rlSub) rlSub.textContent = '請再稍等一下'; }
+      }, 15000);
+    };
+    if (reuse) {
+      if (f.getAttribute('data-ready') === '1') { if (rl) rl.style.display = 'none'; }
+      else showSpinner(); // 背景還在載，載好會自動收起
+      return;
+    }
+    f.setAttribute('data-loaded-at', String(Date.now()));
+    f.setAttribute('data-tok', aitTok);
+    f.setAttribute('data-ready', '0');
+    showSpinner();
+    f.onload = function () {
+      f.setAttribute('data-ready', '1');
+      if (rl) rl.style.display = 'none';
+      clearTimeout(window.__rlSlowTimer);
+    };
+    f.src = f.getAttribute('data-base-src') + '?view=reserve&r=' + Date.now() + (aitTok ? '&t=' + encodeURIComponent(aitTok) : '') + extra;
+  };
+
+  // 📦 開保留日誌並套用篩選 (query 例如 'tab=reserve&q=客戶')；只放行保留日誌認得的篩選參數
+  window.openReserveWithFilter = function (query) {
+    var allow = ['tab', 'rep', 'kpi', 'deposit', 'updated', 'shipped', 'sort', 'dir', 'q', 'branch'];
+    var extra = '';
+    try {
+      new URLSearchParams(String(query || '')).forEach(function (v, k) {
+        if (allow.indexOf(k) !== -1) extra += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(v);
+      });
+    } catch (e) { }
+    window.__RSV_EXTRA__ = extra;
+    showPage('page-reserve');
+  };
+
+  /**
+   * 👤 業務姓名快速切換：點姓名展開名單 → 點人秒切（客戶清單已預熱，直接顯示，背景再校正）
+   */
+  state.custListCache = state.custListCache || {};
+  var _prewarmRunning = false;
+  function getSalesNamesForSwitch_() {
+    var list = [];
+    try { list = JSON.parse(localStorage.getItem('ag_sales_list_cache') || '[]') || []; } catch (e) {}
+    return Array.isArray(list) ? list : [];
+  }
+  /**
+   * 🔥 客戶版面預取：進首頁後背景先讀「客戶清單」，再依等級（特→A→B→C）逐一預取版面資料，
+   * 填進 state.custLayoutCache。之後點客戶就是秒開（selectCustomer 本來就會先用快取秒顯）。
+   * 一次只跑一個請求；使用者自己點客戶讀取時會暫停，不跟使用者搶伺服器。
+   */
+  var _layoutPrefetchToken = 0;
+  window.warmupCustomerData_ = function (sales) {
+    if (!sales) return;
+    var cached = state.custListCache[sales];
+    if (cached) { prefetchLayouts_(sales, cached); return; }
+    google.script.run.withSuccessHandler(function (res) {
+      if (res && res.success) {
+        state.custListCache[sales] = res.data;
+        prefetchLayouts_(sales, res.data);
+      }
+    }).getCustomerList(sales);
+  };
+  function prefetchLayouts_(sales, list) {
+    var token = ++_layoutPrefetchToken;
+    var order = { '特': 0, 'A': 1, 'B': 2, 'C': 3 };
+    var queue = (list || []).filter(function (c) { return !c.hidden && c.name && !state.custLayoutCache[c.name]; })
+      .sort(function (a, b) {
+        var la = order[String(a.level || '').trim()], lb = order[String(b.level || '').trim()];
+        return (la === undefined ? 9 : la) - (lb === undefined ? 9 : lb);
+      }).slice(0, 20).map(function (c) { return c.name; });
+    (function next() {
+      if (token !== _layoutPrefetchToken || state.currentSales !== sales) return;   // 已換人或有新一輪
+      if (!queue.length) return;
+      if (state.userFetching) { setTimeout(next, 800); return; }                    // 使用者正在讀，讓路
+      var name = queue.shift();
+      if (state.custLayoutCache[name]) { next(); return; }
+      google.script.run
+        .withSuccessHandler(function (r) {
+          if (r && r.success && !state.custLayoutCache[name]) state.custLayoutCache[name] = { active: r.active, history: r.history, ts: Date.now() };
+          setTimeout(next, 150);
+        })
+        .withFailureHandler(function () { setTimeout(next, 500); })
+        .getCustomerDisplays(name);
+    })();
+  }
+
+  /** 確保本機有業務名單（直達連結不會經過業務選擇頁，名單可能是空的） */
+  function ensureSalesNames_(cb) {
+    if (getSalesNamesForSwitch_().length) { cb && cb(); return; }
+    google.script.run.withSuccessHandler(function (res) {
+      if (res && res.success && res.data && res.data.length) {
+        try { localStorage.setItem('ag_sales_list_cache', JSON.stringify(res.data)); } catch (e) {}
+      }
+      cb && cb();
+    }).withFailureHandler(function () { cb && cb(); }).getSalesList(true);
+  }
+  /** 🔥 預熱：依序在背景讀取每位業務的客戶清單，之後切換就是秒開 */
+  function prewarmCustomerLists_() {
+    if (_prewarmRunning) return;
+    var names = getSalesNamesForSwitch_().filter(function (n) { return !state.custListCache[n]; });
+    if (!names.length) return;
+    _prewarmRunning = true;
+    var i = 0;
+    (function next() {
+      if (i >= names.length) { _prewarmRunning = false; return; }
+      var n = names[i++];
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.success) state.custListCache[n] = res.data;
+          setTimeout(next, 300);
+        })
+        .withFailureHandler(function () { setTimeout(next, 300); })
+        .getCustomerList(n);
+    })();
+  }
+  function closeSalesQuickMenu_() {
+    var m = document.getElementById('sales-quick-menu'), b = document.getElementById('sales-switch-btn');
+    if (m) m.style.display = 'none';
+    if (b) b.classList.remove('open');
+  }
+  window.toggleSalesQuickMenu = function (ev) {
+    if (ev) ev.stopPropagation();
+    var m = document.getElementById('sales-quick-menu'), b = document.getElementById('sales-switch-btn');
+    if (!m) return;
+    if (m.style.display !== 'none') { closeSalesQuickMenu_(); return; }
+    var names = getSalesNamesForSwitch_();
+    if (!names.length) {
+      m.innerHTML = '<div class="ait-name-item" style="opacity:.6;">讀取名單中...</div>';
+      m.style.display = 'block'; if (b) b.classList.add('open');
+      ensureSalesNames_(function () { closeSalesQuickMenu_(); if (getSalesNamesForSwitch_().length) window.toggleSalesQuickMenu(); });
+      return;
+    }
+    var check = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+    m.innerHTML = names.map(function (n) {
+      var cur = (n === state.currentSales);
+      return '<div class="ait-name-item' + (cur ? ' current' : '') + '" role="option" data-n="' + encodeURIComponent(n) + '" onclick="quickSwitchSales(this)"><span>' + n.replace(/</g, '&lt;') + '</span>' + (cur ? check : '') + '</div>';
+    }).join('');
+    m.style.display = 'block';
+    if (b) b.classList.add('open');
+    prewarmCustomerLists_();
+  };
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest || !e.target.closest('#sales-quick-menu, #sales-switch-btn')) closeSalesQuickMenu_();
+  });
+  window.quickSwitchSales = function (el) {
+    var name = decodeURIComponent(el.getAttribute('data-n'));
+    if (name === state.currentSales) { closeSalesQuickMenu_(); return; }
+    el.classList.add('picked');            // 綠色確認回饋
+    setTimeout(closeSalesQuickMenu_, 160);
+    state.currentSales = name;
+    try { localStorage.setItem('ag_current_sales', name); } catch (e) {}
+    var disp = document.getElementById('sales-name-display');
+    if (disp) disp.innerText = name;
+    if (typeof checkDeliveryBadge === 'function') checkDeliveryBadge(name);
+    var s = document.getElementById('customerSearch'); if (s) s.value = '';
+
+    var cached = state.custListCache[name];
+    if (cached) {
+      state.allCustomers = cached;
+      renderCustomerList(cached);
+    } else {
+      var g = document.getElementById('customer-grid');
+      if (g) g.innerHTML = '<div class="ait-loading-box" style="padding:40px 0;grid-column:1/-1;"><div class="ait-spinner ait-spinner-sm"></div><div>載入客戶中...</div></div>';
+    }
+    warmupCustomerData_(name);
+    // 背景校正（資料有變才重畫，避免閃爍）
+    google.script.run.withSuccessHandler(function (res) {
+      if (!res || !res.success) return;
+      var changed = JSON.stringify(res.data) !== JSON.stringify(state.custListCache[name]);
+      state.custListCache[name] = res.data;
+      if (changed && state.currentSales === name) {
+        state.allCustomers = res.data;
+        var q = document.getElementById('customerSearch');
+        if (q && q.value.trim()) handleSearch(); else renderCustomerList(res.data);
+      }
+    }).getCustomerList(name);
+  };
 
   function selectSales(name) {
     state.currentSales = name;
@@ -953,8 +1219,10 @@
       .withSuccessHandler(function (res) {
         if (res.success) {
           state.allCustomers = res.data;
+          state.custListCache[name] = res.data;
           renderCustomerList(res.data);
           switchToPage('page-select-customer');
+          ensureSalesNames_(function () { setTimeout(prewarmCustomerLists_, 1500); });
         } else {
           if (logo) {
             logo.style.display = 'flex';
@@ -1097,32 +1365,47 @@
     state.selectedCustomer = customerName;
     document.getElementById('album-customer-title').innerText = customerName;
 
-    showLoading(true, true, '正在讀取版面資料...');
+    // 🚀 秒顯：同一個 session 已開過的客戶直接先渲染舊版面（不轉圈），背景 RPC 回來再更新
+    const cachedLayout = state.custLayoutCache[customerName];
+    if (cachedLayout) {
+      applyCustomerDisplay_(customerName, cachedLayout.active, cachedLayout.history, callback);
+    } else {
+      showLoading(true, true, '正在讀取版面資料...');
+    }
 
+    state.userFetching = true;
     google.script.run
       .withSuccessHandler(function (response) {
+        state.userFetching = false;
         showLoading(false);
         if (response.success) {
-          state.currentCustomer = customerName; // 🚀 更新當前客戶
-          state.currentDisplays = response.active;
-          state.historyDisplays = response.history;
-          state.currentIndex = 0;
-          
-          if (typeof resetCustomerTabs === 'function') resetCustomerTabs(); // 🚀 重置 Tab
-          
-          renderAlbum();
-          renderHistory();
-          window.switchToPage('page-album');
-          if (typeof callback === 'function') callback();
+          state.custLayoutCache[customerName] = { active: response.active, history: response.history, ts: Date.now() };
+          applyCustomerDisplay_(customerName, response.active, response.history, callback);
         } else {
           showToast('伺服器回傳錯誤: ' + (response.msg || '未知'), 'error');
         }
       })
       .withFailureHandler(function (err) {
+        state.userFetching = false;
         showLoading(false);
         showToast('讀取失敗: ' + (err.message || err), 'error');
       })
       .getCustomerDisplays(customerName);
+  }
+
+  // 🚀 套用（或秒顯重複套用）特定客戶的版面資料；isRefresh 只是語意標記，不需額外行為
+  function applyCustomerDisplay_(customerName, active, history, callback) {
+    state.currentCustomer = customerName; // 🚀 更新當前客戶
+    state.currentDisplays = active;
+    state.historyDisplays = history;
+    state.currentIndex = 0;
+
+    if (typeof resetCustomerTabs === 'function') resetCustomerTabs(); // 🚀 重置 Tab
+
+    renderAlbum();
+    renderHistory();
+    window.switchToPage('page-album');
+    if (typeof callback === 'function') callback();
   }
 
   /**
@@ -1198,6 +1481,9 @@
     };
   }
 
+  // 沒有照片（或照片載入失敗）時顯示的占位：相機斜線圖示＋「尚未上傳照片」，不再顯示容易誤會的 Loading
+  window.AIT_NOPHOTO_HTML = '<div class="album-thumb album-nophoto"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/><path d="M3 3l18 18"/></svg><span>尚未上傳照片</span></div>';
+
   function renderAlbum(isHistory = false, gridIdOverride, sortSelectId) {
     var targetGridId = gridIdOverride || (isHistory ? 'history-grid' : 'album-grid');
     var grid = document.getElementById(targetGridId);
@@ -1236,6 +1522,8 @@
       groups[key].totalSalesAmt += (d.customerSalesAmt || 0);
       groups[key].totalSalesQty += (d.customerSalesQty || 0);
       groups[key].totalFrequency += (d.frequency || 0);
+      if (d.lastSaleMs && d.lastSaleMs > (groups[key].lastSaleMs || 0)) groups[key].lastSaleMs = d.lastSaleMs;   // 整面牆最後一次有賣
+      if (d.firstSaleMs && (!groups[key].firstSaleMs || d.firstSaleMs < groups[key].firstSaleMs)) groups[key].firstSaleMs = d.firstSaleMs;
       groups[key].totalReservedQty = (groups[key].totalReservedQty || 0) + (d.customerReservedQty || 0);
 
       if (d.customerReservedSummary) {
@@ -1261,6 +1549,14 @@
     sortedGroups.sort(function (a, b) {
       if (albumSortMethod === 'pyeong') return b.totalSalesQty - a.totalSalesQty;
       if (albumSortMethod === 'amount') return b.totalSalesAmt - a.totalSalesAmt;
+      if (albumSortMethod === 'stale') {
+        // 最久沒賣排最前；從沒賣過的排在「有賣過」的後面（它們不是遺忘，是還沒開始賣）
+        var sa = a.lastSaleMs || 0, sb = b.lastSaleMs || 0;
+        if (!sa && !sb) return b.totalSalesAmt - a.totalSalesAmt;
+        if (!sa) return 1;
+        if (!sb) return -1;
+        return sa - sb;
+      }
       if (albumSortMethod === 'days') return (b.items[0].daysOnDisplay || 0) - (a.items[0].daysOnDisplay || 0);
       if (albumSortMethod === 'status') {
         var getWorst = function (g) { return Math.min.apply(null, g.items.map(function (i) { return i.stockLevel || 3; })); };
@@ -1338,9 +1634,8 @@
       // 如果有到貨則疊加藍色閃爍
       if (anyArrival) borderClass += ' arrival-blue-pulse';
 
-      var imgUrl = (group.photoUrl && group.photoUrl !== "")
-        ? group.photoUrl
-        : 'https://placehold.co/800x800/1a1a1a/ffffff?text=Loading...';
+      var hasPhoto = !!(group.photoUrl && group.photoUrl !== "");
+      var imgUrl = hasPhoto ? group.photoUrl : '';
 
       // 🚀 格式化日期：2024/04/28 15:18 -> 24/4/28
       var rawDate = group.items[0].lastUpdate || '—';
@@ -1355,6 +1650,31 @@
 
       var durationStr = formatDaysToDuration(group.items[0].daysOnDisplay);
 
+      // 📊 卡片資料：最後銷售、坪效、銷冠、缺貨款數
+      var nowMs = Date.now();
+      var saleDays = group.lastSaleMs ? Math.floor((nowMs - group.lastSaleMs) / 86400000) : null;
+      var hasSales = group.totalSalesAmt > 0;
+      var saleColor = saleDays === null ? '#94a3b8' : saleDays <= 90 ? '#4ade80' : saleDays <= 180 ? '#facc15' : '#f87171';
+      // 有銷售金額卻讀不到日期 ≠ 未曾銷售（避免跟「銷冠」互相矛盾）
+      var saleText = saleDays === null ? (hasSales ? '有銷售・日期不明' : '未曾銷售') : '賣 ' + agoText_(saleDays);
+      var onDispDays = group.items[0].daysOnDisplay;
+      var perMonth = (onDispDays !== null && onDispDays !== undefined && !isNaN(onDispDays))
+        ? Math.round(group.totalSalesAmt / 10000 / Math.max(1, onDispDays / 30) * 10) / 10 : null;
+      // 缺貨簡碼：RT61243-S → 43-S、RN612100 → 100
+      var shortCodes = [];
+      itemsWithInv.forEach(function (inv, ii) {
+        if (inv.level !== 1) return;
+        var raw = String((group.items[ii] && group.items[ii].sku) || '');
+        var mm = raw.match(/^[A-Za-z]*(\d+)(.*)$/);
+        // 數字部分：6碼取尾3、5碼取尾2（＝不取前3碼）；4碼取尾2；3碼以下全取
+        var dg = mm ? mm[1] : '';
+        var keep = dg.length >= 6 ? 3 : dg.length === 5 ? 2 : dg.length === 4 ? 2 : dg.length;
+        shortCodes.push(mm ? (dg.slice(dg.length - keep) + mm[2]) : raw);
+      });
+      var shortCount = shortCodes.length;
+      var shortTxt = shortCodes.slice(0, 4).join('、') + (shortCodes.length > 4 ? '…等' + shortCodes.length + '款' : '');
+      var champTxt = (group.totalSalesAmt > 0) ? ('銷冠 ' + escapeHtml(group.championSku) + ' ' + group.champPct + '%') : '';
+
       var wallStatus = getWallStatus(group);
       if (wallStatus && wallStatus.blink) borderClass += ' wall-never-pulse';
 
@@ -1366,9 +1686,10 @@
           : '') +
         (group.photoCount > 1
           ? '<div class="album-photo-count">🖼 ' + group.photoCount + ' 張</div>' : '') +
-        '<img src="' + imgUrl + '" class="album-thumb" ' +
-        'onerror="this.onerror=null; this.src=\'https://placehold.co/800x800/1a1a1a/666?text=載入失敗\'" ' +
-        'loading="lazy">' +
+        (hasPhoto
+          ? '<img src="' + imgUrl + '" class="album-thumb" ' +
+            'onerror="this.onerror=null; this.outerHTML=window.AIT_NOPHOTO_HTML" loading="lazy">'
+          : window.AIT_NOPHOTO_HTML) +
 
         // 🔝 頂部標籤組 (左上: 金額/坪數, 右上: 系列名稱)
         '<div class="card-top-badges">' +
@@ -1388,11 +1709,21 @@
 
         // 🧊 玻璃化底部遮罩 (強制採用 Row 佈局，讓日期與天數分居左右底部)
         '<div class="card-glass-overlay" style="display:flex; flex-direction:row; justify-content:space-between; align-items:flex-end; padding:8px 12px; background:linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 40%, transparent 100%);">' +
-          '<div>' +
-            '<div class="date-badge" style="color:#facc15; font-weight:800; font-size:12px; margin-bottom:2px;">' + shortDate + '</div>' +
-          '</div>' +
-          '<div style="font-size:13px; font-weight:900; color:rgba(255,255,255,0.9); letter-spacing:1px; text-shadow:0 0 10px rgba(0,0,0,0.8); margin-bottom:2px;">' + 
-            durationStr + '</div>' +
+          (state.isClientView
+            ? '<div class="date-badge" style="color:#facc15; font-weight:800; font-size:12px;">' + shortDate + '</div>' +
+              '<div style="font-size:13px; font-weight:900; color:rgba(255,255,255,0.9);">' + durationStr + '</div>'
+            : '<div style="width:100%; display:flex; flex-direction:column; gap:3px; text-shadow:0 0 8px rgba(0,0,0,0.9);">' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:900;">' +
+                  '<span style="color:' + saleColor + ';"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + saleColor + ';margin-right:5px;"></span>' + saleText + '</span>' +
+                  '<span style="color:rgba(255,255,255,0.9);">上架 ' + durationStr + '</span>' +
+                '</div>' +
+                ((champTxt || perMonth !== null)
+                  ? '<div style="display:flex; justify-content:space-between; font-size:10.5px; font-weight:700; color:rgba(255,255,255,0.7);">' +
+                      '<span>' + champTxt + '</span>' +
+                      '<span>' + (perMonth !== null && group.totalSalesAmt > 0 ? perMonth + '萬/月' : '') + '</span></div>'
+                  : '') +
+                (shortCount > 0 ? '<div style="font-size:10.5px; font-weight:800; color:#fca5a5;">缺貨 ' + escapeHtml(shortTxt) + '</div>' : '') +
+              '</div>') +
         '</div>' +
         '</div>';
     });
@@ -1467,9 +1798,13 @@
 
   /**
    * 🖼️ 輔助：圖片預載入引擎
+   * 🚀 效能優化：原本把「整面陳列牆所有客群組」的封面圖一口氣全部 new Image() 預載，
+   *    一來跟 tag 上的 loading="lazy" 互相抵銷、二來會在手機上瞬間塞爆頻寬阻塞首圖解析。
+   *    改成只預載首屏附近的前 N 張（畫面一定看得見），其餘交給 lazy loading 邊滾邊載。
    */
   function preloadImages(groups) {
-    groups.forEach(function (g) {
+    const MAX_PRELOAD = 12;
+    groups.slice(0, MAX_PRELOAD).forEach(function (g) {
       if (g.photoUrl) {
         const img = new Image();
         img.src = g.photoUrl;
@@ -2075,8 +2410,19 @@
   /**
    * ⏳ 輔助：將天數轉換為幾年幾個月
    */
+  // 距今天數 → 口語（天／週／個月／年）
+  function agoText_(d) {
+    if (d <= 0) return '今天';
+    if (d < 14) return d + '天前';
+    if (d < 60) return Math.floor(d / 7) + '週前';
+    if (d < 365) return Math.floor(d / 30) + '個月前';
+    var y = Math.floor(d / 365), m = Math.floor((d % 365) / 30);
+    return y + '年' + (m ? m + '個月' : '') + '前';
+  }
+
   function formatDaysToDuration(days) {
-    if (!days || days < 0) return "0M";
+    if (days === null || days === undefined || isNaN(days)) return "—";   // 上架日期未知，不要誤顯示成 0M
+    if (days < 0) return "0M";
     var years = Math.floor(days / 365);
     var remainingDays = days % 365;
     var months = Math.floor(remainingDays / 30);
@@ -2416,8 +2762,19 @@
   };
 
   window.onload = function () {
-    init();
-    bindBackButtons();
+    // 🔐 v2: 先確認登入 (LINE / Google)，業務端才開始；客戶端 view=client 直接開始 (見 JS_AitAuth)
+    AIT.gate(function (sess) {
+      init();
+      bindBackButtons();
+      // 🚀 保留日誌秒進：業務端 App 開好 5 秒後在背景先把保留日誌載好 (客戶端、獨立查庫存不載)
+      var p = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.params) || {};
+      if (sess && p.view !== 'client' && p.view !== 'inventory' && !p.rsv) {
+        setTimeout(function () {
+          var pg = document.getElementById('page-reserve');
+          if (pg && getComputedStyle(pg).display === 'none') loadReserveFrame_(false);
+        }, 5000);
+      }
+    });
   };
 
   function extractId(url) {
@@ -2759,27 +3116,48 @@
     var imgHtml = it.img
       ? '<img src="' + it.img + '" onerror="this.parentElement.innerHTML=\'<span>NO IMG</span>\'">'
       : '<span>NO IMG</span>';
-    // 🚀 批號可選也可自打：如果這個編號在庫存裡有查到現成批號，用 <datalist> 做成下拉可選＋仍可自行輸入。
+    // 🚀 批號可選也可自打：如果這個編號在庫存裡有查到現成批號，用 <datalist> 做成下拉可選＋仍可自行輸入，預設自動帶入第一批號
+    var defaultBatch = (it.batches && it.batches.length) ? it.batches[0] : '';
     var batchListId = 'batch-opts-' + blockId + '-' + it.sku.replace(/[^A-Za-z0-9]/g, '');
     var batchOptionsHtml = (it.batches && it.batches.length)
       ? '<datalist id="' + batchListId + '">' + it.batches.map(function (b) { return '<option value="' + escapeHtml(b) + '">'; }).join('') + '</datalist>'
       : '';
-    return '<div class="autofill-item-row" data-sku="' + escapeHtml(it.sku) + '" data-size="' + escapeHtml(sizeVal || '') + '">' +
+    return '<div class="autofill-item-row" data-sku="' + escapeHtml(it.sku) + '" data-size="' + escapeHtml(sizeVal || '') + '" data-default-batch="' + escapeHtml(defaultBatch) + '">' +
       '<input type="checkbox" onchange="toggleAutofillRow(this)">' +
       '<div class="autofill-item-thumb">' + imgHtml + '</div>' +
       '<div class="autofill-item-info">' +
         '<div class="autofill-item-sku">' + escapeHtml(it.sku) + '</div>' +
         (it.color ? '<div class="autofill-item-color">' + escapeHtml(it.color) + '</div>' : '') +
       '</div>' +
-      '<input type="text" class="autofill-item-qty" placeholder="片數" inputmode="numeric" pattern="[0-9]*">' +
-      '<input type="text" class="autofill-item-batch" placeholder="批號"' + (batchOptionsHtml ? ' list="' + batchListId + '"' : '') + '>' +
+      '<input type="text" class="autofill-item-qty" placeholder="片數" inputmode="numeric" pattern="[0-9]*" oninput="onAutofillInput(this)">' +
+      '<input type="text" class="autofill-item-batch" placeholder="批號"' + (defaultBatch ? ' value="' + escapeHtml(defaultBatch) + '"' : '') + (batchOptionsHtml ? ' list="' + batchListId + '"' : '') + ' oninput="onAutofillInput(this)">' +
       batchOptionsHtml +
     '</div>';
   }
 
   window.toggleAutofillRow = function (cb) {
     var row = cb.closest('.autofill-item-row');
-    if (row) row.classList.toggle('checked', cb.checked);
+    if (row) {
+      row.classList.toggle('checked', cb.checked);
+      if (cb.checked) {
+        var qtyInput = row.querySelector('.autofill-item-qty');
+        if (qtyInput && !qtyInput.value) qtyInput.value = '1';
+        var batchInput = row.querySelector('.autofill-item-batch');
+        if (batchInput && !batchInput.value && row.dataset.defaultBatch) {
+          batchInput.value = row.dataset.defaultBatch;
+        }
+      }
+    }
+  };
+
+  window.onAutofillInput = function (inputEl) {
+    var row = inputEl.closest('.autofill-item-row');
+    if (!row) return;
+    var cb = row.querySelector('input[type="checkbox"]');
+    if (cb && !cb.checked) {
+      cb.checked = true;
+      row.classList.add('checked');
+    }
   };
 
   window.addNewAddRow = function (blockId) {
@@ -3840,6 +4218,199 @@
         if (msgs.length > 1) _stockoutTimer = setInterval(show, 4000);
       })
       .getLatestStockoutEntries();
+  }
+
+  // 🗞️ 載入最新業務版面更新，跑馬燈輪播與版面記錄提示標籤
+  let _layoutActivities = [];
+  let _layoutHeadlines = [];
+  let _layoutTickerTimer = null;
+
+  function loadLayoutActivities() {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success) return;
+        const nowMs = Date.now();
+        const oneWeekMs = 7 * 24 * 3600 * 1000;
+        // 🚀 前端雙重保險：過濾超過 1 週（7天）的舊紀錄，並嚴格按時間由新到舊排序（愈新的愈上面）
+        _layoutActivities = (res.activities || [])
+          .filter(function(a) { return a && a.timestamp && (nowMs - a.timestamp <= oneWeekMs); })
+          .sort(function(a, b) { return b.timestamp - a.timestamp; });
+        _layoutHeadlines = _layoutActivities.map(function(a) { return a.headline; }).filter(Boolean);
+
+        // 1. 更新首頁版面記錄卡片上的提示符號
+        updateLayoutCardBadge({ activities: _layoutActivities, hasNew: res.hasNew });
+
+        // 2. 啟動頂部 POWERED BY 跑馬燈輪播
+        if (_layoutHeadlines && _layoutHeadlines.length > 0) {
+          startLayoutHeadlineTicker(_layoutHeadlines);
+        }
+      })
+      .withFailureHandler(function(err) {
+        console.warn('載入最新版面動態失敗：', err);
+      })
+      .getLatestLayoutActivities();
+  }
+
+  function updateLayoutCardBadge(res) {
+    const badgeEl = document.getElementById('layout-badge');
+    const badgeText = document.getElementById('layout-badge-text');
+    if (!badgeEl) return;
+
+    if (!res || !res.activities || !res.activities.length) {
+      badgeEl.style.display = 'none';
+      return;
+    }
+
+    const lastSeenTs = parseInt(localStorage.getItem('ag_last_seen_layout_ts') || '0', 10);
+    const unreadCount = res.activities.filter(function(a) { return a.timestamp > lastSeenTs; }).length;
+
+    if (unreadCount > 0) {
+      if (badgeText) badgeText.innerText = unreadCount > 1 ? (unreadCount + ' 筆更新') : 'NEW';
+      badgeEl.style.display = 'inline-flex';
+    } else if (res.hasNew) {
+      if (badgeText) badgeText.innerText = '●';
+      badgeEl.style.display = 'inline-flex';
+      badgeEl.style.opacity = '0.75';
+    } else {
+      badgeEl.style.display = 'none';
+    }
+  }
+
+  function startLayoutHeadlineTicker(headlines) {
+    if (!headlines || !headlines.length) return;
+    const splashTicker = document.getElementById('ait-powerby-splash');
+    const dashTicker = document.getElementById('ait-powerby-dashboard');
+    let idx = 0;
+
+    const tick = function() {
+      const text = headlines[idx % headlines.length];
+      [splashTicker, dashTicker].forEach(function(el) {
+        if (!el) return;
+        el.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-3px)';
+        setTimeout(function() {
+          el.innerText = text;
+          el.style.opacity = '0.95';
+          el.style.transform = 'translateY(0)';
+        }, 400);
+      });
+      idx++;
+    };
+
+    tick();
+    if (_layoutTickerTimer) clearInterval(_layoutTickerTimer);
+    if (headlines.length > 1) {
+      _layoutTickerTimer = setInterval(tick, 4000);
+    }
+  }
+
+  function openLayoutHistoryModal() {
+    const modal = document.getElementById('layout-history-modal');
+    const listEl = document.getElementById('layout-history-list');
+    if (!modal) return;
+
+    modal.style.display = 'flex';
+
+    // 標記已讀，隱藏徽章
+    try {
+      localStorage.setItem('ag_last_seen_layout_ts', String(Date.now()));
+    } catch(e) {}
+    const badgeEl = document.getElementById('layout-badge');
+    if (badgeEl) badgeEl.style.display = 'none';
+
+    const nowMs = Date.now();
+    const oneWeekMs = 7 * 24 * 3600 * 1000;
+    const validActivities = (_layoutActivities || [])
+      .filter(function(a) { return a && a.timestamp && (nowMs - a.timestamp <= oneWeekMs); })
+      .sort(function(a, b) { return b.timestamp - a.timestamp; });
+
+    if (!validActivities.length) {
+      if (listEl) {
+        listEl.innerHTML = '<div style="text-align:center; padding:30px 0; color:rgba(255,255,255,0.4); font-size:13px;">最近一週尚無版面異動記錄</div>';
+      }
+      return;
+    }
+
+    renderLayoutHistoryList(validActivities);
+  }
+
+  function closeLayoutHistoryModal() {
+    const modal = document.getElementById('layout-history-modal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  function formatClientLayoutDetail(raw) {
+    if (!raw) return '';
+    let s = String(raw).trim();
+    if (!s) return '';
+    if (!s.startsWith('{') && !s.startsWith('[')) return s;
+    try {
+      let parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 1 && typeof parsed[0] === 'object' && parsed[0] !== null) {
+          parsed = parsed[0];
+        } else if (parsed.length > 1 && typeof parsed[0] === 'string') {
+          return parsed.slice(1).map(function(x) { return Array.isArray(x) ? x.join('、') : String(x); }).join(' ｜ ');
+        }
+      }
+      if (typeof parsed === 'object' && parsed !== null) {
+        let parts = [];
+        if (parsed.series) parts.push('系列 ' + parsed.series);
+        if (parsed.size) parts.push('尺寸 ' + parsed.size);
+        if (Array.isArray(parsed.items) && parsed.items.length > 0) {
+          let skus = parsed.items.map(function(it) {
+            if (typeof it === 'string') return it;
+            if (it && typeof it === 'object') {
+              let code = it.sku || it.code || it.productCode || '';
+              let q = (it.qty != null ? it.qty : it.quantity);
+              return code + (q != null ? '×' + q : '');
+            }
+            return '';
+          }).filter(Boolean);
+          if (skus.length > 0) {
+            parts.push(skus.slice(0, 8).join('、') + (skus.length > 8 ? ' 等 ' + skus.length + ' 項' : ''));
+          }
+        }
+        if (parsed.mode) parts.push('展示方式 ' + parsed.mode);
+        if (parsed.note) parts.push('備註：' + parsed.note);
+        if (parts.length > 0) return parts.join(' ｜ ');
+      }
+    } catch (e) {}
+    return s;
+  }
+
+  function renderLayoutHistoryList(activities) {
+    const listEl = document.getElementById('layout-history-list');
+    if (!listEl) return;
+
+    let html = '';
+    activities.forEach(function(act) {
+      let tagClass = 'tag-update';
+      if (act.action === '新增了') tagClass = 'tag-add';
+      else if (act.action === '下架了' || act.action === '刪除了') tagClass = 'tag-off';
+      else if (act.action === '備註了') tagClass = 'tag-note';
+
+      const nick = escapeHtml(act.salesNick || act.salesName || '業務');
+      const cust = escapeHtml(act.customer || '客戶');
+      const timeStr = escapeHtml(act.timeFormatted || '');
+      const detailStr = escapeHtml(formatClientLayoutDetail(act.detail) || '版面內容異動');
+
+      html += '<div class="layout-act-card">' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">' +
+                  '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">' +
+                    '<span style="font-weight:800; color:#fff; font-size:14px;">' + nick + '</span>' +
+                    '<span class="layout-act-tag ' + tagClass + '">' + escapeHtml(act.action) + '</span>' +
+                    '<span style="font-weight:800; color:#f5d98a; font-size:14px;">' + cust + '</span>' +
+                    '<span style="color:rgba(255,255,255,0.6); font-size:13px;">的版面</span>' +
+                  '</div>' +
+                  '<div style="font-size:11px; color:rgba(255,255,255,0.4); white-space:nowrap;">' + timeStr + '</div>' +
+                '</div>' +
+                (detailStr ? '<div style="font-size:12px; color:rgba(255,255,255,0.7); line-height:1.4; background:rgba(0,0,0,0.25); padding:6px 10px; border-radius:8px;">' + detailStr + '</div>' : '') +
+              '</div>';
+    });
+
+    listEl.innerHTML = html;
   }
 
   // 🔍 搜尋客戶名稱篩選

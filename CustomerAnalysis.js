@@ -14,7 +14,7 @@ const CA_CONFIG = {
   COMPANY: 'elitile',        // 高雅瓷；戰情室用 elitile/antiga/siena 區分三家公司
   TIMEOUT_MS: 60000,
   CACHE_TTL_ALL: 1800,       // 全客戶總表：戰情室要掃整份銷售報表，較貴，快取 30 分鐘
-  CACHE_TTL_ONE: 600         // 單一客戶的細項：快取 10 分鐘
+  CACHE_TTL_ONE: 1800       // 單一客戶的細項：快取 10 分鐘
 };
 
 /** 戰情室唯讀金鑰放在指令碼屬性，不寫進程式碼 */
@@ -184,7 +184,7 @@ function caGetAllCustomersCached_(forceRefresh) {
  * @param {string} customerName 手機端當前選取的客戶（業務分區的原始名稱）
  * @param {boolean} [forceRefresh] 略過快取重新抓
  */
-function getCustomerAnalysisSnapshot(customerName, forceRefresh) {
+function getCustomerAnalysisSnapshot_impl_(customerName, forceRefresh) {
   const rawName = String(customerName || '').trim();
   if (!rawName) return { success: false, msg: '沒有指定客戶' };
 
@@ -229,7 +229,7 @@ function getCustomerAnalysisSnapshot(customerName, forceRefresh) {
  * @param {string} customerName 原始客戶名稱
  * @param {string} part 'timeline' | 'warroom' | 'breakdown'
  */
-function getCustomerAnalysisDetail(customerName, part) {
+function getCustomerAnalysisDetail_impl_(customerName, part) {
   const rawName = String(customerName || '').trim();
   if (!rawName) return { success: false, msg: '沒有指定客戶' };
 
@@ -264,7 +264,7 @@ function getCustomerAnalysisDetail(customerName, part) {
  * 就會變成第二個會漂移的複本（這個專案群已經吃過這種虧）。
  * @param {string} salesName 業務姓名
  */
-function getCustomerAnalysisListForSales(salesName) {
+function getCustomerAnalysisListForSales_impl_(salesName) {
   const name = String(salesName || '').trim();
   if (!name) return { success: false, msg: '沒有指定業務' };
 
@@ -309,7 +309,7 @@ function getCustomerAnalysisListForSales(salesName) {
  * key 用 normalizeIncomingSkuKey_ 正規化過的編號，因為戰情室回傳的編號
  * 是 cleanSku() 處理過的（大寫去空白），兩邊要對得起來。
  */
-function getSkuImageMap() {
+function getSkuImageMap_impl_() {
   const cacheKey = 'ca_sku_img_v1';
   try {
     const cached = CacheManager.getLarge(cacheKey);
@@ -386,7 +386,7 @@ function caClassifySample_(qty, sizeStr, note) {
  * 回傳 bySku：每個 SKU 最後一次「真樣品」與「門市陳列」的日期與數量，
  * 以及整體的最後拿樣時間。
  */
-function getCustomerSampleInfo(customerName) {
+function getCustomerSampleInfo_impl_(customerName) {
   const rawName = String(customerName || '').trim();
   if (!rawName) return { success: false, msg: '沒有指定客戶' };
 
@@ -517,7 +517,7 @@ function caGetNoteSheet_() {
 }
 
 /** 新增一筆版面詢問紀錄 */
-function addDisplayNote(customerName, photoUrl, series, salesName, content) {
+function addDisplayNote_impl_(customerName, photoUrl, series, salesName, content) {
   const text = String(content || '').trim();
   if (!text) return { success: false, msg: '內容不可空白' };
   try {
@@ -557,7 +557,7 @@ function caFmtNoteDate_(v) {
 }
 
 /** 讀取某客戶的版面詢問紀錄，依版面連結分組 */
-function getDisplayNotes(customerName) {
+function getDisplayNotes_impl_(customerName) {
   const name = String(customerName || '').trim();
   if (!name) return { success: false, msg: '沒有指定客戶' };
   const cacheKey = 'ca_notes_v1_' + name;
@@ -588,7 +588,7 @@ function getDisplayNotes(customerName) {
       byPhoto[k].sort(function (a, b) { return String(b.time).localeCompare(String(a.time)); });
     });
     const out = { success: true, byPhoto: byPhoto };
-    try { CacheManager.putLarge(cacheKey, out, 300); } catch (e) {}
+    try { CacheManager.putLarge(cacheKey, out, 900); } catch (e) {}
     return out;
   } catch (e) {
     return { success: false, msg: '讀取失敗：' + e };

@@ -13,21 +13,21 @@
  * 對外入口：getIncomingCargoContainers(branch) → 前端 google.script.run 呼叫
  */
 
-const INCOMING_CARGO_SS_ID = '13la6Rx4cuLFg0lcbtG-q0YZcq_vBA83l9TcA7T7MNiY';
-const INCOMING_CARGO_SHEET_NAME = '到貨明細(唯讀)';
-const INCOMING_CARGO_M2_TO_PING = 0.3025;
-const INCOMING_CARGO_BRANCHES = ['高雅瓷', '安帝嘉', '喜悅納', '漢樺'];
+var INCOMING_CARGO_SS_ID = typeof INCOMING_CARGO_SS_ID !== 'undefined' ? INCOMING_CARGO_SS_ID : '13la6Rx4cuLFg0lcbtG-q0YZcq_vBA83l9TcA7T7MNiY';
+var INCOMING_CARGO_SHEET_NAME = typeof INCOMING_CARGO_SHEET_NAME !== 'undefined' ? INCOMING_CARGO_SHEET_NAME : '到貨明細(唯讀)';
+var INCOMING_CARGO_M2_TO_PING = 0.3025;
+var INCOMING_CARGO_BRANCHES = typeof INCOMING_CARGO_BRANCHES !== 'undefined' ? INCOMING_CARGO_BRANCHES : ['高雅瓷', '安帝嘉', '喜悅納', '漢樺'];
 
 // 🏢 集團分公司各自獨立的「編號價目表」試算表 ID（來源：睡美人戰情室 PHP 專案 config.php）
 // 漢樺不是集團自己的分公司（是客戶/專案名稱），查不到品項時一律退回高雅瓷主表比對。
-const INCOMING_CARGO_BRANCH_SS_ID = {
+var INCOMING_CARGO_BRANCH_SS_ID = typeof INCOMING_CARGO_BRANCH_SS_ID !== 'undefined' ? INCOMING_CARGO_BRANCH_SS_ID : {
   '高雅瓷': null, // null = 用 CONFIG.SS_ID_MAIN
   '安帝嘉': '16QNID9hLs2K1iy_ePo7MxYxhW4kpDrDlfEIZ2p83ixo',
   '喜悅納': '1uFKKWBfulg-GmCbJsSomimT5LW5r0N2w28rubrPveTA'
 };
 
 // 🚢 港口代碼 → 中文全名
-const INCOMING_CARGO_PORT_NAMES = {
+var INCOMING_CARGO_PORT_NAMES = typeof INCOMING_CARGO_PORT_NAMES !== 'undefined' ? INCOMING_CARGO_PORT_NAMES : {
   'KEE': '基隆港', 'KEEL': '基隆港', 'KAO': '高雄港', 'K.O.': '高雄港', 'KO': '高雄港', 'TPE': '台北港'
 };
 
@@ -200,7 +200,7 @@ function _cargoLookupMeta_(pKey, branches) {
  * @param {string} branch 分公司名稱，預設「高雅瓷」；傳 "全部" 則不篩選
  * @param {boolean} [forceRefresh] 為 true 時忽略快取，強制重新讀取試算表
  */
-function getIncomingCargoContainers(branch, forceRefresh) {
+function getIncomingCargoContainers_impl_(branch, forceRefresh) {
   const targetBranch = String(branch || '高雅瓷').trim();
   const cacheKey = 'INCOMING_CARGO_v2_' + targetBranch; // v2: 修正 ETA 排序失準/NaN 天數 bug，改用 etaTs 時間戳
 

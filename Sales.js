@@ -5,7 +5,7 @@
 const SALES_CONFIG = {
   SHEET_SALES: "經銷銷售報表",
   SHEET_ZONING: "業務分區",
-  FIXED_TARGET_PER_PERSON: 2000, // 每人 2000 萬
+  FIXED_TARGET_PER_PERSON: 1650, // 全公司年度目標 6600 萬 ÷ 4 人 = 每人 1650 萬
   SALES_PEOPLE: [
     { name: '謝博皓', alias: '小謝', color: '#378ADD' },
     { name: '潘右森', alias: '小潘', color: '#34C759' },
@@ -141,7 +141,7 @@ function getSharedSalesWeight(name) {
 /**
  * 💡 取得當前獎金配置 (優先從 Script Properties 讀取)
  */
-function getActiveBonusConfig() {
+function getActiveBonusConfig_impl_() {
   try {
     const prop = PropertiesService.getScriptProperties().getProperty("BONUS_CONFIG");
     let parsed = null;
@@ -182,11 +182,12 @@ function getActiveBonusConfig() {
 /**
  * 💡 儲存獎金配置至 Script Properties (供管理後台小姐使用)
  */
-function saveActiveBonusConfig(config) {
+function saveActiveBonusConfig_impl_(config) {
   try {
     PropertiesService.getScriptProperties().setProperty("BONUS_CONFIG", JSON.stringify(config));
     // 清除概況的快取，讓調整後即時重新計算
-    CacheManager.removeLarge("sales_overview_v3.4_monthly");
+    CacheManager.removeLarge("sales_overview_v3.5_target6600");
+    CacheManager.removeLarge("products_rows_v1");
     // 🐛 [2026-08-14 修正] 一併清除後台獎金精算報表快取，否則改門檻後 1 小時內報表仍顯示舊數據
     clearAdminBonusReportCacheWindow_();
     return { success: true, msg: "獎金參數設定儲存成功並已即時生效！" };
@@ -211,7 +212,7 @@ function clearAdminBonusReportCacheWindow_() {
 /**
  * 📊 產生後台業績獎金精算與低於六折折半明細報表 (供小姐查看)
  */
-function getAdminBonusReport(year, monthIdx, forceRefresh) {
+function getAdminBonusReport_impl_(year, monthIdx, forceRefresh) {
   const cacheKey = "admin_bonus_report_v5_" + year + "_" + monthIdx;
   // 🐛 [2026-08-15 修正] 「計算」按鈕原本會先吃 1 小時快取，改門檻後按計算/重新整理都可能還是舊資料。
   //    forceRefresh 為 true 時（前端「計算」按鈕永遠帶 true）直接略過快取讀取，強制重新算最新結果。
@@ -234,14 +235,17 @@ function clearAdminBonusReportCache(year, monthIdx) {
   CacheManager.removeLarge("admin_bonus_report_v5_" + year + "_" + monthIdx);
 }
 
-function _computeAdminBonusReport(year, monthIdx) {
+function _computeAdminBonusReport(year, monthIdx, ctx) {
   try {
-    const activeConfig = getActiveBonusConfig();
-    const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
-    const salesSheet = ss.getSheetByName(SALES_CONFIG.SHEET_SALES);
-    const salesData = salesSheet.getDataRange().getValues();
+    // 🗂️ [2026-09-01] 新增選用參數 ctx：跨月匯出時由 Export_BonusExcel.js 傳入預先載入的
+    //    銷貨表/同行價/睡美人/系列/配送資料，避免每個月都重讀一次整張表而撞執行時間上限。
+    //    不傳 ctx 時行為與原本完全相同。
+    ctx = ctx || {};
+    const activeConfig = ctx.activeConfig || getActiveBonusConfig();
+    const ss = ctx.ss || SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
+    const salesData = ctx.salesData || ss.getSheetByName(SALES_CONFIG.SHEET_SALES).getDataRange().getValues();
     const sh = salesData[0];
-    const sIdx = {
+    const sIdx = ctx.sIdx || {
       date: findHeaderIndex(sh, ["單據日期", "銷貨日期", "日期"]),
       sales: findHeaderIndex(sh, ["負責業務", "業務", "負責人", "業務員"]),
       amt: findHeaderIndex(sh, ["金額", "銷額", "銷售金額", "成交金額", "小計", "總計", "未稅金額"]),
@@ -253,9 +257,12 @@ function _computeAdminBonusReport(year, monthIdx) {
       price: findHeaderIndex(sh, ["單價", "成交單價"])
     };
 
-    const peerPriceMap = getPeerPriceMap(ss);
-    const deliveryRes = getDeliveryBonusData(year);
-    const deliveryMap = deliveryRes.success ? deliveryRes.data : {};
+    const peerPriceMap = ctx.peerPriceMap || getPeerPriceMap(ss);
+    let deliveryMap = ctx.deliveryMap;
+    if (!deliveryMap) {
+      const deliveryRes = getDeliveryBonusData(year);
+      deliveryMap = deliveryRes.success ? deliveryRes.data : {};
+    }
     const targetYear = parseInt(year) > 1900 ? parseInt(year) - 1911 : parseInt(year);
     const targetMonth = parseInt(monthIdx); // 0-indexed
     const monthStr = String(targetMonth + 1).padStart(2, '0');
@@ -266,8 +273,8 @@ function _computeAdminBonusReport(year, monthIdx) {
     const salespeopleNames = Object.keys(activeConfig.RULES).filter(name => activeConfig.RULES[name].enabled !== false);
 
     // 載入睡美人與系列設定
-    const sleeperMap = getSleeperConfigMap(ss);
-    const seriesMap = getSeriesMap(ss);
+    const sleeperMap = ctx.sleeperMap || getSleeperConfigMap(ss);
+    const seriesMap = ctx.seriesMap || getSeriesMap(ss);
 
     const report = {
       year: targetYear,
@@ -599,17 +606,57 @@ function _computeAdminBonusReport(year, monthIdx) {
 }
 
 /**
+ * 🚀 編號價目表「精簡欄位」整表共用快取（30 分鐘，CacheManager 分片）
+ * getPeerPriceMap / getPeerPriceAndSeriesMap / getSleeperConfigMap / getSeriesMap 原本各自
+ * getDataRange().getValues() 整表重掃（getSalesOverview 冷啟動會連掃 2-3 次、獎金匯出 3 次），
+ * 改成跨執行共用一份資料。為避免把整張價目表（含超長圖片網址）塞爆快取池，這裡在快取前
+ * 只保留四個消費者真正需要的 7 個欄位：編號 / 同行價 / 中文系列 / 系列 / 睡美人 / 成本 / 不續辦。
+ * 回傳格式維持 [headers, rows...]，消費端仍用 findHeaderIndex 找欄位。
+ */
+function getProductsRowsCached_(ss) {
+  const CACHE_KEY = "products_rows_v1";
+  try {
+    const cached = CacheManager.getLarge(CACHE_KEY);
+    if (cached) return cached;
+  } catch (e) {}
+
+  const priceSheet = ss.getSheetByName("編號價目表");
+  if (!priceSheet) return [];
+  const data = priceSheet.getDataRange().getValues();
+  const headers = data[0];
+  const idx = {
+    sku: findHeaderIndex(headers, ["編號", "產品編號"]),
+    peer: findHeaderIndex(headers, ["同行價", "同行"]),
+    seriesCn: findHeaderIndex(headers, ["中文系列", "系列中文", "中文名稱", "系列"]),
+    seriesEn: findHeaderIndex(headers, ["系列", "英文系列"]),
+    sleeper: findHeaderIndex(headers, ["睡美人"]),
+    cost: findHeaderIndex(headers, ["成本", "單片成本", "成本價"]),
+    discon: findHeaderIndex(headers, ["不續辦"])
+  };
+  const outHeaders = ["編號", "同行價", "中文系列", "系列", "睡美人", "成本", "不續辦"];
+  const keep = [idx.sku, idx.peer, idx.seriesCn, idx.seriesEn, idx.sleeper, idx.cost, idx.discon];
+  const outRows = [outHeaders];
+  data.slice(1).forEach(row => {
+    const c = keep.map(k => (k !== -1 ? row[k] : ''));
+    if (String(c[0] || '').trim() || String(c[1] || '').trim() || String(c[2] || '').trim() || String(c[3] || '').trim()) {
+      outRows.push(c);
+    }
+  });
+  try { CacheManager.putLarge(CACHE_KEY, outRows, 1800); } catch (e) {}
+  return outRows;
+}
+
+/**
  * 🔍 取得商品同行價對照 Map (sku -> 同行價)
  */
 function getPeerPriceMap(ss) {
-  const priceSheet = ss.getSheetByName("編號價目表");
+  const pRows = getProductsRowsCached_(ss);
   const map = {};
-  if (priceSheet) {
-    const ph = priceSheet.getRange(1, 1, 1, priceSheet.getLastColumn()).getValues()[0];
+  if (pRows && pRows.length > 1) {
+    const ph = pRows[0];
     const skuIdx = findHeaderIndex(ph, ["編號", "產品編號"]);
     const peerIdx = findHeaderIndex(ph, ["同行價", "同行"]);
     if (skuIdx !== -1 && peerIdx !== -1) {
-      const pRows = priceSheet.getDataRange().getValues();
       pRows.slice(1).forEach(r => {
         const sku = String(r[skuIdx] || "").toUpperCase().replace(/[\s\-]/g, '');
         const price = parseFloat(r[peerIdx]) || 0;
@@ -633,7 +680,7 @@ function getPeerPriceAndSeriesMap(ss) {
   const codeSeriesMap = {};
   const priceSheet = ss.getSheetByName("編號價目表");
   if (priceSheet) {
-    const pData = priceSheet.getDataRange().getValues();
+    const pData = getProductsRowsCached_(ss);
     const ph = pData[0];
     const skuIdx = findHeaderIndex(ph, ["編號", "產品編號"]);
     const peerIdx = findHeaderIndex(ph, ["同行價", "同行"]);
@@ -726,7 +773,7 @@ function getSleeperConfigMap(ss) {
     // 2. 讀取 編號價目表 (Overlay 成本, 並加入 marked 睡美人)
     const priceSheet = ss.getSheetByName("編號價目表");
     if (priceSheet) {
-      const priceData = priceSheet.getDataRange().getValues();
+      const priceData = getProductsRowsCached_(ss);
       if (priceData.length > 1) {
         const pH = priceData[0];
         const pCode = findHeaderIndex(pH, ["編號", "產品編號"]);
@@ -807,7 +854,7 @@ function getSeriesMap(ss) {
     }
     const priceSheet = ss.getSheetByName("編號價目表");
     if (priceSheet) {
-      const data = priceSheet.getDataRange().getValues();
+      const data = getProductsRowsCached_(ss);
       if (data.length > 1) {
         const h = data[0];
         const idxSku = findHeaderIndex(h, ["編號", "產品編號"]);
@@ -966,12 +1013,13 @@ function calculateSalesBonus(salesName, monthlySales) {
 /**
  * 🎯 設定睡美人年度目標（單位：萬），供前端可調整
  */
-function setSleeperAnnualTarget(value) {
+function setSleeperAnnualTarget_impl_(value) {
   try {
     const v = parseFloat(value);
     if (isNaN(v) || v <= 0) return { success: false, msg: "目標金額不正確" };
     PropertiesService.getScriptProperties().setProperty("SLEEPER_ANNUAL_TARGET", String(v));
-    CacheManager.removeLarge('sales_overview_v3.4_monthly');
+    CacheManager.removeLarge('sales_overview_v3.5_target6600');
+    CacheManager.removeLarge('products_rows_v1');
     return { success: true };
   } catch (e) {
     return { success: false, msg: e.toString() };
@@ -1081,8 +1129,8 @@ function getCustomerYtdCompareByBiz(employeeName) {
   }
 }
 
-function getSalesOverview() {
-  const cacheKey = 'sales_overview_v3.4_monthly'; // 升級快取 Key（新增睡美人明細/目標）
+function getSalesOverview_impl_() {
+  const cacheKey = 'sales_overview_v3.5_target6600'; // 升級快取 Key（新增睡美人明細/目標）
   const cached = CacheManager.getLarge(cacheKey);
   if (cached) return { success: true, data: cached };
 
@@ -1380,7 +1428,7 @@ function getSalesOverview() {
     result.target.total = Math.round(result.target.total * 10) / 10;
     result.achieveRate = result.target.total > 0 ? Math.round(result.year.total / result.target.total * 1000) / 10 : 0;
 
-    CacheManager.putLarge(cacheKey, result, 600); // 快取 10 分鐘
+    CacheManager.putLarge(cacheKey, result, 1800); // 快取 10 分鐘
 
     return { success: true, data: result };
   } catch (e) {
@@ -1391,7 +1439,7 @@ function getSalesOverview() {
 /**
  * 取得單人業績 (相容舊版或供詳情按鈕呼叫)
  */
-function getSalespersonKpi(salesName, monthIdx) {
+function getSalespersonKpi_impl_(salesName, monthIdx) {
   const overview = getSalesOverview();
   if (!overview.success) return overview;
   
@@ -1499,7 +1547,7 @@ function getSalespersonKpi(salesName, monthIdx) {
 /**
  * 🚀 取得睡美人產品銷售明細
  */
-function getSleeperDetails(salesName, monthIdx) {
+function getSleeperDetails_impl_(salesName, monthIdx) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
     const salesSheet = ss.getSheetByName("經銷銷售報表");
@@ -1570,7 +1618,7 @@ function getSleeperDetails(salesName, monthIdx) {
           date: Utilities.formatDate(d, "GMT+8", "MM/dd"),
           cust: String(r[sIdx.cust] || "").trim(),
           sku: code,
-          series: seriesMap[code] || "一般",
+          series: (seriesMap[code] && seriesMap[code] !== "一般") ? seriesMap[code] : "未分類",
           amt: Math.round(amt)
         });
       }
@@ -1610,7 +1658,7 @@ function syncAllMonths2026() {
  * 每日自動同步（由 Time-driven trigger 呼叫）
  * 同步當年全年資料至業務分區表
  */
-function dailyAutoSync() {
+function dailyAutoSync_impl_() {
   const year = new Date().getFullYear();
   const result = syncSalesDataByYear(year);
   console.log("【每日自動同步】" + result.msg);
@@ -1689,13 +1737,21 @@ function prewarmCustomerVisitRanking() {
 /**
  * 🔥 統一預熱入口：業績總覽 + 庫存查詢 + 上架追蹤 + 全知視角（預設日）+ 客戶到訪紀錄
  */
-function prewarmAllCaches() {
+function prewarmAllCaches_impl_() {
   prewarmSalesOverview();
   prewarmInventoryMap();
   prewarmShelfTracking();
   prewarmOmniscientLogs();
   prewarmCustomerVisitRanking();
   prewarmIncomingCargo();
+  // 🚀 效能優化：一併預熱「戰情室客戶分析總表」（外部 API 較貴，先熱好點客戶才不用等）
+  try { caGetAllCustomersCached_(false); } catch (e) {}
+  // 🚀 效能優化：版面清單 / 業務名單 / 白名單也在離峰先熱好，
+  //    「正在讀取版面資料」「正在讀取雲端名單」第一次點就幾乎瞬間
+  try { getLayoutRowsCached_(getSafeSsBusiness()); } catch (e) {}
+  try { getSalesList(true); } catch (e) {}
+  try { getSalesList(false); } catch (e) {}
+  try { getWhitelistRowsCached_(SpreadsheetApp.openById(CONFIG.SS_ID)); } catch (e) {}
 }
 
 /**
@@ -1944,7 +2000,7 @@ function testSleeperCalculation() {
 /**
  * 💾 儲存並更新業績與成本/同行價數值回試算表
  */
-function saveSalesBonusRow(rowIdx, productCode, qty, unitPrice, cost, peerPrice) {
+function saveSalesBonusRow_impl_(rowIdx, productCode, qty, unitPrice, cost, peerPrice) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
     
@@ -2036,7 +2092,8 @@ function saveSalesBonusRow(rowIdx, productCode, qty, unitPrice, cost, peerPrice)
     }
     
     // 清除大緩存
-    CacheManager.removeLarge("sales_overview_v3.4_monthly");
+    CacheManager.removeLarge("sales_overview_v3.5_target6600");
+    CacheManager.removeLarge("products_rows_v1");
     _sleeperConfigMapCache = null;
     
     return { success: true };
@@ -2091,7 +2148,7 @@ function recalcAwardsBySettleAmount(salesName, monthIdx, settleAmount) {
 /**
  * 🚀 高雅瓷特定業務與客戶銷量分析數據 (與安帝嘉/睡美人戰情室全效能快取對齊)
  */
-function getSalesPerformanceData(sales, key, targetCustomer, timeRange) {
+function getSalesPerformanceData_impl_(sales, key, targetCustomer, timeRange) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID_MAIN);
     const cacheSheet = ss.getSheetByName("產品年度銷售快取");
@@ -2236,7 +2293,10 @@ function getSalesPerformanceData(sales, key, targetCustomer, timeRange) {
         }
 
         if (monthMap[mKey] || monthMap[prevMKey]) {
-          const seriesName = seriesMap[sku] || '一般系列';
+          // 系列對照：先精確比對，再比對「去空白/連字號」版本與去尾碼(-S/-D…)版本；都找不到才標「未分類」
+          const _skuN = String(sku || '').toUpperCase().replace(/[\s\-]/g, '');
+          let seriesName = seriesMap[sku] || seriesMap[_skuN] || seriesMap[_skuN.replace(/[A-Z]$/, '')] || '未分類';
+          if (seriesName === '一般') seriesName = '未分類';
 
           if (!customerItemsMap[sku]) {
             customerItemsMap[sku] = {

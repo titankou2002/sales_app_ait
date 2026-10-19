@@ -42,6 +42,198 @@
     }
   }
 
+
+  /**
+   * 🎨 SVG 圖示 / 日期 / 週幾 小工具（取代 emoji；圖示庫 sprite 在 FieldWork_UI.html）
+   */
+  function aitIcon(name, size) {
+    size = size || 16;
+    return '<svg class="ait-ico" width="' + size + '" height="' + size + '" aria-hidden="true"><use href="#ico-' + name + '"/></svg>';
+  }
+  window.aitIcon = aitIcon;
+  var FW_WD = ['日', '一', '二', '三', '四', '五', '六'];
+  function fwPad2(n) { return String(n).padStart(2, '0'); }
+  function fwDateStr(d) { return d.getFullYear() + '-' + fwPad2(d.getMonth() + 1) + '-' + fwPad2(d.getDate()); }
+  function fwTodayStr() { return fwDateStr(new Date()); }
+  window.fwTodayStr = fwTodayStr;
+  function fwParseDate(s) { const p = String(s).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  /** 車牌 SVG 徽章（放卡片右上角） */
+  function fwPlateBadge(plate) {
+    const txt = String(plate || '--').replace(/[<>&"]/g, '');
+    const w = Math.max(70, 20 + txt.length * 11);
+    return '<svg width="' + w + '" height="26" viewBox="0 0 ' + w + ' 26" role="img" aria-label="車牌 ' + txt + '">' +
+      '<rect x="1" y="1" width="' + (w - 2) + '" height="24" rx="6" fill="#fff" stroke="#334155" stroke-width="1.5"/>' +
+      '<rect x="4" y="4" width="' + (w - 8) + '" height="18" rx="4" fill="none" stroke="#94a3b8" stroke-width=".8"/>' +
+      '<text x="' + (w / 2) + '" y="18" text-anchor="middle" font-family="Menlo,Consolas,monospace" font-size="14" font-weight="800" fill="#0f172a">' + txt + '</text></svg>';
+  }
+
+  /**
+   * 📅 日誌日期列：‹ 日期 週X › ＋ 週一~週五快選列
+   */
+  var fwWeekLogDates = new Set();
+  function fwLogRenderBar() {
+    const input = document.getElementById('log-date');
+    if (!input) return;
+    const s = input.value || fwTodayStr();
+    const d = fwParseDate(s);
+    const wd = d.getDay();
+    const lab = document.getElementById('log-date-label');
+    if (lab) lab.textContent = d.getFullYear() + '/' + fwPad2(d.getMonth() + 1) + '/' + fwPad2(d.getDate());
+    const wdEl = document.getElementById('log-date-wd');
+    if (wdEl) { wdEl.textContent = '週' + FW_WD[wd]; wdEl.classList.toggle('weekend', wd === 0 || wd === 6); }
+    const isToday = (s === fwTodayStr());
+    const main = document.getElementById('fw-datebar-main');
+    if (main) main.classList.toggle('off-today', !isToday);
+    const warn = document.getElementById('fw-date-warn');
+    if (warn) warn.style.display = isToday ? 'none' : 'flex';
+    // 週一~週五（週末選到時，顯示該週的週一~五；週日歸前一週）
+    const mon = new Date(d); mon.setDate(d.getDate() - ((wd + 6) % 7));
+    const todayS = fwTodayStr();
+    let h = '';
+    for (let i = 0; i < 5; i++) {
+      const x = new Date(mon); x.setDate(mon.getDate() + i);
+      const xs = fwDateStr(x);
+      h += '<div class="fw-wk-day' + (xs === s ? ' sel' : '') + (xs === todayS ? ' today' : '') + (fwWeekLogDates.has(xs) ? ' has-log' : '') + '" onclick="fwLogSetDate(\'' + xs + '\')">' +
+        '<div class="w">週' + FW_WD[x.getDay()] + '</div><div class="d">' + (x.getMonth() + 1) + '/' + x.getDate() + '</div></div>';
+    }
+    const strip = document.getElementById('fw-weekstrip');
+    if (strip) strip.innerHTML = h;
+    const vl = document.getElementById('fw-log-view-label');
+    if (vl) vl.textContent = (d.getMonth() + 1) + '/' + d.getDate() + '(' + FW_WD[wd] + ')';
+  }
+  window.fwLogSetDate = function (s, skipTimeline) {
+    if (!s) return;
+    const input = document.getElementById('log-date');
+    if (input) input.value = s;
+    const v = document.getElementById('fw-log-view-date');
+    if (v) v.value = s;
+    fwLogRenderBar();
+    if (!skipTimeline) refreshFwTimeline(s);
+  };
+  window.fwLogShiftDay = function (n) {
+    const input = document.getElementById('log-date');
+    const d = fwParseDate((input && input.value) || fwTodayStr());
+    d.setDate(d.getDate() + n);
+    fwLogSetDate(fwDateStr(d));
+  };
+  window.fwLogOpenPicker = function () {
+    const input = document.getElementById('log-date');
+    if (!input) return;
+    try { input.showPicker(); } catch (e) { input.focus(); input.click(); }
+  };
+  /** 客戶常用快選（依本機選取次數由高到低） */
+  var fwCustAll = [];
+  function fwRenderCustChips() {
+    const box = document.getElementById('fw-cust-chips');
+    if (!box) return;
+    const sorted = fwSortByFreq('cust', fwCustAll);
+    let map = {};
+    try { map = JSON.parse(localStorage.getItem(fwFreqKey('cust')) || '{}'); } catch (e) {}
+    const top = sorted.filter(c => map[c] > 0).slice(0, 6);
+    box.innerHTML = top.map(c => '<button type="button" class="fw-cust-chip" data-c="' + encodeURIComponent(c) + '" onclick="document.getElementById(\'log-customer\').value=decodeURIComponent(this.dataset.c)">' + c.replace(/</g, '&lt;') + '</button>').join('');
+  }
+  window.fwDrvShiftDay = function (n) {
+    const el = document.getElementById('drv-date');
+    if (!el) return;
+    const d = fwParseDate(el.value || fwTodayStr());
+    d.setDate(d.getDate() + n);
+    el.value = fwDateStr(d);
+    fwDrvDateChanged();
+  };
+  window.fwDrvDateChanged = function () {
+    const el = document.getElementById('drv-date');
+    const b = document.getElementById('drv-date-wd');
+    if (!el || !b) return;
+    if (!el.value) { b.textContent = '--'; return; }
+    const wd = fwParseDate(el.value).getDay();
+    b.textContent = '週' + FW_WD[wd] + (el.value === fwTodayStr() ? '・今天' : '');
+    b.classList.toggle('weekend', wd === 0 || wd === 6);
+  };
+
+  /**
+   * 🕘 歷史紀錄（行駛／加油）：預設近兩週，可切換月份
+   */
+  var fwHistRange = { drv: '14', fuel: '14' };
+  var fwHistLogs = { drv: [], fuel: [] };
+  function fwHistInitMonths(kind) {
+    const sel = document.getElementById(kind + '-hist-month');
+    if (!sel) return;
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const fmt = d => d.getFullYear() + '-' + fwPad2(d.getMonth() + 1);
+    sel.innerHTML = '<option value="">選擇月份</option>' +
+      '<option value="' + fmt(now) + '">本月（' + (now.getMonth() + 1) + '月）</option>' +
+      '<option value="' + fmt(prev) + '">上月（' + (prev.getMonth() + 1) + '月）</option>';
+    sel.value = '';
+    sel.classList.remove('active');
+    fwHistRange[kind] = '14';
+    const chip = document.querySelector('#' + kind + '-hist-filter .fw-hist-chip');
+    if (chip) chip.classList.add('active');
+  }
+  window.fwHistSetRange = function (kind, val, el) {
+    const sel = document.getElementById(kind + '-hist-month');
+    const chip = document.querySelector('#' + kind + '-hist-filter .fw-hist-chip');
+    if (el && el.tagName === 'SELECT') {
+      if (!val) { val = '14'; }
+    } else if (sel) { sel.value = ''; }
+    fwHistRange[kind] = val;
+    if (chip) chip.classList.toggle('active', val === '14');
+    if (sel) sel.classList.toggle('active', val !== '14');
+    fwHistRender(kind);
+  };
+  function fwHistFilter(kind) {
+    const r = fwHistRange[kind];
+    const logs = fwHistLogs[kind] || [];
+    if (r === '14') {
+      const from = new Date(); from.setHours(0, 0, 0, 0); from.setDate(from.getDate() - 13);
+      return logs.filter(l => fwParseDate(String(l.date).split(' ')[0]) >= from);
+    }
+    return logs.filter(l => String(l.date).indexOf(r) === 0);
+  }
+  function fwHistDateLabel(l) {
+    const s = String(l.date).split(' ')[0];
+    const d = fwParseDate(s);
+    return (d.getMonth() + 1) + '/' + d.getDate() + '（週' + FW_WD[d.getDay()] + '）';
+  }
+  function fwHistRender(kind) {
+    const container = document.getElementById(kind === 'fuel' ? 'fuel-history-list' : 'driving-history-list');
+    if (!container) return;
+    let logs = fwHistFilter(kind);
+    if (kind === 'fuel') logs = logs.filter(l => (parseFloat(l.fuelAmt) > 0 || parseFloat(l.fuelLiters) > 0));
+    if (!logs.length) {
+      container.innerHTML = '<div style="text-align:center; padding:30px; opacity:0.4;">' + (kind === 'fuel' ? '此期間沒有加油紀錄' : '此期間沒有行駛紀錄') + '</div>';
+      return;
+    }
+    let total = '';
+    if (kind === 'fuel') {
+      const amt = logs.reduce((s, l) => s + (parseFloat(l.fuelAmt) || 0), 0);
+      const lit = logs.reduce((s, l) => s + (parseFloat(l.fuelLiters) || 0), 0);
+      total = '<div style="font-size:12px; opacity:0.7; margin-bottom:10px;">共 ' + logs.length + ' 筆　合計 $' + Math.round(amt).toLocaleString() + ' / ' + (Math.round(lit * 100) / 100) + ' L</div>';
+    } else {
+      const km = logs.reduce((s, l) => s + (parseFloat(l.dist) || 0), 0);
+      total = '<div style="font-size:12px; opacity:0.7; margin-bottom:10px;">共 ' + logs.length + ' 筆　合計 ' + Math.round(km).toLocaleString() + ' km</div>';
+    }
+    let html = total;
+    logs.forEach(l => {
+      const edit = '<button type="button" class="edit-btn" aria-label="編輯" onclick="openEditDriving(' + l.row + ')">' + aitIcon('edit', 16) + '</button>';
+      if (kind === 'fuel') {
+        const lit = l.fuelLiters ? l.fuelLiters + ' L' : '';
+        const amt = l.fuelAmt ? '$' + l.fuelAmt : '';
+        html += '<div class="fw-hcard fuel"><div class="plate">' + fwPlateBadge(l.plate) + '</div>' +
+          '<div class="dt" style="color:#fbbf24;">' + aitIcon('fuel', 16) + fwHistDateLabel(l) + '</div>' +
+          '<div class="big">' + (amt || '--') + (lit ? '<small>' + lit + '</small>' : '') + '</div>' +
+          (l.note ? '<div class="sub">' + aitIcon('note', 13) + String(l.note).replace(/</g, '&lt;') + '</div>' : '') + edit + '</div>';
+      } else {
+        html += '<div class="fw-hcard drive"><div class="plate">' + fwPlateBadge(l.plate) + '</div>' +
+          '<div class="dt" style="color:#4ade80;">' + aitIcon('car', 16) + fwHistDateLabel(l) + '</div>' +
+          '<div class="big">' + (l.dist || 0) + '<small>km（' + l.start + ' → ' + l.end + '）</small></div>' +
+          (l.route ? '<div class="sub">' + aitIcon('pin', 13) + String(l.route).replace(/</g, '&lt;') + '</div>' : '') +
+          (l.fuelAmt ? '<div class="sub" style="color:#fbbf24;">' + aitIcon('fuel', 13) + '加油金額 $' + l.fuelAmt + '</div>' : '') + edit + '</div>';
+      }
+    });
+    container.innerHTML = html;
+  }
+
   /**
    * 🌀 顯示/隱藏外勤模組載入遮罩
    */
@@ -75,8 +267,7 @@
 
     // 📅 日誌為預設進入分頁，比照 switchFwTab('fw-log') 初始化
     const todayStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
-    if (document.getElementById('log-date')) document.getElementById('log-date').value = todayStr;
-    refreshFwTimeline(todayStr);
+    fwLogSetDate(todayStr);
     if (typeof fwCalRender === 'function') fwCalRender();
   };
 
@@ -251,14 +442,7 @@
 
       // 🚀 初始化日誌日期
       const todayStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
-      if (document.getElementById('log-date')) document.getElementById('log-date').value = todayStr;
-      if (document.getElementById('fw-log-view-date')) {
-        const viewDate = document.getElementById('fw-log-view-date');
-        viewDate.value = todayStr;
-        refreshFwTimeline(todayStr);
-      } else {
-        refreshFwTimeline();
-      }
+      fwLogSetDate(todayStr);
 
       initFwTaskList();
       fwCalRender(); // 🚀 同步初始化日曆
@@ -458,6 +642,8 @@
         }
 
         dl.innerHTML = options.map(c => `<option value="${c}">`).join('');
+        fwCustAll = (list || []).slice();
+        fwRenderCustChips();
       })
       .getSalesCustomers(state.currentSales);
   }
@@ -490,9 +676,15 @@
 
     const viewDateInput = document.getElementById('fw-log-view-date');
     if (viewDateInput && viewDateInput.value !== targetDate) viewDateInput.value = targetDate;
+    const reqSeq = (window.__fwTlSeq = (window.__fwTlSeq || 0) + 1);
+    if (container) container.innerHTML = '<div class="ait-loading-box" style="padding:22px 0;"><div class="ait-spinner ait-spinner-sm"></div><div>讀取行程中...</div></div>';
 
     google.script.run
+      .withFailureHandler(function () {
+        if (reqSeq === window.__fwTlSeq && container) container.innerHTML = '<div style="text-align:center;opacity:0.5;padding:20px;font-size:12px;">讀取失敗，請再點一次日期</div>';
+      })
       .withSuccessHandler(function (res) {
+        if (reqSeq !== window.__fwTlSeq) return; // 已切到別天，丟棄舊回應
         if (res.success && res.logs.length > 0) {
           // Arrow format: 客戶(任務) → 客戶(任務)
           let html = '';
@@ -1146,44 +1338,18 @@
     if (!state.currentSales) return;
     const modal = document.getElementById('modal-fuel-history');
     const container = document.getElementById('fuel-history-list');
-
     if (modal) modal.style.display = 'flex';
-    if (container) container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入中...</div>';
+    fwHistInitMonths('fuel');
+    if (container) container.innerHTML = '<div class="ait-loading-box" style="padding:24px 0;"><div class="ait-spinner ait-spinner-sm"></div><div>載入中...</div></div>';
 
     google.script.run
+      .withFailureHandler(function () {
+        if (container) container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入失敗，請重試</div>';
+      })
       .withSuccessHandler(function (res) {
-        if (res.success && res.logs.length > 0) {
-          fwDrivingLogs = res.logs; // 供編輯彈窗取用
-          // 過濾出有加油金額或加油公升的紀錄
-          const fuelLogs = res.logs.filter(log => (parseFloat(log.fuelAmt) > 0 || parseFloat(log.fuelLiters) > 0));
-          if (fuelLogs.length > 0) {
-            let html = '';
-            fuelLogs.forEach(log => {
-              const litersStr = log.fuelLiters ? `${log.fuelLiters} L` : '';
-              const amtStr = log.fuelAmt ? `$${log.fuelAmt}` : '';
-              const litersAndAmt = [amtStr, litersStr].filter(Boolean).join(' / ');
-
-              html += `
-              <div style="background:rgba(251,191,36,0.05); border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid rgba(251,191,36,0.2);">
-                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                  <span style="color:#fbbf24; font-weight:800; font-size:14px;">⛽ 加油紀錄 ${log.date}</span>
-                  <span style="font-size:11px; opacity:0.6;">${log.plate}</span>
-                </div>
-                <div style="font-size:16px; color:#fff; font-weight:700; margin-bottom:5px;">${litersAndAmt}</div>
-                ${log.note ? `<div style="font-size:12px; opacity:0.7; line-height:1.4; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1);">📝 ${log.note}</div>` : ''}
-                <div style="display:flex; gap:10px; margin-top:12px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.12);">
-                  <button style="flex:1; padding:8px 0; border:none; border-radius:8px; background:rgba(56,189,248,0.15); color:#38bdf8; font-size:13px; font-weight:700; cursor:pointer;" onclick="openEditDriving(${log.row})">✏️ 編輯</button>
-                </div>
-              </div>
-            `;
-            });
-            container.innerHTML = html;
-          } else {
-            container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.3;">查無加油紀錄</div>';
-          }
-        } else {
-          container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.3;">查無加油紀錄</div>';
-        }
+        fwHistLogs.fuel = (res && res.success) ? res.logs : [];
+        fwDrivingLogs = fwHistLogs.fuel; // 供編輯彈窗取用
+        fwHistRender('fuel');
       })
       .getDrivingHistory(state.currentSales);
   };
@@ -1243,12 +1409,11 @@
   function loadDrivingTabData() {
     if (!state.currentSales) return;
 
-    // 0. 預設日期為前一天
-    const today = new Date();
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-    const dateStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+    // 0. 預設日期為今日（並標示週幾）
+    const dateStr = fwTodayStr();
     if (document.getElementById('drv-date')) document.getElementById('drv-date').value = dateStr;
     if (document.getElementById('drv-fuel-date')) document.getElementById('drv-fuel-date').value = dateStr;
+    fwDrvDateChanged();
 
     // 1. 帶入上次結束里程
     google.script.run
@@ -1365,35 +1530,18 @@
     if (!state.currentSales) return;
     const modal = document.getElementById('modal-driving-history');
     const container = document.getElementById('driving-history-list');
-
     modal.style.display = 'flex';
-    container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入中...</div>';
+    fwHistInitMonths('drv');
+    container.innerHTML = '<div class="ait-loading-box" style="padding:24px 0;"><div class="ait-spinner ait-spinner-sm"></div><div>載入中...</div></div>';
 
     google.script.run
+      .withFailureHandler(function () {
+        container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入失敗，請重試</div>';
+      })
       .withSuccessHandler(function (res) {
-        if (res.success && res.logs.length > 0) {
-          fwDrivingLogs = res.logs; // 供編輯彈窗取用
-          let html = '';
-          res.logs.forEach(log => {
-            html += `
-            <div style="background:rgba(255,255,255,0.05); border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
-              <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                <span style="color:#facc15; font-weight:800;">${log.date}</span>
-                <span style="font-size:11px; opacity:0.6;">${log.plate}</span>
-              </div>
-              <div style="font-size:13px; color:#4ade80; margin-bottom:5px; font-weight:700;">${log.dist} km (${log.start} → ${log.end})</div>
-              <div style="font-size:12px; opacity:0.7; line-height:1.4;">${log.route || '無詳細行程'}</div>
-              ${log.fuelAmt ? `<div style="font-size:11px; color:#fbbf24; margin-top:5px;">⛽ 加油金額: $${log.fuelAmt}</div>` : ''}
-              <div style="display:flex; gap:10px; margin-top:12px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.12);">
-                <button style="flex:1; padding:8px 0; border:none; border-radius:8px; background:rgba(56,189,248,0.15); color:#38bdf8; font-size:13px; font-weight:700; cursor:pointer;" onclick="openEditDriving(${log.row})">✏️ 編輯</button>
-              </div>
-            </div>
-          `;
-          });
-          container.innerHTML = html;
-        } else {
-          container.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.3;">查無行駛紀錄</div>';
-        }
+        fwHistLogs.drv = (res && res.success) ? res.logs.filter(l => (parseFloat(l.end) || 0) > 0 || (parseFloat(l.dist) || 0) > 0) : [];
+        fwDrivingLogs = (res && res.success) ? res.logs : [];
+        fwHistRender('drv');
       })
       .getDrivingHistory(state.currentSales);
   };
@@ -1608,6 +1756,8 @@
         if (res.success) {
           fwCalState.logDates = new Set(res.dates);
           fwCalDrawGrid(fwCalState.logDates);
+          fwWeekLogDates = fwCalState.logDates;
+          if (typeof fwLogRenderBar === 'function') fwLogRenderBar();
         }
       })
       .getWorkLogMonthDates(state.currentSales, monthStr);
@@ -1650,12 +1800,14 @@
     document.querySelectorAll('.fw-cal-day').forEach(d => d.classList.remove('selected'));
     if (el) el.classList.add('selected');
     const logArea = document.getElementById('fw-history-logs');
-    logArea.innerHTML = '<div style="text-align:center;opacity:0.5;padding:20px;font-size:13px;">Loading...</div>';
+    logArea.innerHTML = '<div class="ait-loading-box" style="padding:26px 0;"><div class="ait-spinner ait-spinner-sm"></div><div>讀取該日日誌...</div></div>';
+    const calSeq = (window.__fwCalSeq = (window.__fwCalSeq || 0) + 1);
     google.script.run
       .withFailureHandler(function (err) {
         logArea.textContent = '載入失敗: ' + (err.message || err);
       })
       .withSuccessHandler(function (res) {
+        if (calSeq !== window.__fwCalSeq) return;
         const parts = dateStr.split('-');
         const title = `${parseInt(parts[0])}年${parseInt(parts[1])}月${parseInt(parts[2])}日`;
         if (res.success && res.logs.length > 0) {
@@ -1805,7 +1957,7 @@
       return;
     }
 
-    box.innerHTML = '<div style="text-align:center; opacity:0.4; padding:40px 0; font-size:13px;">載入中…</div>';
+    box.innerHTML = '<div class="ait-loading-box" style="padding:40px 0;"><div class="ait-spinner"></div><div>載入中…</div></div>';
 
     google.script.run
       .withSuccessHandler(function (res) {
@@ -2142,37 +2294,81 @@
     detailBox.dataset.activeDate = String(dateIdx);
   };
 
+  // 🚀 全知視角：前端快取每個日期的結果（秒開）＋ 預取前後日期；快取舊了先秀舊的、背景悄悄更新
+  var adminGodCache = {};          // dateStr -> { data, ts }
+  var adminGodCurrent = '';
+  function adminGodFmt(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function adminGodWd(s) {
+    const p = s.split('-'); const d = new Date(+p[0], +p[1] - 1, +p[2]);
+    return '週' + ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+  }
+  function adminGodFetch(dateStr, cb, silent) {
+    google.script.run
+      .withFailureHandler(function (err) { cb && cb(null, err); })
+      .withSuccessHandler(function (res) {
+        if (res && res.success) adminGodCache[dateStr] = { data: res.data, ts: Date.now() };
+        cb && cb(res);
+      })
+      .getAllSalesDailyReports(dateStr);
+  }
+  function adminGodPrefetch(dateStr) {
+    const p = dateStr.split('-'); const base = new Date(+p[0], +p[1] - 1, +p[2]);
+    [-1, 1, -2].forEach(function (off, k) {
+      const d = new Date(base); d.setDate(base.getDate() + off);
+      const s = adminGodFmt(d);
+      if (d > new Date()) return;                         // 不預取未來
+      if (adminGodCache[s]) return;
+      setTimeout(function () { if (!adminGodCache[s]) adminGodFetch(s); }, 600 + k * 500);
+    });
+  }
+  window.adminGodShiftDay = function (n) {
+    const el = document.getElementById('admin-god-date');
+    const cur = (el && el.value) || adminGodCurrent;
+    if (!cur) return;
+    const p = cur.split('-'); const d = new Date(+p[0], +p[1] - 1, +p[2]);
+    d.setDate(d.getDate() + n);
+    openAdminGodView(adminGodFmt(d));
+  };
+
   window.openAdminGodView = function (selectedDate) {
     showPage('page-admin-godview');
-    showLoading(true, true);
 
     const dateEl = document.getElementById('admin-god-date');
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const yesterdayStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
-    const targetDate = selectedDate || yesterdayStr;
-
+    const targetDate = selectedDate || adminGodFmt(yesterday);
+    adminGodCurrent = targetDate;
     if (dateEl) dateEl.value = targetDate;
+    const wd = document.getElementById('admin-god-wd'); if (wd) wd.textContent = adminGodWd(targetDate);
+    const spin = document.getElementById('admin-god-refreshing');
+    const content = document.getElementById('admin-godview-content');
 
-    google.script.run
-      .withFailureHandler(function (err) {
-        showLoading(false);
-        showToast("系統連線異常，請重試", "error");
-        document.getElementById('admin-godview-content').innerHTML = `<div style='text-align:center; padding:20px; opacity:0.5;'>載入逾時，請點擊返回鍵重試。</div>`;
-      })
-      .withSuccessHandler(function (res) {
-        showLoading(false);
-        if (res.success) {
-          // 🚀 強制將日期選取器的數值同步為後端動態抓取的日期
-          if (dateEl && res.chosenDate) {
-            dateEl.value = res.chosenDate;
-          }
-          renderAdminGodView(res.data);
-        } else {
-          showToast("抓取資料失敗：" + res.msg, "error");
-        }
-      })
-      .getAllSalesDailyReports(targetDate);
+    const cached = adminGodCache[targetDate];
+    const isToday = (targetDate === adminGodFmt(now));
+    const staleMs = isToday ? 60000 : 5 * 60000;          // 今天 1 分鐘、過去日期 5 分鐘內視為新鮮
+
+    if (cached) {
+      renderAdminGodView(cached.data);                     // 秒開
+      adminGodPrefetch(targetDate);
+      if (Date.now() - cached.ts < staleMs) return;        // 還新鮮，不用再問伺服器
+      if (spin) spin.style.display = 'inline-block';       // 背景更新
+    } else {
+      if (content) content.innerHTML = '<div class="ait-loading-box" style="padding:60px 0;"><div class="ait-spinner"></div><div>讀取業務日誌...</div></div>';
+      if (spin) spin.style.display = 'inline-block';
+    }
+
+    adminGodFetch(targetDate, function (res, err) {
+      if (spin) spin.style.display = 'none';
+      if (adminGodCurrent !== targetDate) return;          // 已切到別天，丟棄
+      if (res && res.success) {
+        if (dateEl && res.chosenDate && !selectedDate) dateEl.value = res.chosenDate;
+        renderAdminGodView(res.data);
+        adminGodPrefetch(targetDate);
+      } else if (!cached) {
+        showToast(res ? ("抓取資料失敗：" + res.msg) : "系統連線異常，請重試", "error");
+        if (content) content.innerHTML = "<div style='text-align:center; padding:20px; opacity:0.5;'>載入失敗，請點左右箭頭或日期重試。</div>";
+      }
+    });
   };
 
   function renderAdminGodView(reports) {
@@ -2614,7 +2810,7 @@
     const modal = document.getElementById('modal-attendance-history');
     modal.style.display = 'block';
     const list = document.getElementById('attendance-history-list');
-    list.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">載入中...</div>';
+    list.innerHTML = '<div class="ait-loading-box" style="padding:24px 0;"><div class="ait-spinner ait-spinner-sm"></div><div>載入中...</div></div>';
 
     google.script.run
       .withSuccessHandler(function (res) {

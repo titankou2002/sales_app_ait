@@ -1,4 +1,216 @@
-# 🚀 版面記錄神器 - 開發進度日誌
+## 🕒 [2026-10-13] 最新版面動態排序修正（最新置頂）與一週內時效過濾 (版本 608)
+
+**問題根因與修復內容**：
+1. **修正操作記錄讀取順序（最新置頂）**：
+   - **根因**：「鈦傳速_操作記錄」（`Auth.js`）寫入新紀錄時是插入在第 2 列（最上方），而舊版 `getLatestLayoutActivities_impl_` 從表尾（`lastRow`）往上抓，導致抓到的是當月最舊紀錄（如 10/01、10/02）且時間由舊排到新。
+   - **修正**：改為從第 2 列（最上方最新紀錄）開始讀取，並在彙整後強制以 `b.timestamp - a.timestamp` 降冪排序，確保**愈新的動態排在愈上面**。
+2. **超過 1 週（7 天）自動隱藏不顯示**：
+   - 後端 `getLatestLayoutActivities_impl_` 與前端 `script.html` 雙重過濾：凡距今超過 7 天（`7 * 24 * 3600 * 1000` ms）的版面異動記錄一律不顯示。
+   - 操作記錄寫入版面異動時（`Auth.js`）自動清除 `latest_layout_activities_v3` 快取，確保新動態秒級生效。
+
+**部署**：`clasp push -f` → 版本 608 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @608`。
+
+---
+
+## 🏷️ [2026-10-01] 批號自動帶入、系列防呆校正與上架追蹤系列名稱標準化 (版本 607)
+
+**問題與修復內容**：
+1. **新增版面自動帶入批號（批號自動填入＋可選可打）**：
+   - 解決「系列輸入後，選擇編號不會帶出批號」之問題：
+   - 在 `script.html` 中，當系列自動解析既有編號並渲染品項時，批號欄位預設自動填入庫存中最新/首筆批號（`value`），同時保留 `<datalist>` 提供多批號下拉選單與自訂手打彈性。
+   - 勾選品項列或輸入數量時，若批號為空則自動補入預設批號；若直接在數量或批號框打字，自動勾選該列（毋需手動點選核取方塊）。
+   - 後端 `Inventory.js` 與 `Code.js` 對 SKU 查詢鍵進行大寫與去除空格連字號正規化（`inv_full_v14`），確保庫存表與編號價目表之批號精準串接。
+2. **新增與修改版面之系列名稱防呆自動校正**：
+   - 解決業務在新增或修改版面時，因誤將型號（如 `Ro612122`）或英數代碼填入「系列」欄位，導致試算表 D 欄（系列）寫入型號而非系列名稱之問題。
+   - 在 `saveNewLayout_impl_` 與 `updateDisplayBatch_impl_` 中加入自動校正防呆：比對編號價目表官方中文系列（`invMap[sku].series`），若發現未填系列、系列欄位等於編號、或為純英數代碼時，自動校正回官方中文系列名稱（如 `衍石`），並自動補齊尺寸資訊。
+3. **上架追蹤（Shelf Tracking）幽靈系列與錯字過濾**：
+   - 過去上架追蹤直接讀取「版面上架清單」的自由文字「系列」欄位，容易受到早期人工登打錯字（如 `尼彩染霞`、`沙漠玫瑰 浮光月影`、`老經澳良` 等）影響而產生幽靈系列。
+   - 在 `ShelfTracking.js` 中調整聚合邏輯：優先透過該列之產品編號反查「編號價目表」官方標準中文系列名稱（`skuToSeries[sku]`），徹底修正歷史人為錯字與複合系列名稱，快取升級至 `shelf_tracking_v13`。
+
+**部署**：`clasp push -f` → 版本 607 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @607`。
+
+---
+
+## 📐 [2026-10-01] 上架追蹤電腦版多欄切換(預設2排寬)與全域讀取發光動畫升級 (版本 605)
+
+**更新內容**：
+1. **電腦版多欄排列切換（預設 2 排寬）**：
+   - 「上架追蹤」在電腦版/平板寬螢幕上自動預設為 **2 排寬（2 欄 Grid）**，徹底解決寬螢幕單行過長與右側留白問題。
+   - 頂部加入「排列：1 排 ｜ 2 排 ｜ 3 排」切換按鈕，使用者可隨時點擊切換，並自動儲存至 LocalStorage 偏好設定。
+   - 系列明細地區分組也支援電腦版雙欄並列呈現。
+2. **全域發光讀取中旋轉動畫升級（統一標準化）**：
+   - 導入金黃色流光旋轉指示器（`.ait-loading-box` + `.ait-spinner`），取代過去無動畫的純文字「載入中…」。
+   - 全面覆蓋「上架追蹤（總覽、切換業務載入客戶、出貨明細讀取）」、「客戶分析（版面備註讀取）」、「外勤智能報表（加油紀錄、行車歷史、打卡紀錄、拜訪排行）」以及各型號保留彈窗。
+
+**部署**：`clasp push -f` → 版本 605 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @605`。
+
+---
+
+## 🧹 [2026-10-01] 版面異動明細 JSON 字串自動轉換為繁體中文結構排版 (版本 604)
+
+**問題與修復**：
+1. **異動明細文字美化**：歷史操作記錄中若存有 raw JSON 格式（如新增版面的品項清單、修改欄位批次陣列等），自動解析並轉換為易讀的中文格式：
+   - 範例：`系列 衍石 ｜ 尺寸 60120 ｜ RO612122×2、RO612123-F×1`。
+2. **前後端雙層解析防護**：
+   - 後端 `formatLayoutDetail_` 在產生活動列表時優先解析並清除雜訊（忽略 GPS、照片等技術代碼）。
+   - 前端 `formatClientLayoutDetail` 進行客戶端雙重過濾，確保 100% 呈現高質感人類可讀中文。
+   - 升級快取版本為 `latest_layout_activities_v2` 即刻清除舊快取。
+
+**部署**：`clasp push -f` → 版本 604 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @604`。
+
+---
+
+## 🗞️ [2026-10-01] 業務最新版面更新跑馬燈與版面記錄異動提示 (版本 603)
+
+**更新內容**：
+1. **頂部最新業務版面動態跑馬燈**：
+   - 替換/升級頂部原 `POWERED BY BIG-T` 區塊，輪播各業務最新版面操作（排除工作日誌、打卡、出勤、行車、加油等非版面動作）。
+   - 格式範例：`小謝 更新了 大永 的版面 10/01 14:30`、`小潘 下架了 喜地 的版面 09/30 19:38`。
+   - 點擊頂部跑馬燈可直接彈窗查看「最新版面動態」詳細清單。
+2. **首頁「版面記錄」卡片異動提示標籤（NEW Badge）**：
+   - 當近期（或上次查看後）有新版面異動時，卡片右上角顯示動態呼吸金色標籤 `NEW` / `N 筆更新`。
+   - 點擊標籤直接打開「最新版面動態」彈窗，列出業務員暱稱、動作標籤、客戶名稱、時間與詳細異動內容（如修改欄位、下架品項、新增備註等）。
+   - 查看後自動記錄時間戳並清除未讀標籤。
+3. **後端操作記錄精準篩選與快取**：
+   - 新增 `getLatestLayoutActivities_impl_` 讀取 `鈦傳速_操作記錄`（支援跨月分頁查詢），自動將業務姓名轉換為親切暱稱（小謝、小潘、勁多、小高、Titan 等）。
+   - 透過 `CacheManager` 進行 120 秒伺服器快取，兼顧即時性與 Google 試算表讀取配額。
+   - 透過 `AitGuard.js` 註冊權限守門，確保資料讀取安全。
+
+**部署**：`clasp push -f` (49 檔) → 版本 603 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @603`。
+
+---
+
+## 🎨 [2026-09-24] 主畫面功能按鈕顯示修復與 Logo 刺眼亮光去除 (版本 574)
+
+**問題診斷與修復**：
+1. **主畫面功能按鈕遺失修復**：
+   - 診斷：`index.html` 中的 `#dashboardGrid` 容器寫死了 `style="display: none; opacity: 0;"` 內聯樣式，導致進入主畫面時 8 個功能按鈕卡片維持隱藏。
+   - 修正：將 `#dashboardGrid` 的內聯樣式修正為 `style="display: grid; opacity: 1; transform: none;"`，並在 `showSalesSelection()` 顯式確保 `grid.style.display = 'grid'`，讓 8 個功能鍵 100% 完整浮現。
+2. **去除刺眼亮光 (Glow Effect)**：
+   - 診斷：`CSS_Effects.html` 中的 `@keyframes logoBreath` 設定了過強的 `drop-shadow(0 0 30px rgba(255,255,255,0.8))`，視覺上在 Logo 後方形成巨大的刺眼發光球。
+   - 修正：移除強光 `filter: drop-shadow` 陰影，讓 TT Logo 保持乾淨、清晰且高質感的視覺呈現。
+
+**部署**：`clasp push -f` → 版本 574 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @574`。
+
+---
+
+## 🛡️ [2026-09-24] 修復：遠端舊檔重覆宣告相容性處理 (版本 573)
+
+**問題診斷與修復**：
+伺服器線上環境殘留先前版本的檔案，導致 `const INCOMING_CARGO_SS_ID` 在多個檔案中被重覆宣告引發 `SyntaxError`。將頂層常數全數提升為相容性更高的 `var` 及 `typeof` 條件保護聲明，確保即使遠端有同名變數也不會爆出 `Identifier has already been declared`。
+
+**部署**：`clasp push -f` (38 檔正檔) → 版本 573 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @573`。
+
+---
+
+## 🐛 [2026-09-24] 修復：移除重複備份檔並解決變數重覆宣告衝突 (版本 572)
+
+**問題診斷**：
+開啟網頁時噴出 `SyntaxError: Identifier 'INCOMING_CARGO_SS_ID' has already been declared (檔案名稱：IncomingCargo)`。
+**根因**：資料夾內存在 Google Drive 同步衝突自動產生的備份檔（如 `IncomingCargo 2.js`、`Sales 2.js` 等），原 `.claspignore` 漏列了部分備份檔，導致 clasp 推送時同時把正檔與備份檔推上 GAS，引起全域變數重覆宣告衝突。
+
+**修訂內容**：
+1. 更新 `.claspignore` 加入全局排除規則 `* 2.*`。
+2. 徹底清理本機資料夾內所有 `* 2.*` 備份檔，確保傳上 GAS 的全域變數獨一無二。
+
+**部署**：`clasp push -f` → 版本 572 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @572`。
+
+---
+
+## 🐛 [2026-09-24] 修復：後端 0 位元組檔案還原與 getAggregatedInventory 函式補回 (版本 571)
+
+**問題診斷**：
+前次部署中部分後端檔（`Inventory.js`, `Sales.js`, `FieldWork.js`, `ShelfTracking.js`, `Code_Customer.js`, `IncomingCargo.js`）本機檔案呈現 0 位元組，導致推送到 GAS 後 `getAggregatedInventory` 等核心函式消失，引發 `Uncaught TypeError: ...getAggregatedInventory is not a function` 報錯。
+
+**修訂內容**：
+- 全數將被覆蓋之 0 位元組後端檔案與 HTML 檔從相應的 `* 2.*` 備份完整還原。
+- 經過 Node 語法檢測 100% 通過（包含 `getAggregatedInventory` 與其餘後端核心 API）。
+
+**部署**：`clasp push -f` → 版本 571 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @571`。
+
+---
+
+## 🧹 [2026-09-24] 主畫面遮罩與延遲問題修復 (版本 570)
+
+**需求調整與診斷**：
+1. **問題根因**：
+   - 原 `.dashboard-grid` (主畫面 4 個功能卡片容器) 設定了 `animation-delay: 0.6s` (600ms 延遲)，導致進入主頁時有整整 0.6 秒卡片呈現 `opacity: 0` 透明狀態，視覺上極像有一層灰色遮罩蓋住畫面。
+   - 舊 `showSalesSelection` 流程是在 Splash 漸隱 350ms 後才將 `#page-dashboard` 設為顯示，過場期間背景露出黑灰色 Grid 空白。
+2. **修訂內容**：
+   - `CSS_Components.html`：移除 `.dashboard-grid` 之 `animation-delay: 0.6s`，將卡片淡入時間縮短至 `0.25s`（立即呈現）。
+   - `script.html`：`showSalesSelection()` 觸發時立刻先將 `#page-dashboard` 設為顯示就位，讓 Splash 以 `0.18s` 極速無縫淡出，並顯式移除 `#loading-overlay` 遮罩。
+
+**部署**：`clasp push -f` → 版本 570 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @570`。
+
+---
+
+## ⚡ [2026-09-24] 極速秒進架構 (Optimistic Instant Launch) 與 缺貨快取刷新 (版本 569)
+
+**需求調整**：
+1. **進場等待徹底解決**：針對已有金鑰之用戶，改採極速秒進架構（Optimistic Instant Launch）。開啟網頁時直接在 0 毫秒進入主頁面並併發背景預載，不再讓用戶在門口等待伺服器 RPC 驗證往返。背景驗證失敗才進行攔截。
+2. **缺貨跑馬燈資料維護說明與快取刷新**：
+   - 快取版本升級至 `latest_stockout_v5`，即刻清除舊快取。
+   - 缺貨跑馬燈資料來源為主庫存表 (`SS_ID_MAIN`) 的 **「缺貨進榜追蹤」** 分頁。若顯示 9/9 號未更新，表示該 Google 工作表自 9/9 以來尚未有新的未結案缺貨列寫入。
+
+**部署**：`clasp push -f` → 版本 569 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @569`。
+
+---
+
+## 🎨 [2026-09-24] 登入/啟動頁面優化：修正文字折行、全中文呈現與讀取動畫加速 (版本 568)
+
+**需求調整**：
+1. 修正啟動頁載入文字折行問題（原 `VERIFYING SECURITY KEY...` 因字距過寬溢出折成兩列）。
+2. 將啟動頁動態文案全面改為繁體中文對照（「系統連線中...」、「安全金鑰驗證中...」、「載入系統元件...」、「準備就緒」）。
+3. 登入/啟動動畫過長優化：進度條推進時間從 200ms 縮短至 70ms，準備就緒停留時間從 150ms 縮短至 60ms，啟動頁淡出漸隱過場從 1.2 秒加速至 0.35 秒。
+
+**修訂細節**（index.html, script.html）：
+- `index.html`：載入容器 `width` 調整為 `280px` (`max-width: 90vw`)，文字加入 `white-space: nowrap`，字距微調為 `2px`。
+- `script.html`：`_runVerifySalesKey` 預設驗證文案改為「安全金鑰驗證中...」，`runSplashScreen` 階段調快為 70ms 間隔，`showSalesSelection` 淡出動畫 `opacity 0.35s`。
+
+**部署**：`clasp push -f` → 版本 568 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @568`。
+
+---
+
+## 🐛 [2026-09-16] 語法修復：解決 onclick 單引號轉義導致 switchTab 報錯與按鈕切換失敗 (版本 540)
+
+**根因**：
+先前在 HTML 字串組合中於 `onclick="exportBonusJpgDirect(this, '\' + p.name + '\')"` 使用斜線轉義單引號，導致在樣板字串（template literal）解析時跳脫失效，引發瀏覽器主控台語法解析錯誤（Uncaught Unexpected string），進而導致整段 `<script>` 腳本失效、`switchTab` 報未定義錯。
+
+**修訂**（Code.js）：
+- 移除 `onclick` 中硬編碼字串參數，改為直接讀取 DOM 按鈕本身的 `data-name` 屬性：`exportBonusJpgDirect(this)`。
+- 全數重新編譯驗證（Node syntax check 通過）。
+- 部署：`clasp push -f` → 版本 540 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @540`。
+
+---
+
+## 🚀 [2026-09-16] 介面優化：主表操作列新增一鍵「📷 匯出 JPG」按鈕與按鈕簡化 (版本 537)
+
+**需求調整**：
+1. 原本「展開/收合明細」按鈕文字過長，簡化修改為「**明細**」二字。
+2. 主表格操作欄位直接新增獨立的「**📷 匯出 JPG**」按鈕，不需手動先展開下方明細即可直接在主表一鍵匯出包含「達成獎金」與「突破獎金」6 欄全貌的 JPG 卡片。
+
+**修訂細節**（Code.js）：
+- 主表操作欄 `<td>` 放置兩個按鈕：`[明細]` 與 `[📷 匯出 JPG]`。
+- 新增 `exportBonusJpgDirect(btn, salesName)` 處理函式，自動完成背後 DOM 明細連動與圖片產出。
+- 部署：`clasp push -f` → 版本 537 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @537`。
+
+---
+
+## 🐛 [2026-09-16] 修正：JPG 匯出摘要表補回「達成獎金」與「突破獎金」欄位 (版本 536)
+
+**問題回報**：匯出單人獎金 JPG 卡片時（圖 2），摘要表原先只有「實銷、業績獎金、內勤提撥、業務實領」，缺少網頁上顯示的「達成獎金」與「突破獎金」拆解，且實銷修改時未即時重算突破獎金與公式試算列。
+
+**根因**：
+1. `exportBonusSheetJpg()`（Code.js）建立摘要 HTML 表格時，`<thead>` 與 `<tbody>` 只填了 4 個欄位（`實銷`、`業績獎金`、`內勤提撥`、`業務實領`），未將後台試算好的 `p.baseBonus`（達成獎金）與 `p.breakthroughBonus`（突破獎金）納入欄位。
+2. `main-monthly-sales-input` 缺少 `oninput` 即時觸發試算，導致在主表手動修改實銷時未動態重新推算 `baseBonus` 與 `breakthroughBonus`。
+
+**修正內容**（Code.js）：
+- **JPG 摘要表擴充**：`exportBonusSheetJpg()` 摘要表標題列升級為 6 欄——`實銷`｜`達成獎金`｜`突破獎金`（橘色高亮）｜`業績獎金`｜`內勤提撥`｜`業務實領`，完整呈顯圖 1 網頁顯示的達成與突破結構。
+- **動態實銷試算對齊**：`recalcMainBonusRow()` 新增支援修改「當月實銷金額」時，依據同仁規範自動重新計算級數達成獎金與突破門檻獎金，同步連動 `業績獎金小計`、`內勤提撥`、`業務實領` 以及表格下方的 `🧾 系統試算` 文字列。
+
+**部署**：`clasp push -f` → 版本 536 → redeploy 既有 deployment `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @536`（網址不變）。
+
+---
 
 ## ⏰ 定時觸發器執行紀錄 (2026-08-13 ~ 08-14)
 

@@ -8,7 +8,7 @@
 /**
  * 🚀 直接呼叫原始庫存查詢引擎 (100% 一模一樣)
  */
-function getClientFullData() {
+function getClientFullData_impl_() {
   // 直接調用 Inventory.gs 中的核心函式
   return getAggregatedInventory();
 }
@@ -72,13 +72,13 @@ function checkClientStock(sku, requiredPyeong, userId, userName) {
 /**
  * 🛡️ 驗證客戶權限 (對接白名單)
  */
-function verifyClientMember(userId) {
+function verifyClientMember_impl_(userId) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
     const wlSheet = ss.getSheetByName("白名單");
     if (!wlSheet) return { success: false, msg: "找不到白名單" };
     
-    const data = wlSheet.getDataRange().getValues();
+    const data = getWhitelistRowsCached_(ss);
     const h = data[0].map(v => String(v || '').replace(/[\s\uFEFF]/g, '').trim());
     const idx = {
       uid: findHeaderIndex(h, ["USERID", "LINEID"]),
@@ -145,7 +145,7 @@ function getDriveImageUrl(url, formula) {
 /**
  * 📝 記錄外部客戶/遊客的庫存查詢行為至內部業務表單的 LOG 中，並執行分級查詢次數限制 (自動對位名稱、公司與負責業務)
  */
-function logExternalClientSearch(sku, pyeong, result, userId, level, clientNamePassed, clientCompanyPassed) {
+function logExternalClientSearch_impl_(sku, pyeong, result, userId, level, clientNamePassed, clientCompanyPassed) {
   try {
     userId = String(userId || 'GUEST_CLIENT').trim();
     level = String(level || 'LEVEL 2').toUpperCase().trim();
@@ -159,7 +159,7 @@ function logExternalClientSearch(sku, pyeong, result, userId, level, clientNameP
         const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
         const wlSheet = ss.getSheetByName("白名單");
         if (wlSheet) {
-          const data = wlSheet.getDataRange().getValues();
+          const data = getWhitelistRowsCached_(ss);
           const h = data[0].map(v => String(v || '').replace(/[\s\uFEFF]/g, '').trim());
           const idx = {
             uid: findHeaderIndex(h, ["USERID", "LINEID"]),

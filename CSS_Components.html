@@ -100,7 +100,7 @@
 
   .dashboard-grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 440px; margin: 0 auto; width: 100%;
-    animation: fadeInUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: 0.6s;
+    animation: fadeInUp 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
   @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -111,6 +111,105 @@
     0% { opacity: 0.35; transform: scale(1); }
     50% { opacity: 0.95; transform: scale(1.02); }
     100% { opacity: 0.35; transform: scale(1); }
+  }
+
+  /* 🔔 版面更新提示標籤 */
+  .layout-badge {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: linear-gradient(135deg, rgba(234, 179, 8, 0.28), rgba(249, 115, 22, 0.38));
+    border: 1px solid rgba(245, 158, 11, 0.7);
+    color: #fef08a;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    box-shadow: 0 0 14px rgba(245, 158, 11, 0.45);
+    cursor: pointer;
+    z-index: 5;
+    animation: badgePulse 2s infinite ease-in-out;
+  }
+  .layout-badge .badge-dot {
+    width: 6px;
+    height: 6px;
+    background: #f59e0b;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #f59e0b;
+    flex-shrink: 0;
+  }
+  @keyframes badgePulse {
+    0% { transform: scale(1); box-shadow: 0 0 8px rgba(245, 158, 11, 0.35); }
+    50% { transform: scale(1.05); box-shadow: 0 0 18px rgba(245, 158, 11, 0.75); }
+    100% { transform: scale(1); box-shadow: 0 0 8px rgba(245, 158, 11, 0.35); }
+  }
+
+  /* 🗞️ POWERED BY 跑馬燈動態文字 */
+  .powerby-ticker {
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    font-weight: 600;
+    color: #f5d98a;
+    text-shadow: 0 0 10px rgba(245, 217, 138, 0.4);
+    cursor: pointer;
+    transition: all 0.4s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 90vw;
+    display: inline-block;
+  }
+  .powerby-ticker:hover {
+    color: #fff;
+    text-shadow: 0 0 15px rgba(255, 255, 255, 0.9);
+  }
+
+  /* 📜 版面動態項目卡片 */
+  .layout-act-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: background 0.2s ease;
+  }
+  .layout-act-card:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+  .layout-act-tag {
+    font-size: 11px;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+    display: inline-block;
+  }
+  .layout-act-tag.tag-add {
+    background: rgba(34, 197, 94, 0.2);
+    color: #86efac;
+    border: 1px solid rgba(34, 197, 94, 0.4);
+  }
+  .layout-act-tag.tag-update {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+  }
+  .layout-act-tag.tag-off {
+    background: rgba(244, 63, 94, 0.2);
+    color: #fca5a5;
+    border: 1px solid rgba(244, 63, 94, 0.4);
+  }
+  .layout-act-tag.tag-note {
+    background: rgba(234, 179, 8, 0.2);
+    color: #fde047;
+    border: 1px solid rgba(234, 179, 8, 0.4);
   }
   .page-title { font-size: 28px; font-weight: 900; text-align: center; margin-bottom: 40px; letter-spacing: 4px; color: #fff; }
 
@@ -197,13 +296,39 @@
   @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes fadeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(10px); } }
 
+  /* 👤 業務姓名快速切換（浮動膠囊＋下拉） */
+  .ait-name-pill { display:inline-flex; align-items:center; gap:6px; border:1px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.1); color:#fff; font-size:16px; font-weight:800; padding:6px 14px; border-radius:999px; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.12); backdrop-filter:blur(10px); -webkit-tap-highlight-color:transparent; transition:transform .12s ease, background .12s ease; }
+  .ait-name-pill:active { transform:scale(0.93); background:rgba(255,255,255,0.22); }
+  .ait-name-pill.open .ait-name-chev { transform:rotate(180deg); }
+  .ait-name-chev { transition:transform .15s ease; opacity:.8; }
+  .ait-name-menu { position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%); min-width:150px; background:rgba(28,28,36,0.96); border:1px solid rgba(255,255,255,0.18); border-radius:16px; padding:6px; box-shadow:0 18px 40px rgba(0,0,0,0.55); backdrop-filter:blur(16px); z-index:2000; }
+  .ait-name-item { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border-radius:11px; font-size:16px; font-weight:700; color:#fff; cursor:pointer; text-align:left; -webkit-tap-highlight-color:transparent; transition:background .1s ease, transform .1s ease; }
+  .ait-name-item:active { background:rgba(255,255,255,0.22); transform:scale(0.97); }
+  .ait-name-item.current { background:rgba(250,204,21,0.16); color:#facc15; }
+  .ait-name-item.picked { background:#22c55e; color:#fff; }
+  .ait-name-item svg { flex-shrink:0; }
+
   /* 🤫 管理者入口專屬 */
   .admin-hidden-entrance {
-    position: fixed; bottom: 20px; left: 0; width: 100%;
+    position: fixed; bottom: 34px; left: 0; width: 100%;
     display: flex; justify-content: center; align-items: center;
     padding: 15px; cursor: pointer; z-index: 5;
   }
   .admin-hidden-entrance:active { opacity: 0.8; transform: scale(0.98); }
+
+  /* 💻 首頁電腦版版面修正：
+     內容比視窗高時，不再用 fixed 底部入口壓在卡片上，也不再把上方標題擠出畫面；
+     改為「內容整組垂直置中、放不下就可捲動」，隱藏入口排在卡片下方。 */
+  #page-dashboard { justify-content: flex-start; overflow-y: auto; padding-bottom: 40px; }   /* 底部留給右下/置中的姓名小字 #aitMe，避免跟隱藏入口疊在一起 */
+  #page-dashboard > .dashboard-header { margin-top: auto; flex-shrink: 0; }
+  #page-dashboard > .dashboard-grid { flex-shrink: 0; }
+  #page-dashboard > .admin-hidden-entrance { position: static; width: 100%; margin-bottom: auto; padding: 22px 15px 6px; flex-shrink: 0; }
+  #page-dashboard .powerby-ticker { display: block; margin-left: auto; margin-right: auto; width: max-content; max-width: 90%; text-align: center; }
+  #page-dashboard .premium-subtitle { white-space: normal; line-height: 1.5; }
+  @media (min-width: 992px) {
+    #page-dashboard { padding-top: 24px; }
+    .dashboard-grid { max-width: 560px; }
+  }
 
   /* 👁️ 全知視角頁面樣式 (Admin God View) */
   .admin-scroll-area {

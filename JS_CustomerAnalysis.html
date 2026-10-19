@@ -1268,7 +1268,7 @@ window.renderDisplayNotes = function (photoUrl, series) {
   }
 
   if (_dnCache && _dnCustomer === cust) { paint(); return; }
-  box.innerHTML = '<div style="font-size:12px; opacity:0.35; padding:8px 0;">讀取中…</div>';
+  box.innerHTML = '<div class="ait-loading-box" style="padding:10px 0;"><div class="ait-spinner ait-spinner-sm"></div><div style="font-size:12px;">讀取中…</div></div>';
   google.script.run
     .withSuccessHandler(function (res) {
       _dnCustomer = cust;
@@ -1513,6 +1513,17 @@ window.openCustomerAnalysisModule = function () {
   caShowListMode();
   // 業務用自己的金鑰進來時已有身分，直接帶入省一步
   if (!_caBiz && state.currentSales) caSelectBiz(state.currentSales);
+};
+
+/** 從其他頁面（如業績概況）直接帶客戶進入分析；按返回會回到原頁面 */
+var _caReturnPage = '';
+window.openCustomerAnalysisFor = function (name) {
+  var cur = document.querySelector('.page.active');
+  _caReturnPage = (cur && cur.id && cur.id !== 'page-customer-analysis') ? cur.id : '';
+  showPage('page-customer-analysis');
+  if (state.currentSales) _caBiz = state.currentSales;
+  caRenderBizChips();
+  caSelectCustomer(name);
 };
 
 function caRenderBizChips() {
@@ -1790,6 +1801,13 @@ function caShowListMode() {
 }
 
 window.caGoBack = function () {
+  if (_caReturnPage) {
+    var back = _caReturnPage;
+    _caReturnPage = '';
+    caShowListMode();
+    showPage(back);
+    return;
+  }
   if (_caMode === 'detail') {
     caShowListMode();
     caRenderCustomerList();
