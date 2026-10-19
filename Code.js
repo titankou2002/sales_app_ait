@@ -2674,7 +2674,7 @@ function shortenStockoutCat_(cat) {
 }
 
 function getLatestStockoutEntries_impl_() {
-  const cacheKey = 'latest_stockout_v5';
+  const cacheKey = 'latest_stockout_v6';
   try {
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return cached;
@@ -2726,6 +2726,8 @@ function getLatestStockoutEntries_impl_() {
       }
 
       const cat = idxCat !== -1 ? String(row[idxCat] || '').trim() : '';
+      // 🎯 跑馬燈只放「真的缺貨」的四種；新品觀察、預防性保留（保留過半但還沒缺）都不放
+      if (!/完全缺貨|嚴重缺貨|快要斷貨|即將缺貨/.test(cat)) return;
       // 🚫 排除已解除或回復狀態（含「已補貨」— 缺貨進榜追蹤表本身會把補貨完成的列標成這個分類，
       // 不是新的缺貨警示，不該出現在跑馬燈；只排除「已補貨」這種完成式，「補貨中」等進行式仍視為警示）
       if (cat && /已到貨|已解封|解封|恢復|已復原|復原|已結案|已補貨|補貨完成/.test(cat)) return;
@@ -2767,8 +2769,16 @@ function getLatestStockoutEntries_impl_() {
 
     if (!entries.length) return { success: false, msg: "暫無進榜資料" };
 
-    // 優先照日期 (ts) 降冪，日期相同或解析不出時照表格列號 (rowIdx) 降冪（最新列在後）
-    entries.sort((a, b) => (b.ts - a.ts) || (b.rowIdx - a.rowIdx));
+    // 只放「最近」的：入榜日期 14 天內（日期讀不出來的不放，避免舊資料一直掛著）
+    const recentCutoff = Date.now() - 14 * 86400000;
+    const recent = entries.filter(e => e.ts >= recentCutoff);
+    entries.length = 0;
+    recent.forEach(e => entries.push(e));
+    if (!entries.length) return { success: false, msg: "近 14 天沒有新缺貨" };
+
+    // 先照嚴重程度（完全缺貨 > 嚴重缺貨 > 快要斷貨 > 即將缺貨），同級再照入榜日期新的在前，最後照列號
+    const sevRank = c => /完全缺貨/.test(c) ? 0 : /嚴重缺貨/.test(c) ? 1 : /快要斷貨/.test(c) ? 2 : 3;
+    entries.sort((a, b) => (sevRank(a.cat) - sevRank(b.cat)) || (b.ts - a.ts) || (b.rowIdx - a.rowIdx));
 
     const top3 = entries.slice(0, 3).map(e => ({
       text: e.dateStr + " " + (shortenStockoutCat_(e.cat) || "新進榜缺貨") + "：" + e.code + e.extraInfo,

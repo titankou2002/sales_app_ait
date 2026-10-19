@@ -2809,6 +2809,31 @@ function getShortageBoardData(br, forceFresh) {
         sheetChanged = true;
       }
 
+      // 🔁 再度缺貨：上一輪已標「已補貨」，這次又掉回缺貨級別 → 視為新的一輪。
+      //    入榜日期改成今天、清掉上一輪的人工處理紀錄（回到「要處理」），並在更新歷程留一筆，原本的值寫在摘要裡可還原。
+      const prevCatForReshort = rowInfo && idx['缺貨分類'] >= 0 ? String(rowData[idx['缺貨分類']] || '').trim() : '';
+      const isReshortage = !!rowInfo && prevCatForReshort === '已補貨' && a.btnLevel >= 1 && a.btnLevel <= 3;
+      if (isReshortage) {
+        const oldEnter = idx['入榜日期'] >= 0 ? String(rowData[idx['入榜日期']] || '') : '';
+        const oldWho = idx['最後更新人'] >= 0 ? String(rowData[idx['最後更新人']] || '') : '';
+        const oldWhen = idx['最後更新時間'] >= 0 ? String(rowData[idx['最後更新時間']] || '') : '';
+        const oldSt = idx['處理狀態'] >= 0 ? String(rowData[idx['處理狀態']] || '') : '';
+        if (idx['入榜日期'] >= 0) rowData[idx['入榜日期']] = today;
+        if (idx['最後更新人'] >= 0) rowData[idx['最後更新人']] = '';
+        if (idx['最後更新時間'] >= 0) rowData[idx['最後更新時間']] = '';
+        if (idx['處理狀態'] >= 0) rowData[idx['處理狀態']] = ''; // 下面 defaults 會補回「等候開狀」
+        sheetChanged = true;
+        try {
+          appendShortageHistory_(dbSs, {
+            time: now, code: a.code, action: '再度缺貨，重新進榜', operator: '系統',
+            oldStatus: '已補貨', newStatus: a.msg || '', oldManual: '', newManual: '', oldNote: '', newNote: '',
+            summary: '補貨後又缺貨，入榜日期重設為 ' + today + '（原 ' + oldEnter + '）；上一輪處理狀態「' + oldSt + '」、更新人「' + oldWho + '」、時間「' + oldWhen + '」已清除，回到「要處理」'
+          });
+        } catch (histErr) {
+          console.error('再度缺貨歷程寫入失敗：' + histErr.message);
+        }
+      }
+
       const systemValues = {
         '廠牌': meta.brand || '',
         '產品編號': a.code,
