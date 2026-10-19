@@ -1790,8 +1790,17 @@ body.light .sb-view { background: #ffffff; border-color: rgba(0,0,0,0.12); }
 .sb-more > summary { cursor: pointer; font-size: 12px; opacity: 0.6; padding: 4px 0; }
 .sb-card-actions { margin-top: 8px; }
 @media (max-width: 700px) {
-  .sb-views { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 手機：五個分頁排成一列可左右滑，不佔高度；數字跟在名稱後面 */
+  .sb-views { display: flex; overflow-x: auto; gap: 6px; margin: 0 0 8px; padding-bottom: 2px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .sb-views::-webkit-scrollbar { display: none; }
+  .sb-view { flex: 0 0 auto; flex-direction: row; align-items: baseline; gap: 6px; padding: 7px 13px; border-radius: 999px; white-space: nowrap; }
+  .sb-view span { order: 1; font-size: 13px; }
+  .sb-view b { order: 2; font-size: 14px; }
   .sb-view small { display: none; }
+  .sb-more-hint { display: none; }
+  /* 卡片標題列的標籤不要被擠成直排 */
+  .sb-grid .alert-header { flex-wrap: wrap; gap: 4px 6px; }
+  .sb-grid .alert-header > span, .sb-grid .alert-header > .day-badge { white-space: nowrap; }
 }
 
 /* 🗂 版型按鈕與多欄（2026-10-01）：body[data-cols] 由 applyLayoutCols_ 設定 */
@@ -1865,7 +1874,7 @@ body.light .layout-toggle { background: #ffffff; border-color: rgba(0,0,0,0.12);
     </div>
     <input class="search" id="search-shortage" placeholder="搜尋產品型號 SKU、系列、修改人或備註…" oninput="renderShortageBoard()">
     <details class="sb-more" id="sb-more">
-      <summary>更多篩選與工具（層級、狀態、產品類型、排序、尺寸、補貨清單、缺貨通知、手動納入）</summary>
+      <summary>更多篩選與工具<span class="sb-more-hint">（層級、狀態、產品類型、排序、尺寸、補貨清單、缺貨通知、手動納入）</span></summary>
     <div class="filter-row" id="shortage-board-filters">
       <span class="filter-label">層級</span>
       <button class="tab active" data-sblevel="all" onclick="setShortageBoardLevel('all')">全部</button>
