@@ -1777,6 +1777,23 @@ body.light [style*="background:#3d7a4e"][style*="color:#fff"] { color: #ffffff !
 .dec-cmp { display: grid; grid-template-columns: 88px minmax(0, 1fr) 64px; gap: 8px; align-items: center; font-size: 13px; }
 .dec-cmp .dec-bar { height: 10px; }
 
+/* 缺貨與預警：頂部大分頁（要處理／已決定／新品觀察／新貨被搶訂／賣速變慢） */
+.sb-views { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.sb-view { text-align: left; padding: 10px 12px; border-radius: 12px; cursor: pointer; color: inherit; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; gap: 2px; }
+.sb-view b { font-size: 22px; line-height: 1.1; }
+.sb-view span { font-size: 14px; font-weight: 800; }
+.sb-view small { font-size: 11px; opacity: 0.55; }
+.sb-view.active { background: rgba(250,204,21,0.14); border-color: rgba(250,204,21,0.6); }
+.sb-view.active b { color: #facc15; }
+body.light .sb-view { background: #ffffff; border-color: rgba(0,0,0,0.12); }
+.sb-more { margin-top: 10px; }
+.sb-more > summary { cursor: pointer; font-size: 12px; opacity: 0.6; padding: 4px 0; }
+.sb-card-actions { margin-top: 8px; }
+@media (max-width: 700px) {
+  .sb-views { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sb-view small { display: none; }
+}
+
 /* 🗂 版型按鈕與多欄（2026-10-01）：body[data-cols] 由 applyLayoutCols_ 設定 */
 .layout-toggle { display: none; flex-shrink: 0; height: 42px; padding: 0 14px; border-radius: 21px; font-size: 13px; font-weight: 800; cursor: pointer; color: inherit; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); }
 body.light .layout-toggle { background: #ffffff; border-color: rgba(0,0,0,0.12); }
@@ -1833,13 +1850,22 @@ body.light .layout-toggle { background: #ffffff; border-color: rgba(0,0,0,0.12);
   <div class="main-tab active" id="mtab-shortage" onclick="switchMainTab('shortage')">缺貨與預警</div>
   <div class="main-tab" id="mtab-reserve" onclick="switchMainTab('reserve')">保留單<span id="reserve-update-badge" style="display:none; margin-left:6px; padding:1px 7px; border-radius:10px; background:#ff3b30; color:#fff; font-size:11px; font-weight:800; vertical-align:1px;"></span></div>
   <div class="main-tab" id="mtab-warroom" onclick="switchMainTab('warroom')">戰情室</div>
-  <div class="main-tab" id="mtab-decision" onclick="switchMainTab('decision')">補貨決策</div>
 </div>
 
 
 <!-- 分頁 1: 缺貨與預警 -->
 <div id="section-shortage" style="display:none;">
   <div class="filter-section">
+    <div class="sb-views" id="sb-views">
+      <button class="sb-view active" data-sbview="todo" onclick="setSbView('todo')"><b id="sb-n-todo">–</b><span>要處理</span><small>還沒決定補不補</small></button>
+      <button class="sb-view" data-sbview="decided" onclick="setSbView('decided')"><b id="sb-n-decided">–</b><span>已決定</span><small>補貨中、觀察、不補</small></button>
+      <button class="sb-view" data-sbview="observe" onclick="setSbView('observe')"><b id="sb-n-observe">–</b><span>新品觀察</span><small>進貨一年內</small></button>
+      <button class="sb-view" data-sbview="hotnew" onclick="setSbView('hotnew')"><b id="sb-n-hotnew">–</b><span>新貨被搶訂</span><small>到貨 90 天內被訂走一半</small></button>
+      <button class="sb-view" data-sbview="slow" onclick="setSbView('slow')"><b id="sb-n-slow">–</b><span>賣速變慢</span><small>賣得比去年慢、庫存還多</small></button>
+    </div>
+    <input class="search" id="search-shortage" placeholder="搜尋產品型號 SKU、系列、修改人或備註…" oninput="renderShortageBoard()">
+    <details class="sb-more" id="sb-more">
+      <summary>更多篩選與工具（層級、狀態、產品類型、排序、尺寸、補貨清單、缺貨通知、手動納入）</summary>
     <div class="filter-row" id="shortage-board-filters">
       <span class="filter-label">層級</span>
       <button class="tab active" data-sblevel="all" onclick="setShortageBoardLevel('all')">全部</button>
@@ -1883,7 +1909,6 @@ body.light .layout-toggle { background: #ffffff; border-color: rgba(0,0,0,0.12);
       </span>
     </div>
     <div class="filter-row" id="shortage-size-filter" style="flex-wrap:wrap;"></div>
-    <input class="search" id="search-shortage" placeholder="搜尋產品型號 SKU、系列、修改人或備註…" oninput="renderShortageBoard()">
     <div style="display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap; font-size:11px; color:rgba(255,255,255,0.4);">
       <span>銷售資料同步於：<b id="sb-sales-sync" style="color:#facc15;">—</b></span>
       <button class="tab" style="padding:2px 10px; font-size:10px;" onclick="preloadShortageInsights(true)">立即更新銷售資料</button>
@@ -1891,6 +1916,7 @@ body.light .layout-toggle { background: #ffffff; border-color: rgba(0,0,0,0.12);
       <input class="search" id="search-manual-track" placeholder="輸入 SKU 編號" style="width:160px; margin:0;">
       <button class="tab" style="border-color:rgba(96,165,250,0.4); color:#60a5fa;" onclick="addManualTracking()">＋ 納入追蹤</button>
     </div>
+    </details>
   </div>
 </div>
 
@@ -3901,6 +3927,8 @@ window.renderShortageBoard = function() {
   refreshShortageSelectCount();
   // site-list 是各分頁共用的容器：使用者已切到別的分頁時，背景回來的資料不可以把缺貨公佈欄畫上去（會像被彈回缺貨與預警）
   if (activeTab !== 'shortage') return;
+  sbUpdateCounts_();
+  if (sbView === 'hotnew' || sbView === 'slow') { renderSbDecisionView_(); return; }
   var q = (document.getElementById('search-shortage').value || '').toLowerCase();
   var list = ALL_SHORTAGE_BOARD.filter(function(item) {
     var status = getBoardValue(item, '處理狀態') || '等候開狀';
@@ -3912,7 +3940,7 @@ window.renderShortageBoard = function() {
     if (shortageLevelFilter === 'observe' && cat !== '觀察') return false;
     // 產品類型篩選：正常品（預設）／全部／不續辦／睡美人／新品觀察
     var ptype = window.shortageProductTypeOf(item);
-    if (filterShortageProductType === 'normal' && ptype !== 'normal') return false;
+    if (!sbViewMatch_(item, sbView)) return false;
     if (filterShortageProductType === 'discontinue' && ptype !== 'discontinue') return false;
     if (filterShortageProductType === 'sleep' && ptype !== 'sleep') return false;
     if (filterShortageProductType === 'new' && ptype !== 'new') return false;
@@ -4066,6 +4094,7 @@ window.renderShortageBoard = function() {
             + '<div id="shortage-level-explain-' + i + '" class="shortage-level-explain-box">' + buildShortageLevelExplainHtml(item) + '</div>'
              + '<div style="display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:rgba(255,255,255,0.65); margin-top:4px;"><span>去峰值均銷: <b style="color:#facc15;">' + esc(pingLabel(getBoardValue(item, '去峰值月均銷'))) + '</b> 坪/月</span>' + arrivalHtml + '</div>'
              + getProductBarHtml(code)
+             + '<div class="sb-card-actions" onclick="event.stopPropagation();">' + decBtns_({ code: code }, 'soldout') + '</div>'
            + '</div>'
          + '</div>'
        + '</div>'
@@ -4864,6 +4893,9 @@ window.loadWarRoomData = function(forceRefresh) {
         // 資料沒變就不重畫；有變才重畫，並把使用者已展開的卡片還原
         if (activeTab === 'warroom' && !wrUnchanged) { renderWarRoom(); restoreOpenWarRoomPanes_(openPanes); }
         if (activeTab === 'decision' && !wrUnchanged) renderDecision();
+        if (activeTab === 'shortage' && !wrUnchanged) {
+          if (sbView === 'hotnew' || sbView === 'slow') renderShortageBoard(); else sbUpdateCounts_();
+        }
       } else if (res && res.syncing) {
         if (activeTab === 'warroom' && ALL_WARROOM.length === 0) {
           document.getElementById('site-list').innerHTML = '<div class="loading" style="color:#facc15;">系統正在背景同步戰情室資料，請稍候…</div>';
@@ -4928,6 +4960,59 @@ var DEC_RULE = {
   slowMonths: 6         // 照今年速度，庫存要超過幾個月才賣完才提醒
 };
 var decisionKind = 'soldout';
+var sbView = 'todo'; // 缺貨與預警頂部分頁：todo 要處理 / decided 已決定 / observe 新品觀察 / hotnew 新貨被搶訂 / slow 賣速變慢
+
+window.setSbView = function(v) {
+  sbView = v;
+  document.querySelectorAll('[data-sbview]').forEach(function(b) { b.classList.toggle('active', b.getAttribute('data-sbview') === v); });
+  if ((v === 'hotnew' || v === 'slow') && !ALL_WARROOM.length && !warRoomLoading) loadWarRoomData(false);
+  renderShortageBoard();
+};
+
+/** 這張追蹤卡屬於哪個頂部分頁。「已決定」＝有人（非系統）改過處理狀態。 */
+function sbViewMatch_(item, view) {
+  var ptype = window.shortageProductTypeOf(item);
+  var who = String(getBoardValue(item, '最後更新人') || '').trim();
+  var touched = !!String(getBoardValue(item, '最後更新時間') || '').trim() && who !== '系統';
+  var typeOverride = filterShortageProductType !== 'normal'; // 進階篩選自己挑了產品類型就不再套用預設類型
+  if (view === 'observe') return typeOverride || ptype === 'new';
+  if (!typeOverride && ptype !== 'normal') return false;
+  return view === 'decided' ? touched : !touched;
+}
+
+function sbUpdateCounts_() {
+  var c = { todo: 0, decided: 0, observe: 0 };
+  (ALL_SHORTAGE_BOARD || []).forEach(function(it) {
+    ['todo', 'decided', 'observe'].forEach(function(v) { if (sbViewMatch_(it, v)) c[v]++; });
+  });
+  var set = function(k, n) { var el = document.getElementById('sb-n-' + k); if (el) el.textContent = n; };
+  set('todo', c.todo); set('decided', c.decided); set('observe', c.observe);
+  if (ALL_WARROOM.length) {
+    var res = decAnalyze_();
+    set('hotnew', res.hotnew.length); set('slow', res.slow.length);
+  } else { set('hotnew', '–'); set('slow', '–'); }
+}
+
+function renderSbDecisionView_() {
+  var box = document.getElementById('site-list');
+  if (!ALL_WARROOM.length) {
+    box.innerHTML = '<div class="loading"><div class="spinner"></div>正在載入產品資料，請稍候…</div>';
+    return;
+  }
+  decLoadBoard_();
+  var res = decAnalyze_();
+  var q = (document.getElementById('search-shortage').value || '').trim().toLowerCase();
+  var list = res[sbView].filter(function(x) {
+    return !q || (String(x.it.code) + ' ' + String(x.it.name || '')).toLowerCase().indexOf(q) >= 0;
+  });
+  var rule = sbView === 'hotnew'
+    ? '到貨 ' + DEC_RULE.hotnewDays + ' 天內，保留超過這批進貨的一半。新品也列入。'
+    : '今年每月平均銷量不到去年同期的一半，而且照今年的速度，庫存要超過 ' + DEC_RULE.slowMonths + ' 個月才賣得完。';
+  var head = '<div class="dec-rule" style="margin:0 0 10px;">規則：' + rule + '</div>';
+  if (!list.length) { box.innerHTML = head + '<div class="loading">目前沒有符合的產品</div>'; return; }
+  var card = sbView === 'hotnew' ? decCardHotnew_ : decCardSlow_;
+  box.innerHTML = head + '<div class="dec-wrap"><div class="reserve-grid">' + list.map(card).join('') + '</div></div>';
+}
 
 window.setDecisionKind = function(k) {
   decisionKind = k;
@@ -5074,7 +5159,7 @@ function decHoldersHtml_(it) {
 function decBtns_(it, kind) {
   var c = String(it.code).replace(/[^A-Za-z0-9\-_.]/g, '');
   var b = function(label, status, note, primary) {
-    return '<button class="btn' + (primary ? ' btn-save' : '') + '" onclick="decAct(\'' + c + '\',\'' + status + '\',\'' + note + '\', this)">' + label + '</button>';
+    return '<button class="btn' + (primary ? ' btn-save' : '') + '" onclick="event.stopPropagation(); decAct(\'' + c + '\',\'' + status + '\',\'' + note + '\', this)">' + label + '</button>';
   };
   if (kind === 'slow') {
     return '<div class="dec-actions">' + b('不再進貨', '不續辦', '補貨決策：賣速變慢，不再進貨', false)
@@ -5084,13 +5169,17 @@ function decBtns_(it, kind) {
     + b('先觀察', '待確認', '補貨決策：先觀察', false) + b('不補', '暫不補貨', '補貨決策：不補', false) + '</div>';
 }
 /** 按鈕：寫進「缺貨進榜追蹤」的處理狀態（還沒在追蹤表的先加進去），缺貨頁會同步看到 */
+function decRerender_() {
+  if (activeTab === 'shortage') renderShortageBoard();
+  else if (activeTab === 'decision') renderDecision();
+}
 window.decAct = function(code, status, note, btn) {
   var box = btn && btn.parentNode;
   if (box) box.querySelectorAll('button').forEach(function(x) { x.disabled = true; });
   if (btn) btn.textContent = '儲存中…';
   var fail = function(msg) {
     showToast('❌ 沒有存成功：' + msg);
-    renderDecision();
+    decRerender_();
   };
   var update = function() {
     var payload = { code: code, operator: CURRENT_USER || 'web', action: '補貨決策', '處理狀態': status, '最新備註': note };
@@ -5103,7 +5192,7 @@ window.decAct = function(code, status, note, btn) {
         if (!b) { b = { '產品編號': code }; ALL_SHORTAGE_BOARD.push(b); }
         b['處理狀態'] = status; b['最新備註'] = note; b['最後更新人'] = CURRENT_USER || ''; b['最後更新時間'] = stamp;
         showToast('✅ ' + code + ' 已改成「' + status + '」');
-        renderDecision();
+        decRerender_();
       })
       .withFailureHandler(function(e) { fail(String(e)); })
       .webGetData('update_shortage_tracking', payload);
@@ -5294,7 +5383,7 @@ function applyFilterParamsFromUrl_() {
     if (!Object.keys(params).length) return;
 
     if (params.tab) {
-      activeTab = params.tab;
+      activeTab = params.tab === 'decision' ? 'shortage' : params.tab;
     }
     if (params.rep) {
       filterRep = params.rep;
