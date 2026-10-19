@@ -2861,14 +2861,11 @@ function getShortageBoardData(br, forceFresh) {
         }
       });
 
+      // 「人工補貨板數／坪數／片數」只放人工真的存過的數字。系統建議每次同步都即時重算（寫在「系統建議補貨／建議板數」），
+      // 不再自動把建議值抄進人工欄——以前抄進去後永遠不更新，月均銷只有 1 坪的產品還掛著幾個月前的 9 板。
       const defaults = {
-        '人工建議補貨': restock.text === '暫無' ? '' : restock.text,
-        '人工補貨板數': restockCalc.cases || '',
-        '人工補貨坪數': restockCalc.ping || '',
-        '人工補貨片數': restockCalc.pieces || '',
         '處理狀態': '等候開狀',
-        '負責人': 'LYNN',
-        '人工調整安全水位': rowInfo && rowData[idx['人工調整安全水位']] ? rowData[idx['人工調整安全水位']] : (meta.safePing || '')
+        '負責人': 'LYNN'
       };
       Object.keys(defaults).forEach(h => {
         if (idx[h] >= 0 && !String(rowData[idx[h]] || '').trim()) {
@@ -2876,6 +2873,20 @@ function getShortageBoardData(br, forceFresh) {
           sheetChanged = true;
         }
       });
+
+      // 🧹 從沒有人手動存過的列（沒有最後更新時間，或只有系統改過）：把以前自動抄進去的舊人工補貨數字清掉
+      {
+        const touchedBy = idx['最後更新人'] >= 0 ? String(rowData[idx['最後更新人']] || '').trim() : '';
+        const touchedAt = idx['最後更新時間'] >= 0 ? String(rowData[idx['最後更新時間']] || '').trim() : '';
+        if (!touchedAt || touchedBy === '系統') {
+          ['人工建議補貨', '人工補貨板數', '人工補貨坪數', '人工補貨片數'].forEach(h => {
+            if (idx[h] >= 0 && String(rowData[idx[h]] || '').trim() !== '') {
+              rowData[idx[h]] = '';
+              sheetChanged = true;
+            }
+          });
+        }
+      }
 
       const item = rowToObject_(headers, rowData);
       item.cleanCode = clean;
@@ -3392,9 +3403,14 @@ function generateRestockOrderList_() {
       const obj = rowToObject_(headers, row);
       const status = String(obj['處理狀態'] || '').trim();
       if (activeStatuses.indexOf(status) === -1) return;
-      const cases = parseFloat(obj['人工補貨板數']) || parseFloat(obj['建議板數']) || 0;
-      const ping = parseFloat(obj['人工補貨坪數']) || 0;
-      const pieces = parseFloat(obj['人工補貨片數']) || 0;
+      // 人工存過才用人工填的數字；沒人存過一律用系統這一刻的建議板數，避免舊的自動數字流進訂貨清單
+      const touchedBy = String(obj['最後更新人'] || '').trim();
+      const touched = !!String(obj['最後更新時間'] || '').trim() && touchedBy !== '系統';
+      const sysCases = parseFloat(obj['建議板數']) || 0;
+      const palletPingVal = parseFloat(obj['每板坪數']) || 0;
+      const cases = touched ? (parseFloat(obj['人工補貨板數']) || sysCases) : sysCases;
+      const ping = touched ? (parseFloat(obj['人工補貨坪數']) || 0) : (sysCases > 0 && palletPingVal > 0 ? Math.floor(sysCases * palletPingVal) : 0);
+      const pieces = touched ? (parseFloat(obj['人工補貨片數']) || 0) : 0;
       if (cases <= 0 && ping <= 0 && pieces <= 0) return;
       out.push([
         obj['廠牌'] || '未分類',

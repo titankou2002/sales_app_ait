@@ -3888,6 +3888,37 @@ function hasRecentImportFor(item, wr, insight, latestDate) {
   return d >= yAgo;
 }
 
+/** 系統建議補貨的算式（用白話寫出來，讓補貨小姐知道 9 板是怎麼來的，或為什麼是 0） */
+function buildRestockExplainHtml_(item) {
+  var wr = item.warRoom || {};
+  var n = function(v) { var x = parseFloat(v); return isNaN(x) ? 0 : x; };
+  var avail = n(getBoardValue(item, '可用庫存'));
+  var eff = n(wr.effectiveAvgSales) || n(getBoardValue(item, '去峰值月均銷'));
+  var cls = String(wr.class || '').trim();
+  var mult = { 'A+': 5, 'A': 4, 'B': 3 }[cls] || 0;
+  var target = n(wr.suggestedTarget), safe = n(wr.suggestedSafe);
+  var perPing = n(item.perPing) || 36;
+  var incoming = Math.round(((n(item.inQty1) + n(item.inQty2)) / perPing) * 10) / 10;
+  var sysText = String(getBoardValue(item, '系統建議補貨') || '').trim();
+  var pallet = n(item.palletPing || item['每板坪數']);
+  var line;
+  if (sysText === '已安排補庫') {
+    line = '在途 ' + Math.round(incoming) + ' 坪，已經夠補到目標，不用再補。';
+  } else if (sysText === '是否續辦?') {
+    line = '近一年只賣約 ' + Math.round(n(getBoardValue(item, '年銷量'))) + ' 坪，量太少，建議先評估要不要續辦。';
+  } else if (!sysText || sysText === '暫無') {
+    line = cls === 'C'
+      ? '這個產品月銷量低（C 類），只有「可賣量不足」才補，目前不需要補。'
+      : '可賣 ' + Math.round(avail) + ' 坪，高於系統安全水位 ' + Math.round(safe) + ' 坪，目前不需要補。';
+  } else {
+    var need = Math.max(0, target - avail - incoming);
+    line = '目標 ' + Math.round(target) + ' 坪（月均銷 ' + (Math.round(eff * 10) / 10) + ' 坪 × ' + mult + ' 個月' + (wr.isLargeFloorApplied ? '，大磚保底' : '') + '）'
+      + ' － 可賣 ' + Math.round(avail) + ' 坪' + (incoming > 0 ? ' － 在途 ' + Math.round(incoming) + ' 坪' : '')
+      + ' ＝ 需補 ' + Math.round(need) + ' 坪' + (pallet > 0 ? '，每板 ' + Math.round(pallet) + ' 坪，約 ' + Math.ceil(need / pallet) + ' 板' : '') + '。';
+  }
+  return '<div class="detail-note" style="margin:0 0 4px; line-height:1.6;"><b style="color:#facc15;">系統建議</b>　' + esc(line) + '</div>';
+}
+
 window.updateRestockCalc = function(i) {
   var item = RENDERED[i];
   if (!item) return;
@@ -4023,15 +4054,27 @@ window.renderShortageBoard = function() {
     }
     var lifecycle = item.lifecycle || '';
     var lifecycleBadge = lifecycle ? '<span style="font-size:10px; padding:2px 7px; border-radius:6px; background:' + (lifecycle === '睡美人' ? 'rgba(142,142,147,0.18)' : 'rgba(255,149,0,0.14)') + '; color:' + (lifecycle === '睡美人' ? '#d1d5db' : '#ff9500') + '; border:1px solid rgba(255,255,255,0.12); font-weight:900;">' + esc(lifecycle) + '</span>' : '';
-    var manualSafe = getBoardValue(item, '人工調整安全水位');
     var statusColor = shortageStatusColor(displayStatus);
     var history = item.history || [];
     var historyHtml = history.length ? history.map(function(h) {
       return '<div class="sb-history-row"><span>' + esc(h.time) + '　' + esc(h.action) + '</span><span>' + esc(h.oldStatus || '-') + ' → <b style="color:#facc15;">' + esc(h.newStatus || '-') + '</b></span></div>';
     }).join('') : '<div class="detail-note">尚無更新歷程</div>';
-    var cases = getBoardValue(item, '人工補貨板數') || getBoardValue(item, '建議板數');
-    var ping = getBoardValue(item, '人工補貨坪數') ? floorPing(getBoardValue(item, '人工補貨坪數')) : '';
-    var pieces = getBoardValue(item, '人工補貨片數');
+    // 人工存過才用人工填的；沒人存過，就用系統「這一刻」算出的建議板數（不再沿用當初自動寫進去的舊數字）
+    var sbWho = String(getBoardValue(item, '最後更新人') || '').trim();
+    var sbTouched = !!String(getBoardValue(item, '最後更新時間') || '').trim() && sbWho !== '系統';
+    var sysCases = parseFloat(getBoardValue(item, '建議板數')) || 0;
+    var cases = sbTouched ? (getBoardValue(item, '人工補貨板數') || '') : (sysCases || '');
+    var sbPalletPing = parseFloat(item.palletPing || item['每板坪數']) || 0;
+    var sbPcsBox = parseFloat(item.pcsPerBox) || 0, sbBoxPal = parseFloat(item.boxesPerPallet) || 0;
+    var ping, pieces;
+    if (sbTouched) {
+      ping = getBoardValue(item, '人工補貨坪數') ? floorPing(getBoardValue(item, '人工補貨坪數')) : '';
+      pieces = getBoardValue(item, '人工補貨片數');
+    } else {
+      ping = (sysCases > 0 && sbPalletPing > 0) ? Math.floor(sysCases * sbPalletPing) : '';
+      pieces = (sysCases > 0 && sbPcsBox > 0 && sbBoxPal > 0) ? Math.round(sysCases * sbPcsBox * sbBoxPal) : '';
+    }
+    var restockExplainHtml = buildRestockExplainHtml_(item);
     var levelLabel = getBoardValue(item, '缺貨分類');
     var levelStyle = shortageLevelStyle(levelLabel);
     var perPing = parseFloat(item.perPing) || 36;
@@ -4125,6 +4168,7 @@ window.renderShortageBoard = function() {
             + '<div class="detail-section-body" style="' + (sbSecCollapsed(item, 'track') ? 'display:none;' : '') + '">'
             + '<div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;">'
               + shortageField('處理狀態', '<select class="sb-control" id="' + boardInputId('sb-status', i) + '">' + buildStatusOptions(status) + '</select>', true)
+              + '<div style="grid-column:1/-1;">' + restockExplainHtml + '</div>'
               + '<div style="grid-column:1/-1; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px;">'
                 + shortageField('補貨板數', '<input class="sb-control sb-input-highlight" id="' + boardInputId('sb-cases', i) + '" value="' + escAttr(cases) + '" inputmode="decimal" oninput="updateRestockCalc(' + i + ')">')
                 + shortageField('換算坪數', '<input class="sb-control" id="' + boardInputId('sb-ping', i) + '" value="' + escAttr(ping) + '" inputmode="decimal">')
@@ -4132,8 +4176,6 @@ window.renderShortageBoard = function() {
               + '</div>'
               + shortageField('國外生產日', '<input class="sb-control sb-input-highlight" id="' + boardInputId('sb-prod-date', i) + '" value="' + escAttr(getBoardValue(item, '國外生產日')) + '">')
               + shortageField('預定到貨日', '<input class="sb-control sb-input-highlight" id="' + boardInputId('sb-arrival-date', i) + '" value="' + escAttr(getBoardValue(item, '預定到貨日') || getBoardValue(item, '預計日期')) + '">')
-              + shortageField('填表人', '<input class="sb-control" id="' + boardInputId('sb-owner', i) + '" value="' + escAttr(getBoardValue(item, '負責人') || 'LYNN') + '">')
-              + shortageField('安全水位調整', '<input class="sb-control" id="' + boardInputId('sb-safe', i) + '" value="' + escAttr(manualSafe) + '">')
               + shortageField('最新備註', '<textarea class="sb-control" id="' + boardInputId('sb-note', i) + '" style="min-height:70px;">' + esc(getBoardValue(item, '最新備註')) + '</textarea>', true)
             + '</div>'
             + '<div style="margin-top:10px;"><div class="detail-section-title" style="font-size:11px; margin-bottom:4px;">更新歷程</div>' + historyHtml + '</div>'
@@ -4166,10 +4208,8 @@ window.saveShortageTracking = function(i, btn) {
     '預計日期': document.getElementById(boardInputId('sb-arrival-date', i)).value,
     '國外生產日': document.getElementById(boardInputId('sb-prod-date', i)).value,
     '預定到貨日': document.getElementById(boardInputId('sb-arrival-date', i)).value,
-    '負責人': document.getElementById(boardInputId('sb-owner', i)).value,
     '最新備註': document.getElementById(boardInputId('sb-note', i)).value,
-    '人工調整安全水位': document.getElementById(boardInputId('sb-safe', i)).value,
-    operator: 'web'
+    operator: CURRENT_USER || 'web'
   };
   var btnEl = btn || (window.event && window.event.target);
   var btnOriginalText = btnEl ? btnEl.innerHTML : '';
@@ -6499,8 +6539,6 @@ window.openWarRoomDetailModal = function(code) {
   var pieces = getBoardValue(item, '人工補貨片數') || '';
   var prodDate = getBoardValue(item, '國外生產日') || '';
   var arrivalDate = getBoardValue(item, '預定到貨日') || getBoardValue(item, '預計日期') || '';
-  var owner = getBoardValue(item, '負責人') || 'LYNN';
-  var manualSafe = getBoardValue(item, '人工調整安全水位') || '';
   var note = getBoardValue(item, '最新備註') || '';
 
   var bodyHtml = '<div style="display:flex; flex-direction:column; gap:14px;">'
@@ -6522,8 +6560,6 @@ window.openWarRoomDetailModal = function(code) {
     + '</div>'
     + shortageField('國外生產日', '<input class="sb-control sb-input-highlight" id="wr-modal-prod-date" value="' + escAttr(prodDate) + '">')
     + shortageField('預定到貨日', '<input class="sb-control sb-input-highlight" id="wr-modal-arrival-date" value="' + escAttr(arrivalDate) + '">')
-    + shortageField('填表人', '<input class="sb-control" id="wr-modal-owner" value="' + escAttr(owner) + '">')
-    + shortageField('修改安全庫存', '<input class="sb-control" id="wr-modal-safe" value="' + escAttr(manualSafe) + '">')
     + shortageField('最新備註', '<textarea class="sb-control" id="wr-modal-note" style="min-height:70px;">' + esc(note) + '</textarea>', true)
     + '</div>'
     + '<div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">'
@@ -6551,10 +6587,8 @@ window.saveWarRoomModalTracking = function(code, btn) {
     '預計日期': document.getElementById('wr-modal-arrival-date').value,
     '國外生產日': document.getElementById('wr-modal-prod-date').value,
     '預定到貨日': document.getElementById('wr-modal-arrival-date').value,
-    '負責人': document.getElementById('wr-modal-owner').value,
     '最新備註': document.getElementById('wr-modal-note').value,
-    '人工調整安全水位': document.getElementById('wr-modal-safe').value,
-    operator: 'web'
+    operator: CURRENT_USER || 'web'
   };
   
   var origText = btn.innerHTML;
