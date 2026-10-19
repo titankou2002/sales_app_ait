@@ -3899,6 +3899,8 @@ window.openShortageHolder = function(cardIdx, holderIdx) {
 
 window.renderShortageBoard = function() {
   refreshShortageSelectCount();
+  // site-list 是各分頁共用的容器：使用者已切到別的分頁時，背景回來的資料不可以把缺貨公佈欄畫上去（會像被彈回缺貨與預警）
+  if (activeTab !== 'shortage') return;
   var q = (document.getElementById('search-shortage').value || '').toLowerCase();
   var list = ALL_SHORTAGE_BOARD.filter(function(item) {
     var status = getBoardValue(item, '處理狀態') || '等候開狀';
@@ -4827,7 +4829,7 @@ window.loadWarRoomData = function(forceRefresh) {
         warRoomLoaded = true;
         warRoomLiveFetched = true;
         ALL_WARROOM = res.items || [];
-        document.getElementById('wr-last-updated').innerText = formatMonthDayOnly(res.lastUpdated);
+        document.getElementById('wr-last-updated').innerText = '即時 ' + new Date().toTimeString().slice(0, 5);
         try {
           localStorage.setItem('WR_DATA_CACHE_V3_' + PAGE_BRANCH, JSON.stringify(ALL_WARROOM));
           if (res.lastUpdated) localStorage.setItem('WR_TIME_CACHE_V3_' + PAGE_BRANCH, res.lastUpdated);
@@ -4850,6 +4852,7 @@ window.loadWarRoomData = function(forceRefresh) {
           }
         }
       } else {
+        if (ALL_WARROOM.length > 0) showToast('戰情室更新失敗，目前顯示的是舊資料');
         if (ALL_WARROOM.length === 0) {
           document.getElementById('site-list').innerHTML = '<div class="loading" style="color:#ff3b30;">❌ 載入戰情室失敗：' + esc(res && res.error ? res.error : '後端未回傳資料') + '</div>';
         }
@@ -4860,6 +4863,8 @@ window.loadWarRoomData = function(forceRefresh) {
       if (warRoomLoadTimer) clearTimeout(warRoomLoadTimer);
       if (ALL_WARROOM.length === 0) {
         document.getElementById('site-list').innerHTML = '<div class="loading" style="color:#ff3b30;">❌ 系統錯誤：' + esc(String(e)) + '</div>';
+      } else {
+        showToast('戰情室更新失敗，目前顯示的是舊資料');
       }
     })
     .webGetData('get_war_room_data', null);
