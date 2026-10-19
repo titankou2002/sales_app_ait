@@ -4231,9 +4231,9 @@ function getProductBarHtml(prodCode) {
   var barWidthPct = Math.min(100, Math.max(25, Math.round((baseQty / maxScaleBase) * 100)));
 
   var soldQty = Math.max(0, baseQty - stock);
-  var soldText = Math.round(soldQty * 10) / 10;
-  var reservedText = Math.round(reserved * 10) / 10;
-  var availText = Math.round(avail * 10) / 10;
+  var soldText = Math.round(soldQty);
+  var reservedText = Math.round(reserved);
+  var availText = Math.round(avail);
 
   var pctSold = baseQty > 0 ? Math.round((soldQty / baseQty) * 100) : 0;
   var pctRes = baseQty > 0 ? Math.round((reserved / baseQty) * 100) : 0;
@@ -4805,11 +4805,31 @@ ALL_SITES = ALL_SITES.filter(function(x){ return x.siteKey !== editKey; });
 var WR_FRESH_MS = 5 * 60 * 1000; // 與伺服器預熱週期（每 5 分鐘）一致：瀏覽器快取 5 分鐘內視為最新，直接用、不再打伺服器
 var warRoomLiveFetched = false; // 是否已拿到「夠新」的戰情室資料（瀏覽器快取超過 5 分鐘只先秀，仍會向伺服器更新）
 try { var __wrAt = parseInt(localStorage.getItem('WR_FETCHED_AT_V3_' + PAGE_BRANCH) || '0', 10); if (__wrAt && Date.now() - __wrAt < WR_FRESH_MS) warRoomLiveFetched = true; } catch (e0) {}
+// 記下目前展開中的戰情室卡片（誰保留、銷售分析面板），重畫後還原
+function snapshotOpenWarRoomPanes_() {
+  var ids = [];
+  try {
+    document.querySelectorAll('[id^="insight-panel-"], [id^="sdrill-pane-"]').forEach(function(el) {
+      if (el.id && el.style.display === 'block') ids.push(el.id);
+    });
+  } catch (e) {}
+  return ids;
+}
+function restoreOpenWarRoomPanes_(ids) {
+  (ids || []).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = 'block';
+    var arrow = document.getElementById(id + '-arrow');
+    if (arrow) arrow.style.transform = 'rotate(180deg)';
+  });
+}
+
 window.loadWarRoomData = function(forceRefresh) {
   if (ALL_WARROOM.length > 0 && !forceRefresh) {
     warRoomLoaded = true;
     updateWarRoomKpis();
-    if (activeTab === 'warroom') renderWarRoom();
+    // 這裡不再重畫：切到戰情室時 switchMainTab 自己會畫；背景計時器再畫一次會把使用者剛展開的卡片收起來
     if (warRoomLiveFetched || warRoomLoading) return;
   }
 
@@ -4830,7 +4850,10 @@ window.loadWarRoomData = function(forceRefresh) {
       if (res && res.success) {
         warRoomLoaded = true;
         warRoomLiveFetched = true;
+        var prevWrJson = ''; try { prevWrJson = JSON.stringify(ALL_WARROOM); } catch (e1) {}
+        var openPanes = snapshotOpenWarRoomPanes_();
         ALL_WARROOM = res.items || [];
+        var wrUnchanged = false; try { wrUnchanged = prevWrJson && prevWrJson === JSON.stringify(ALL_WARROOM); } catch (e2) {}
         document.getElementById('wr-last-updated').innerText = '即時 ' + new Date().toTimeString().slice(0, 5);
         try {
           localStorage.setItem('WR_DATA_CACHE_V3_' + PAGE_BRANCH, JSON.stringify(ALL_WARROOM));
@@ -4838,8 +4861,9 @@ window.loadWarRoomData = function(forceRefresh) {
           if (res.lastUpdated) localStorage.setItem('WR_TIME_CACHE_V3_' + PAGE_BRANCH, res.lastUpdated);
         } catch(e) {}
         updateWarRoomKpis();
-        if (activeTab === 'warroom') renderWarRoom();
-        if (activeTab === 'decision') renderDecision();
+        // 資料沒變就不重畫；有變才重畫，並把使用者已展開的卡片還原
+        if (activeTab === 'warroom' && !wrUnchanged) { renderWarRoom(); restoreOpenWarRoomPanes_(openPanes); }
+        if (activeTab === 'decision' && !wrUnchanged) renderDecision();
       } else if (res && res.syncing) {
         if (activeTab === 'warroom' && ALL_WARROOM.length === 0) {
           document.getElementById('site-list').innerHTML = '<div class="loading" style="color:#facc15;">系統正在背景同步戰情室資料，請稍候…</div>';
