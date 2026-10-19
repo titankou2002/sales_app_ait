@@ -4802,7 +4802,9 @@ ALL_SITES = ALL_SITES.filter(function(x){ return x.siteKey !== editKey; });
   } catch(e) {}
 })();
 
-var warRoomLiveFetched = false; // 本次開頁是否已向伺服器拿過最新戰情室資料（瀏覽器快取只是先秀，不能當最新）
+var WR_FRESH_MS = 5 * 60 * 1000; // 與伺服器預熱週期（每 5 分鐘）一致：瀏覽器快取 5 分鐘內視為最新，直接用、不再打伺服器
+var warRoomLiveFetched = false; // 是否已拿到「夠新」的戰情室資料（瀏覽器快取超過 5 分鐘只先秀，仍會向伺服器更新）
+try { var __wrAt = parseInt(localStorage.getItem('WR_FETCHED_AT_V3_' + PAGE_BRANCH) || '0', 10); if (__wrAt && Date.now() - __wrAt < WR_FRESH_MS) warRoomLiveFetched = true; } catch (e0) {}
 window.loadWarRoomData = function(forceRefresh) {
   if (ALL_WARROOM.length > 0 && !forceRefresh) {
     warRoomLoaded = true;
@@ -4832,6 +4834,7 @@ window.loadWarRoomData = function(forceRefresh) {
         document.getElementById('wr-last-updated').innerText = '即時 ' + new Date().toTimeString().slice(0, 5);
         try {
           localStorage.setItem('WR_DATA_CACHE_V3_' + PAGE_BRANCH, JSON.stringify(ALL_WARROOM));
+          localStorage.setItem('WR_FETCHED_AT_V3_' + PAGE_BRANCH, String(Date.now()));
           if (res.lastUpdated) localStorage.setItem('WR_TIME_CACHE_V3_' + PAGE_BRANCH, res.lastUpdated);
         } catch(e) {}
         updateWarRoomKpis();
