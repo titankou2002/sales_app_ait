@@ -6616,7 +6616,7 @@ function aitKeysPageHtml_impl_() {
         <div class="nav">
           <div class="brand">
             <h1>高雅瓷機密中心</h1>
-            <p>簡易版庫存查詢專屬連結與白名單管理系統</p>
+            <p>業績獎金計算與規則設定</p>
           </div>
           <div class="nav-right">
             <button class="theme-toggle" onclick="toggleTheme()" id="themeToggleBtn">🌙 夜間模式</button>
@@ -6628,10 +6628,8 @@ function aitKeysPageHtml_impl_() {
         <!-- 💎 Tabs 控制區 -->
         <div class="tabs-container">
           <!-- 2026-09-30 業務改用 LINE / Google 登入，「業務app金鑰管理」拿掉 (分頁內容保留但隱藏) -->
-          <button class="tab-btn active" onclick="switchTab('client-tab', this)">客戶查庫存金鑰管理</button>
-          <button class="tab-btn" onclick="switchTab('line-tab', this)">LINE 機器人白名單</button>
-          <button class="tab-btn" onclick="switchTab('bonus-tab', this)">獎金計算</button>
-          <button class="tab-btn" onclick="switchTab('attendance-tab', this); initAttendanceTab();">出缺勤管理</button>
+          <!-- 2026-10-20 客戶查庫存金鑰（改用 LINE 認證）、LINE 機器人白名單（不在這裡改了）、出缺勤管理（沒在用）三個分頁拿掉：分頁內容保留但隱藏，機密中心只剩獎金計算 -->
+          <button class="tab-btn active" onclick="switchTab('bonus-tab', this)">獎金計算</button>
         </div>
         
         <!-- 👔 業務app金鑰管理分頁 -->
@@ -6715,7 +6713,7 @@ function aitKeysPageHtml_impl_() {
         </div>
         
         <!-- 👥 客戶查庫存金鑰管理分頁 -->
-        <div id="client-tab" class="tab-content active">
+        <div id="client-tab" class="tab-content" style="display:none !important;">
           <div class="dashboard-grid">
             <!-- Left Side: Ingest -->
             <div class="panel-card" style="display: flex; flex-direction: column; gap: 16px;">
@@ -6813,7 +6811,7 @@ function aitKeysPageHtml_impl_() {
         </div>
 
         <!-- 🤖 LINE 機器人白名單管理分頁 -->
-        <div id="line-tab" class="tab-content">
+        <div id="line-tab" class="tab-content" style="display:none !important;">
           <div class="dashboard-grid">
             <!-- Left Side: Ingest -->
             <div class="panel-card" style="display: flex; flex-direction: column; gap: 16px;">
@@ -6922,7 +6920,7 @@ function aitKeysPageHtml_impl_() {
         </div>
         
         <!-- 💰 獎金計算分頁 -->
-        <div id="bonus-tab" class="tab-content">
+        <div id="bonus-tab" class="tab-content active">
           <!-- 📊 當月業務業績獎金精算與折半明細 (放最上面) -->
           <div class="panel-card">
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--neon-cyan); padding-bottom: 12px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
@@ -6999,7 +6997,7 @@ function aitKeysPageHtml_impl_() {
         </div>
 
         <!-- 🕐 出缺勤管理分頁 -->
-        <div id="attendance-tab" class="tab-content">
+        <div id="attendance-tab" class="tab-content" style="display:none !important;">
           <div style="padding: 8px 0 16px;">
             <div style="display:flex; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--neon-cyan); padding-bottom:10px; margin-bottom:18px;">
               <button class="att-sub-btn active" onclick="switchAttTab('att-today', this)">今日出缺勤</button>
