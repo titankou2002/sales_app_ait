@@ -91,6 +91,7 @@ function ensureReserveTriggers_() {
   if (!have.prewarmWarRoom) ScriptApp.newTrigger('prewarmWarRoom').timeBased().everyMinutes(5).create();
   if (!have.sendDailyNewReserves_) ScriptApp.newTrigger('sendDailyNewReserves_').timeBased().everyDays(1).atHour(19).nearMinute(5).inTimezone('Asia/Taipei').create();
   if (!have.sendNewShortageEntries) ScriptApp.newTrigger('sendNewShortageEntries').timeBased().everyDays(1).atHour(18).create();
+  if (!have.recordDailyInventorySnapshot) ScriptApp.newTrigger('recordDailyInventorySnapshot').timeBased().everyDays(1).atHour(3).nearMinute(30).inTimezone('Asia/Taipei').create();
   cache.put('rsv_triggers_ok', '1', 21600);
 }
 
@@ -229,6 +230,8 @@ function webGetData(action, payload) {
     }
     if (action === 'get_audit_logs')   return getAuditLogs_(identity, payload);
     if (action === 'test_get_sheets')    return testGetSheets();
+    if (action === 'get_inventory_history') return getInventoryHistory_(payload && payload.code, payload && payload.days);
+    if (action === 'run_inventory_snapshot') return identity.isKing ? (recordDailyInventorySnapshot(), { success: true }) : { error: '僅主管可用' };
     if (action === 'get_reserve_data')   return getReserveData();
     if (action === 'update_progress')    return rsvAudited_(identity, sessionId, action, payload, () => updateReserveProgress_(payload.siteKey, payload.status, payload.progress, payload.salesRep, payload.productCodes, payload.actionType, payload.reason));
     if (action === 'delete_product')     return rsvAudited_(identity, sessionId, action, payload, () => deleteProductRow_(payload.siteKey, payload.productCode, identity.name));
