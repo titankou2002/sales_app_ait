@@ -68,7 +68,7 @@ function recordInventorySnapshotForBranch_() {
     if (!code) continue;
     const prog = rProg >= 0 ? resRows[i][rProg] : '';
     const dep = rDep >= 0 ? resRows[i][rDep] : '';
-    if (isArchiveProgress_(dep, prog)) continue;
+    if (isNotHoldingStock_(dep, prog)) continue;
     reservePcs[code] = (reservePcs[code] || 0) + (parseFloat(resRows[i][rQty !== -1 ? rQty : 1]) || 0);
     reserveCount[code] = (reserveCount[code] || 0) + 1;
   }

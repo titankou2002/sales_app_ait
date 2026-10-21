@@ -476,6 +476,15 @@ function isArchiveProgress_(status, progressText) {
 }
 
 /**
+ * 算「保留量」專用：已結案／取消／刪除，或「已過期釋出」（逾期未付訂被自動放掉，貨已放回去可賣）的保留單，都不佔庫存。
+ * 注意：這跟 isArchiveProgress_ 不同——後者還用在保留單清單顯示、自動封存、通知，不能把「過期釋出」併進去。
+ */
+function isNotHoldingStock_(status, progressText) {
+  if (isArchiveProgress_(status, progressText)) return true;
+  return (String(status || '') + ' ' + String(progressText || '')).indexOf('過期釋出') >= 0;
+}
+
+/**
  * 封存原因分類，供「保留封存」的「狀態」欄與棄單統計使用。
  * 已結案＝出貨、保留有效；取消／刪除都算棄單（保留無效）。
  */
@@ -1436,7 +1445,7 @@ function getRestockAlerts(br, forceFresh) {
       // 排除已結案/取消/刪除的死案，避免佔用保留量把可用庫存誤壓成負數
       const progressText = rIdxProgress >= 0 ? resRows[i][rIdxProgress] : '';
       const depositText = rIdxDeposit >= 0 ? resRows[i][rIdxDeposit] : '';
-      if (isArchiveProgress_(depositText, progressText)) continue;
+      if (isNotHoldingStock_(depositText, progressText)) continue;
       reserveMap[code] = (reserveMap[code] || 0) + qty;
     }
     
@@ -4275,7 +4284,7 @@ function getWarRoomData() {
       // 排除已結案/取消/刪除的死案，避免佔用保留量把可用庫存誤壓成負數
       const progressText2 = rIdxProgress2 >= 0 ? resRows[i][rIdxProgress2] : '';
       const depositText2 = rIdxDeposit2 >= 0 ? resRows[i][rIdxDeposit2] : '';
-      if (code && !isArchiveProgress_(depositText2, progressText2)) {
+      if (code && !isNotHoldingStock_(depositText2, progressText2)) {
         const perPing = perPingMap[code] || 36;
         const qtyPing = qtyPieces / perPing;
         reserveMap[code] = (reserveMap[code] || 0) + qtyPing;
