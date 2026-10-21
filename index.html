@@ -781,9 +781,10 @@
 
       <!-- 結果列表 (Grid) -->
       <div id="staff-result-list"
-        style="padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 15px; padding-bottom: 100px;">
-        <div style="grid-column: 1 / -1; text-align: center; color: rgba(255,255,255,0.4); margin-top: 40px; font-size: 13px;">
-          載入庫存資料中... ⚡
+        style="padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 15px; padding-bottom: 100px; width: 100%; min-width: 0; box-sizing: border-box;">
+        <div class="ait-loading-box" style="grid-column: 1 / -1; padding: 70px 16px;">
+          <div class="ait-spinner"></div>
+          <div>載入庫存資料中…</div>
         </div>
       </div>
     </div>

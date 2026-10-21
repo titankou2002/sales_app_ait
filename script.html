@@ -776,6 +776,7 @@
   }
 
   function loadInventoryData() {
+    if (state.inventoryFetching) return; // 已經有一包在抓了，不重複下載
     // 🚀 快取優先 (Cache-First) 策略
     if (!state.isInventoryLoaded) {
       try {
@@ -819,12 +820,15 @@
         .getInventoryLightData();
     }
 
+    state.inventoryFetching = true;
     google.script.run
       .withSuccessHandler(function(res) {
+        state.inventoryFetching = false;
         clearTimeout(state.inventoryLoadTimeoutTimer);
         if (res && res.success) {
           state.inventoryData = res.data;
           state.isInventoryLoaded = true;
+          state.inventoryLoadedAt = Date.now();
           state.inventoryLoadFailed = false;
 
           // 🚀 將最新資料同步回寫至 LocalStorage
@@ -853,6 +857,7 @@
       .withFailureHandler(function(err) {
         // 🐛 [修正] 原本完全沒有失敗處理：伺服器端一出錯或逾時就整個沒反應，
         //    isInventoryLoaded 永遠是 false，畫面卡死在「資料載入中」看不出發生什麼事。
+        state.inventoryFetching = false;
         clearTimeout(state.inventoryLoadTimeoutTimer);
         state.inventoryLoadFailed = true;
         console.error('庫存資料載入失敗:', err);
@@ -933,6 +938,16 @@
       p.classList.remove('active');
       p.style.display = 'none';
     });
+
+    // 1.5 電腦版的庫存查詢頁需要寬一點（600px 手機寬度會把卡片切掉）；離開就還原
+    try {
+      const cont = document.querySelector('.app-container');
+      if (cont) {
+        const v = (APP_CONFIG.params || {}).view;
+        const keepWide = (v === 'client' || v === 'inventory');
+        cont.classList.toggle('full-width', keepWide || (pageId === 'page-inventory' && window.innerWidth >= 900));
+      }
+    } catch (e) {}
 
     // 2. 顯示目標頁面
     const target = document.getElementById(pageId);
@@ -3372,7 +3387,11 @@
     if (nameEl) nameEl.innerText = state.currentSales || "業務人員";
     if (compEl) compEl.innerText = state.currentSales ? state.currentSales : "專屬";
 
-    loadInventoryData(); // 進頁面確保載入/重新整理
+    // 完整包是數 MB：5 分鐘內已載入過就不重抓；沒載入過才抓（會先用本機快取／輕量版秒開）
+    if (!(state.isInventoryLoaded && Date.now() - (state.inventoryLoadedAt || 0) < 5 * 60 * 1000)) {
+      loadInventoryData();
+    }
+    handleInventorySearch(); // 立刻換掉畫面上的佔位文字：有資料→系統已就緒；沒資料→讀取動畫
   };
 
   window.clearInput = function(id) {
@@ -3401,17 +3420,10 @@
     if (clearQ) clearQ.style.display = q ? 'block' : 'none';
     if (clearSz) clearSz.style.display = sz ? 'block' : 'none';
 
-    if (!q && !sz && minP <= 0 && minQ <= 0) {
-      list.innerHTML = `
-        <div style="grid-column:1/-1; text-align:center; padding:80px 20px;">
-          <div style="font-size:40px; margin-bottom:15px; opacity:0.3;">🔍</div>
-          <div style="color:var(--staff-gold); font-size:15px; font-weight:600;">系統已就緒</div>
-          <div style="color:rgba(255,255,255,0.4); font-size:12px; margin-top:8px;">請輸入編號或系列開始查詢</div>
-        </div>`;
-      return;
-    }
+    // 有資料可用＝完整包已到，或至少有本機快取／輕量版（秒開，不必等完整包）
+    const hasInvData = state.isInventoryLoaded || (state.inventoryData && state.inventoryData.length > 0);
 
-    if (!state.isInventoryLoaded) {
+    if (!hasInvData) {
       if (state.inventoryLoadFailed) {
         list.innerHTML = `
           <div style="grid-column:1/-1; text-align:center; padding:60px 20px;">
@@ -3422,18 +3434,28 @@
         return;
       }
       list.innerHTML = `
-        <div style="grid-column:1/-1; text-align:center; padding:60px 20px;">
-          <div style="width:32px; height:32px; margin:0 auto 14px; border:3px solid rgba(194,157,102,0.2); border-top-color:var(--staff-gold); border-radius:50%; animation: aiSpinnerRotate 0.8s linear infinite;"></div>
-          <div style="color:var(--staff-gold); font-size:13px; font-weight:600;">資料載入中，請稍候...</div>
+        <div class="ait-loading-box" style="grid-column:1/-1; padding:70px 16px;">
+          <div class="ait-spinner"></div>
+          <div>載入庫存資料中…</div>
         </div>`;
       // ⏱️ 逾時保護：15 秒還沒載入完成就顯示「重新載入」按鈕，避免無限期卡在讀取畫面沒有任何反應
       clearTimeout(state.inventoryLoadTimeoutTimer);
       state.inventoryLoadTimeoutTimer = setTimeout(function() {
-        if (!state.isInventoryLoaded) {
+        if (!state.isInventoryLoaded && !(state.inventoryData && state.inventoryData.length > 0)) {
           state.inventoryLoadFailed = true;
           handleInventorySearch();
         }
       }, 15000);
+      return;
+    }
+
+    if (!q && !sz && minP <= 0 && minQ <= 0) {
+      list.innerHTML = `
+        <div style="grid-column:1/-1; text-align:center; padding:80px 20px;">
+          <div style="font-size:40px; margin-bottom:15px; opacity:0.3;">🔍</div>
+          <div style="color:var(--staff-gold); font-size:15px; font-weight:600;">系統已就緒</div>
+          <div style="color:rgba(255,255,255,0.4); font-size:12px; margin-top:8px;">請輸入編號或系列開始查詢</div>
+        </div>`;
       return;
     }
 
