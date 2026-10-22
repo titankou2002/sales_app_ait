@@ -405,9 +405,19 @@ function _buildJinYouLiData(ss) {
  */
 /**
  * 🎞️ 從雲端資料夾抓取並分類圖片 (實景 vs 單片 vs 模面)
+ * 具備 ScriptCache 6小時快取，大幅縮短 GAS 遍歷資料夾之等待時間
  */
 function getFolderImages_impl_(folderId) {
   if (!folderId) return { scenes: [], singles: [], molds: [], intros: [], catalogs: [] };
+
+  const cacheKey = "fldr_img_v3_" + folderId;
+  try {
+    const cached = CacheService.getScriptCache().get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {}
+
   try {
     const rootFolder = DriveApp.getFolderById(folderId);
     const result = { scenes: [], singles: [], molds: [], intros: [], catalogs: [] };
@@ -419,21 +429,26 @@ function getFolderImages_impl_(folderId) {
       const id = file.getId();
       
       let url = "";
+      let thumbUrl = "";
       let isVideo = mime.indexOf('video/') !== -1;
       
       if (mime.indexOf('image/') !== -1) {
         url = "https://lh3.googleusercontent.com/d/" + id + "=w1200";
+        thumbUrl = "https://lh3.googleusercontent.com/d/" + id + "=w400-h400-p";
       } else if (isVideo) {
         // 影片使用預覽圖網址，並標註類型
         url = "https://lh3.googleusercontent.com/d/" + id + "=w400-h400-p";
+        thumbUrl = url;
       } else if (mime === 'application/pdf') {
         url = "https://drive.google.com/file/d/" + id + "/view";
+        thumbUrl = "";
       } else {
         return; 
       }
 
       const fileObj = { 
         url: url, 
+        thumbUrl: thumbUrl || url,
         name: name, 
         type: mime, 
         isVideo: isVideo,
@@ -441,7 +456,7 @@ function getFolderImages_impl_(folderId) {
         previewUrl: isVideo ? "https://drive.google.com/file/d/" + id + "/preview" : ""
       };
 
-      // 🚀 分類邏輯
+      // 分類邏輯
       if (nameLower.indexOf('電子目錄') !== -1) {
         result.catalogs.push(fileObj);
       } else if (nameLower.indexOf('系列介紹') !== -1) {
@@ -468,6 +483,10 @@ function getFolderImages_impl_(folderId) {
         while (subFiles.hasNext()) processFile(subFiles.next());
       }
     }
+
+    try {
+      CacheService.getScriptCache().put(cacheKey, JSON.stringify(result), 21600);
+    } catch (ce) {}
 
     return result;
   } catch (e) {

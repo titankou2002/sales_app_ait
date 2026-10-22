@@ -3626,6 +3626,7 @@
   var currentGalleryData = null;
   var currentGalleryList = [];
   var currentIndex = -1;
+  window._folderImageCache = window._folderImageCache || {};
 
   window.openGallery = function(sku) {
     const item = state.inventoryData.find(p => p.sku === sku);
@@ -3653,32 +3654,39 @@
     };
 
     if (item.img) {
-      baseGallery.singles.push({ name: sku + "_單片", url: item.img.replace('=w400', '=w1200'), isVideo: false });
+      baseGallery.singles.push({
+        name: sku + "_單片",
+        url: item.img.replace('=w400', '=w1200'),
+        thumbUrl: item.img.replace('=w1200', '=w400'),
+        isVideo: false
+      });
     }
     if (item.scenes && item.scenes.length > 0) {
       item.scenes.forEach((sUrl, idx) => {
-        baseGallery.scenes.push({ name: sku + "_實景" + (idx+1), url: sUrl, isVideo: false });
+        baseGallery.scenes.push({
+          name: sku + "_實景" + (idx + 1),
+          url: sUrl.replace('=w400', '=w1200'),
+          thumbUrl: sUrl.replace('=w1200', '=w400'),
+          isVideo: false
+        });
       });
     }
 
     currentGalleryData = baseGallery;
 
     if (item.folderId) {
+      // 🚀 前端極速快取：若本 Session 已抓過該資料夾，0秒立即可用！
+      if (window._folderImageCache[item.folderId]) {
+        _applyFolderData(window._folderImageCache[item.folderId], baseGallery);
+        _updateGalleryTabs();
+        return;
+      }
+
       google.script.run
         .withSuccessHandler(function(res) {
           if (res) {
-            // 合併後端抓取的分類影像
-            ['scenes', 'singles', 'molds', 'intros'].forEach(cat => {
-              if (res[cat]) {
-                res[cat].forEach(file => {
-                  const exists = baseGallery[cat].some(existFile => existFile.url === file.url);
-                  if (!exists) {
-                    baseGallery[cat].push({ name: file.name, url: file.url, isVideo: file.isVideo || false });
-                  }
-                });
-              }
-            });
-            if (res.catalogs) baseGallery.catalogs = res.catalogs;
+            window._folderImageCache[item.folderId] = res;
+            _applyFolderData(res, baseGallery);
           }
           _updateGalleryTabs();
         })
@@ -3690,6 +3698,25 @@
       _updateGalleryTabs();
     }
   };
+
+  function _applyFolderData(res, baseGallery) {
+    ['scenes', 'singles', 'molds', 'intros'].forEach(cat => {
+      if (res[cat]) {
+        res[cat].forEach(file => {
+          const exists = baseGallery[cat].some(existFile => existFile.url === file.url);
+          if (!exists) {
+            baseGallery[cat].push({
+              name: file.name,
+              url: file.url,
+              thumbUrl: file.thumbUrl || (file.url ? file.url.replace('=w1200', '=w400') : ''),
+              isVideo: file.isVideo || false
+            });
+          }
+        });
+      }
+    });
+    if (res.catalogs) baseGallery.catalogs = res.catalogs;
+  }
 
   function _updateGalleryTabs() {
     const tabs = { scene: 'scenes', video: 'videos', single: 'singles', mold: 'molds', intro: 'intros' };
@@ -3712,6 +3739,12 @@
       }
     }
     
+    // 依是否有樣面圖切換拼貼按鈕外觀
+    const btnMosaic = document.getElementById('btn-mold-mosaic');
+    if (btnMosaic) {
+      btnMosaic.style.display = (currentGalleryData.molds && currentGalleryData.molds.length > 0) ? 'inline-flex' : 'none';
+    }
+
     switchGalleryTab(firstTab || 'scene');
   }
 
@@ -3734,7 +3767,7 @@
     if (activeType === 'scene') { source = currentGalleryData.scenes; typeName = "實景照"; }
     else if (activeType === 'video') { source = currentGalleryData.videos; typeName = "影片"; }
     else if (activeType === 'single') { source = currentGalleryData.singles; typeName = "單片圖"; }
-    else if (activeType === 'mold') { source = currentGalleryData.molds; typeName = "模面圖"; }
+    else if (activeType === 'mold') { source = currentGalleryData.molds; typeName = "樣面圖"; }
     else if (activeType === 'intro') { source = currentGalleryData.intros; typeName = "介紹/目錄"; }
 
     const cleanCurrent = currentSku.replace(/[\s\-\_]/g, '').toUpperCase();
@@ -3781,8 +3814,8 @@
     subHeader.innerHTML = `<span>同系列${typeName} (${otherFiles.length})</span>`;
     subHeader.style.display = otherFiles.length > 0 ? 'flex' : 'none';
 
-    mainHeader.classList.remove('collapsed'); mainGrid.style.maxHeight = '2000px';
-    subHeader.classList.remove('collapsed'); subGrid.style.maxHeight = '2000px';
+    mainHeader.classList.remove('collapsed'); mainGrid.style.maxHeight = '3000px';
+    subHeader.classList.remove('collapsed'); subGrid.style.maxHeight = '3000px';
   }
 
   window.toggleSection = function(headerId, gridId) {
@@ -3790,15 +3823,31 @@
     const grid = document.getElementById(gridId);
     if (!header || !grid) return;
     const isCollapsed = header.classList.toggle('collapsed');
-    grid.style.maxHeight = isCollapsed ? '0px' : '2000px';
+    grid.style.maxHeight = isCollapsed ? '0px' : '3000px';
   };
 
+  // 🚀 網格縮圖採用高品質輕量縮圖，並加入 loading="lazy" 與純向量 SVG 按鈕
   function renderImgItem(f, idx) {
+    const thumbUrl = f.thumbUrl || (f.url ? f.url.replace('=w1200', '=w400') : '');
+    const fullUrl = f.url || thumbUrl.replace('=w400', '=w1200');
     return `
-      <div style="aspect-ratio:1/1; overflow:hidden; background:#111; position:relative; border: 0.5px solid rgba(255,255,255,0.05); box-sizing: border-box;">
-        <input type="checkbox" class="gallery-check" data-url="${f.url}" style="position:absolute; top:6px; right:6px; z-index:10; width:18px; height:18px; accent-color:var(--staff-gold); cursor:pointer;">
-        ${f.isVideo ? '<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:30px; pointer-events:none; z-index:5;">▶</div>' : ''}
-        <img src="${f.url}" style="width:100%; height:100%; object-fit:cover; display:block; cursor:pointer;" onclick="showFullImg(${idx})">
+      <div class="gallery-card-item" onclick="showFullImg(${idx})">
+        <input type="checkbox" class="gallery-check" data-url="${fullUrl}" onclick="event.stopPropagation()" style="position:absolute; top:6px; right:6px; z-index:10; width:18px; height:18px; accent-color:var(--staff-gold); cursor:pointer;">
+        ${f.isVideo ? '<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; pointer-events:none; z-index:5;"><svg width="32" height="32" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg></div>' : ''}
+        <img src="${thumbUrl}" loading="lazy" decoding="async" alt="${f.name || '影像'}" style="width:100%; height:100%; object-fit:cover; display:block;">
+        <div class="gallery-card-hover-bar">
+          <button type="button" class="gallery-hover-btn" onclick="event.stopPropagation(); showFullImg(${idx})" title="放大檢視">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            <span>放大</span>
+          </button>
+          <button type="button" class="gallery-hover-btn" onclick="event.stopPropagation(); openEbookCurrentSku(true)" title="翻閱 Ebook 型錄">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            <span>Ebook</span>
+          </button>
+          <button type="button" class="gallery-hover-btn" onclick="event.stopPropagation(); copyImgLink('${fullUrl}')" title="複製圖檔網址">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          </button>
+        </div>
       </div>`;
   }
 
@@ -3807,7 +3856,6 @@
   window.showFullImg = function(idx, directUrl = null, sku = null) {
     const imgEl = document.getElementById('staff-full-img');
     const videoEl = document.getElementById('staff-full-video');
-    const bottomArea = document.getElementById('image-modal-bottom');
 
     if (!imgEl || !videoEl) return;
 
@@ -3823,13 +3871,15 @@
       const item = currentGalleryList[idx];
       if (!item) return;
       
-      if (item.url.toLowerCase().endsWith('.mp4') || item.isVideo) {
+      const fullUrl = item.url || (item.thumbUrl ? item.thumbUrl.replace('=w400', '=w1200') : '');
+
+      if (fullUrl.toLowerCase().endsWith('.mp4') || item.isVideo) {
         imgEl.style.display = 'none';
         videoEl.style.display = 'block';
-        videoEl.src = item.url;
+        videoEl.src = fullUrl;
       } else {
         imgEl.style.display = 'block';
-        imgEl.src = item.url;
+        imgEl.src = fullUrl;
         videoEl.style.display = 'none';
         videoEl.src = '';
       }
@@ -3893,7 +3943,7 @@
     }
   };
 
-  // 單張分享至 LINE (秒級免驗證)
+  // 單張分享至 LINE
   window.shareSingleToLine = function() {
     const imgEl = document.getElementById('staff-full-img');
     if (!imgEl || imgEl.style.display === 'none') {
@@ -3918,9 +3968,128 @@
     window.open('https://line.me/R/msg/text/?' + encodeURIComponent(textWithLink), '_blank');
   };
 
+  // ─── 📖 Ebook 電子型錄結合模組 ───────────────────────────────
+
+  // 開啟當前 SKU 之 Ebook 雜誌型錄 (支援客戶端唯讀視角 v=1)
+  window.openEbookCurrentSku = function(isClientView) {
+    if (!currentSku) { showToast("尚未選擇產品"); return; }
+    var url = "https://bigt.cc/line/ebook.html?s=" + encodeURIComponent(currentSku);
+    if (isClientView) url += "&v=1";
+    window.open(url, "_blank");
+  };
+
+  // 一鍵複製 Ebook 客戶端唯讀型錄連結
+  window.copyEbookClientLink = function() {
+    if (!currentSku) { showToast("尚未選擇產品"); return; }
+    var url = "https://bigt.cc/line/ebook.html?s=" + encodeURIComponent(currentSku) + "&v=1";
+    _copyToClipboard(url);
+    showToast("已複製此款 Ebook 型錄連結！");
+  };
+
+  // 一鍵複製單張圖片連結
+  window.copyImgLink = function(url) {
+    if (!url) return;
+    _copyToClipboard(url);
+    showToast("已複製圖片網址！");
+  };
+
+  // ─── 💻 電腦版欄數切換 (4欄 / 6欄 / 8欄) ──────────────────────
+
+  window.setGalleryCols = function(cols) {
+    var grids = document.querySelectorAll('.gallery-grid-container');
+    grids.forEach(function(g) {
+      g.classList.remove('cols-4', 'cols-6', 'cols-8');
+      g.classList.add('cols-' + cols);
+    });
+    document.querySelectorAll('.gallery-col-pill').forEach(function(btn) {
+      btn.classList.remove('active');
+    });
+    var activeBtn = document.getElementById('pill-col-' + cols);
+    if (activeBtn) activeBtn.classList.add('active');
+  };
+
+  // ─── 🧩 樣面紋理拼貼模擬模組 ─────────────────────────────────
+
+  var mosaicGridSize = 2; // 2 for 2x2, 3 for 3x3
+
+  window.openMoldMosaicModal = function() {
+    if (!currentGalleryData) return;
+    var molds = (currentGalleryData.molds && currentGalleryData.molds.length > 0)
+      ? currentGalleryData.molds
+      : ((currentGalleryData.scenes && currentGalleryData.scenes.length > 0) ? currentGalleryData.scenes : currentGalleryData.singles);
+
+    if (!molds || molds.length === 0) {
+      showToast("目前尚無可供拼貼之紋理影像");
+      return;
+    }
+
+    var titleEl = document.getElementById('mosaic-title');
+    if (titleEl) titleEl.innerText = "【" + currentSku + "】樣面紋理拼貼模擬";
+
+    renderMosaicGrid();
+    document.getElementById('staff-mold-mosaic-modal').style.display = 'flex';
+  };
+
+  window.closeMoldMosaicModal = function() {
+    document.getElementById('staff-mold-mosaic-modal').style.display = 'none';
+  };
+
+  window.switchMosaicGrid = function(size) {
+    mosaicGridSize = size;
+    var btn2 = document.getElementById('btn-mosaic-2x2');
+    var btn3 = document.getElementById('btn-mosaic-3x3');
+    if (btn2) btn2.classList.toggle('active', size === 2);
+    if (btn3) btn3.classList.toggle('active', size === 3);
+    renderMosaicGrid();
+  };
+
+  window.shuffleMosaicTiles = function() {
+    renderMosaicGrid();
+  };
+
+  function renderMosaicGrid() {
+    var molds = (currentGalleryData && currentGalleryData.molds && currentGalleryData.molds.length > 0)
+      ? currentGalleryData.molds
+      : ((currentGalleryData && currentGalleryData.scenes) || []);
+
+    if (!molds.length) return;
+
+    var count = mosaicGridSize * mosaicGridSize; // 4 or 9
+    var picked = [];
+    var pool = molds.slice();
+
+    for (var i = 0; i < count; i++) {
+      if (pool.length === 0) pool = molds.slice();
+      var rIdx = Math.floor(Math.random() * pool.length);
+      picked.push(pool.splice(rIdx, 1)[0]);
+    }
+
+    var container = document.getElementById('mosaic-tiles-grid');
+    if (!container) return;
+    container.className = mosaicGridSize === 2 ? 'mosaic-grid-2x2' : 'mosaic-grid-3x3';
+
+    container.innerHTML = picked.map(function(item) {
+      var url = item.thumbUrl || item.url;
+      return '<img src="' + url + '" class="mosaic-tile" loading="lazy" decoding="async" alt="Tile Surface">';
+    }).join('');
+  }
+
   // ─── 影像批次操作模組 ─────────────────────────────────────
 
   window.batchAction = function(type) {
+    if (type === 'ebook-dm') {
+      var item = state.inventoryData.find(function(p) { return p.sku === currentSku; });
+      var targetUrl = "https://bigt.cc/line/ebook.html";
+      if (currentSku) {
+        targetUrl += "?s=" + encodeURIComponent(currentSku);
+      } else if (item && item.series) {
+        targetUrl += "?ser=" + encodeURIComponent(item.series);
+      }
+      window.open(targetUrl, '_blank');
+      showToast("已開啟 Ebook 提案 DM 產生器");
+      return;
+    }
+
     const checkboxes = document.querySelectorAll('.gallery-check:checked');
     const selectedUrls = Array.from(checkboxes).map(cb => cb.getAttribute('data-url'));
 
@@ -3934,7 +4103,7 @@
       if (albumList) {
         albumList.innerHTML = selectedUrls.map(url => `
           <div style="margin-bottom:15px; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
-            <img src="${url.replace('=w400', '=w1200')}" style="width:100%; display:block;">
+            <img src="${url.replace('=w400', '=w1200')}" loading="lazy" decoding="async" style="width:100%; display:block;">
           </div>
         `).join('');
       }
