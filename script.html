@@ -3636,12 +3636,28 @@
     currentIndex = -1;
     currentGalleryList = [];
 
+    const titleEl = document.getElementById('gallery-modal-title');
+    if (titleEl) titleEl.innerText = '影像庫 · ' + sku;
+
     const mainGrid = document.getElementById('staff-gallery-grid-main');
     const subGrid = document.getElementById('staff-gallery-grid-sub');
-    if (mainGrid) mainGrid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:50px; color:var(--staff-gold); font-size:11px; letter-spacing:2px;">載入雲端影像庫中...</div>';
+    if (mainGrid) {
+      mainGrid.innerHTML = `
+        <div class="ait-loading-box" style="grid-column:1/-1; padding:60px 16px; text-align:center;">
+          <div class="ait-spinner"></div>
+          <div style="margin-top:14px; font-weight:700; color:var(--staff-gold); font-size:13px; letter-spacing:1px;">載入雲端影像庫中…</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:4px;">正在同步「${sku}」商品高解析圖檔與模面紋理</div>
+        </div>`;
+    }
     if (subGrid) subGrid.innerHTML = '';
 
     document.getElementById('staff-gallery-modal').style.display = 'flex';
+
+    // 恢復業務上次選擇的欄數 (預設電腦 6 欄)
+    try {
+      var savedCols = localStorage.getItem('ait_gallery_cols');
+      if (savedCols) setGalleryCols(parseInt(savedCols, 10));
+    } catch (e) {}
 
     // 1. 整理基礎的圖片陣列 (單片圖、scenes)
     const baseGallery = {
@@ -3657,7 +3673,7 @@
       baseGallery.singles.push({
         name: sku + "_單片",
         url: item.img.replace('=w400', '=w1200'),
-        thumbUrl: item.img.replace('=w1200', '=w400'),
+        thumbUrl: item.img.replace('=w1200', '=w400-h400-p'),
         isVideo: false
       });
     }
@@ -3666,7 +3682,7 @@
         baseGallery.scenes.push({
           name: sku + "_實景" + (idx + 1),
           url: sUrl.replace('=w400', '=w1200'),
-          thumbUrl: sUrl.replace('=w1200', '=w400'),
+          thumbUrl: sUrl.replace('=w1200', '=w400-h400-p'),
           isVideo: false
         });
       });
@@ -3675,9 +3691,20 @@
     currentGalleryData = baseGallery;
 
     if (item.folderId) {
-      // 🚀 前端極速快取：若本 Session 已抓過該資料夾，0秒立即可用！
+      // 🚀 前端多層極速快取：SessionStorage 與 Memory Cache，0秒立即開！
+      var cachedSession = null;
+      try {
+        var raw = sessionStorage.getItem('fldr_img_v4_' + item.folderId);
+        if (raw) cachedSession = JSON.parse(raw);
+      } catch (e) {}
+
       if (window._folderImageCache[item.folderId]) {
         _applyFolderData(window._folderImageCache[item.folderId], baseGallery);
+        _updateGalleryTabs();
+        return;
+      } else if (cachedSession) {
+        window._folderImageCache[item.folderId] = cachedSession;
+        _applyFolderData(cachedSession, baseGallery);
         _updateGalleryTabs();
         return;
       }
@@ -3686,6 +3713,7 @@
         .withSuccessHandler(function(res) {
           if (res) {
             window._folderImageCache[item.folderId] = res;
+            try { sessionStorage.setItem('fldr_img_v4_' + item.folderId, JSON.stringify(res)); } catch (e) {}
             _applyFolderData(res, baseGallery);
           }
           _updateGalleryTabs();
@@ -3708,7 +3736,7 @@
             baseGallery[cat].push({
               name: file.name,
               url: file.url,
-              thumbUrl: file.thumbUrl || (file.url ? file.url.replace('=w1200', '=w400') : ''),
+              thumbUrl: file.thumbUrl || (file.url ? file.url.replace('=w1200', '=w400-h400-p') : ''),
               isVideo: file.isVideo || false
             });
           }
@@ -3763,11 +3791,11 @@
     const subHeader = document.getElementById('header-sub');
 
     let source = [];
-    let typeName = "實景照";
-    if (activeType === 'scene') { source = currentGalleryData.scenes; typeName = "實景照"; }
+    let typeName = "實景圖";
+    if (activeType === 'scene') { source = currentGalleryData.scenes; typeName = "實景圖"; }
     else if (activeType === 'video') { source = currentGalleryData.videos; typeName = "影片"; }
     else if (activeType === 'single') { source = currentGalleryData.singles; typeName = "單片圖"; }
-    else if (activeType === 'mold') { source = currentGalleryData.molds; typeName = "樣面圖"; }
+    else if (activeType === 'mold') { source = currentGalleryData.molds; typeName = "模面圖"; }
     else if (activeType === 'intro') { source = currentGalleryData.intros; typeName = "介紹/目錄"; }
 
     const cleanCurrent = currentSku.replace(/[\s\-\_]/g, '').toUpperCase();
@@ -4006,6 +4034,7 @@
     });
     var activeBtn = document.getElementById('pill-col-' + cols);
     if (activeBtn) activeBtn.classList.add('active');
+    try { localStorage.setItem('ait_gallery_cols', cols); } catch (e) {}
   };
 
   // ─── 🧩 樣面紋理拼貼模擬模組 ─────────────────────────────────

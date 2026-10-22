@@ -410,7 +410,7 @@ function _buildJinYouLiData(ss) {
 function getFolderImages_impl_(folderId) {
   if (!folderId) return { scenes: [], singles: [], molds: [], intros: [], catalogs: [] };
 
-  const cacheKey = "fldr_img_v3_" + folderId;
+  const cacheKey = "fldr_img_v4_" + folderId;
   try {
     const cached = CacheService.getScriptCache().get(cacheKey);
     if (cached) {
@@ -485,7 +485,10 @@ function getFolderImages_impl_(folderId) {
     }
 
     try {
-      CacheService.getScriptCache().put(cacheKey, JSON.stringify(result), 21600);
+      const jsonStr = JSON.stringify(result);
+      if (jsonStr.length < 95000) {
+        CacheService.getScriptCache().put(cacheKey, jsonStr, 21600);
+      }
     } catch (ce) {}
 
     return result;

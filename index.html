@@ -797,49 +797,57 @@
           onclick="document.getElementById('staff-gallery-modal').style.display='none'">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         </div>
-        <div style="flex:1; text-align:center; font-weight:700; letter-spacing:2px; font-size:15px; color:#fff;">影像庫</div>
+        <div id="gallery-modal-title" style="flex:1; text-align:center; font-weight:700; letter-spacing:1px; font-size:15px; color:#fff;">影像庫</div>
         <!-- 💻 電腦版欄數切換 (可自由切換 4欄 / 6欄 / 8欄) -->
         <div class="gallery-col-switch" style="position:absolute; right:16px;">
           <span style="font-size:11px; color:rgba(255,255,255,0.4); margin-right:4px;">欄數</span>
-          <button type="button" class="gallery-col-pill" onclick="setGalleryCols(4)">4欄</button>
+          <button type="button" class="gallery-col-pill" id="pill-col-4" onclick="setGalleryCols(4)">4欄</button>
           <button type="button" class="gallery-col-pill active" id="pill-col-6" onclick="setGalleryCols(6)">6欄</button>
-          <button type="button" class="gallery-col-pill" onclick="setGalleryCols(8)">8欄</button>
+          <button type="button" class="gallery-col-pill" id="pill-col-8" onclick="setGalleryCols(8)">8欄</button>
         </div>
       </div>
-      <div id="gallery-tabs-container" style="padding:10px 16px; display:flex; gap:6px; background:#000; overflow-x:auto; border-bottom:1px solid rgba(255,255,255,0.04);">
-        <div id="tab-scene" class="gallery-tab active" onclick="switchGalleryTab('scene')">實景照</div>
-        <div id="tab-video" class="gallery-tab" onclick="switchGalleryTab('video')">影片</div>
-        <div id="tab-single" class="gallery-tab" onclick="switchGalleryTab('single')">單片圖</div>
-        <div id="tab-mold" class="gallery-tab" onclick="switchGalleryTab('mold')">樣面圖</div>
-        <div id="tab-intro" class="gallery-tab" onclick="switchGalleryTab('intro')">介紹/目錄</div>
+      <div style="background:#000; border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div class="gallery-content-wrap" style="padding-top:8px; padding-bottom:8px;">
+          <div id="gallery-tabs-container" style="display:flex; gap:8px; overflow-x:auto;">
+            <div id="tab-scene" class="gallery-tab active" onclick="switchGalleryTab('scene')">實景圖</div>
+            <div id="tab-video" class="gallery-tab" onclick="switchGalleryTab('video')">影片</div>
+            <div id="tab-single" class="gallery-tab" onclick="switchGalleryTab('single')">單片圖</div>
+            <div id="tab-mold" class="gallery-tab" onclick="switchGalleryTab('mold')">模面圖</div>
+            <div id="tab-intro" class="gallery-tab" onclick="switchGalleryTab('intro')">介紹/目錄</div>
+          </div>
+        </div>
       </div>
-      <div class="gallery-content-wrap" style="padding-top:10px; padding-bottom:12px;">
-        <div id="gallery-action-area" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <div class="gallery-content-wrap" style="padding-top:12px; padding-bottom:12px;">
+        <div id="gallery-action-area">
           <button
-            style="flex:1; min-width:100px; height:36px; background:rgba(255,255,255,0.04); color:#fff; border:1px solid rgba(255,255,255,0.12); border-radius:10px; font-size:12px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px;"
+            class="gallery-action-btn"
+            style="background:rgba(255,255,255,0.04); color:#fff; border:1px solid rgba(255,255,255,0.15);"
             onclick="batchAction('preview')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
             <span>生成預覽</span>
           </button>
           <button
-            style="flex:1; min-width:100px; height:36px; background:rgba(255,255,255,0.08); color:#fff; border:1px solid rgba(255,255,255,0.15); border-radius:10px; font-weight:600; font-size:12px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px;"
+            class="gallery-action-btn"
+            style="background:var(--staff-gold); color:#000; border:none; font-weight:700;"
             onclick="batchAction('share')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
             <span>發送 LINE</span>
           </button>
           <button
             id="btn-import-ebook"
-            style="flex:1; min-width:130px; height:36px; background:rgba(218,165,32,0.15); color:var(--staff-gold); border:1px solid rgba(218,165,32,0.35); border-radius:10px; font-weight:700; font-size:12px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px;"
+            class="gallery-action-btn"
+            style="background:rgba(218,165,32,0.15); color:var(--staff-gold); border:1px solid rgba(218,165,32,0.35); font-weight:700;"
             onclick="batchAction('ebook-dm')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
             <span>Ebook 提案 DM</span>
           </button>
           <button
             id="btn-mold-mosaic"
-            style="flex:1; min-width:130px; height:36px; background:var(--staff-gold); color:#000; border:none; border-radius:10px; font-weight:700; font-size:12px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px;"
+            class="gallery-action-btn"
+            style="background:rgba(255,255,255,0.08); color:var(--staff-gold); border:1px solid rgba(194,157,102,0.3); font-weight:700;"
             onclick="openMoldMosaicModal()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-            <span>樣面拼貼模擬</span>
+            <span>模面拼貼模擬</span>
           </button>
         </div>
       </div>
