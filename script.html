@@ -4020,6 +4020,90 @@
     setTimeout(function() { card.classList.remove('tap'); }, 500);
   }, { passive: true });
 
+  // 首頁背景：低色階彩色星網（亮點慢慢飄、靠近連線、手指滑過會把亮點拉來連線）。
+  // 只在首頁顯示時才畫（每秒約 30 張）；頁面隱藏或切到別頁就停，不佔效能。
+  (function() {
+    var cv = null, ctx = null, W = 0, H = 0, pts = [], touch = null, last = 0, started = false;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var HUES = [45, 140, 265, 210, 335, 20];
+    var N = 55, LINK2 = 110 * 110, REACH2 = 150 * 150;
+    var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function size() {
+      W = window.innerWidth; H = window.innerHeight;
+      cv.width = W * dpr; cv.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function build() {
+      pts = [];
+      for (var i = 0; i < N; i++) pts.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * .4, vy: (Math.random() - .5) * .4, h: HUES[i % HUES.length], r: 1 + Math.random() * 1.4 });
+    }
+    function active() {
+      var pg = document.getElementById('page-dashboard');
+      return pg && pg.classList.contains('active') && !document.hidden;
+    }
+    function frame(t) {
+      if (!active()) { setTimeout(function() { requestAnimationFrame(frame); }, 400); return; }
+      requestAnimationFrame(frame);
+      if (t - last < 33) return;
+      last = t;
+      ctx.clearRect(0, 0, W, H);
+      var i, j, a, b, dx, dy, d2;
+      for (i = 0; i < pts.length; i++) {
+        a = pts[i];
+        if (!reduce) {
+          if (touch) {
+            dx = touch.x - a.x; dy = touch.y - a.y; d2 = dx * dx + dy * dy;
+            if (d2 < REACH2 * 2.5 && d2 > 400) { var d = Math.sqrt(d2); a.vx += dx / d * .02; a.vy += dy / d * .02; }
+          }
+          a.vx *= .995; a.vy *= .995;
+          var sp = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+          if (sp < .12) { a.vx *= 1.05; a.vy *= 1.05; } else if (sp > 1.2) { a.vx *= .9; a.vy *= .9; }
+          a.x += a.vx; a.y += a.vy;
+          if (a.x < 0 || a.x > W) a.vx *= -1;
+          if (a.y < 0 || a.y > H) a.vy *= -1;
+        }
+      }
+      ctx.lineWidth = .8;
+      for (i = 0; i < pts.length; i++) {
+        a = pts[i];
+        for (j = i + 1; j < pts.length; j++) {
+          b = pts[j]; dx = a.x - b.x; dy = a.y - b.y; d2 = dx * dx + dy * dy;
+          if (d2 < LINK2) {
+            ctx.strokeStyle = 'hsla(' + a.h + ',30%,58%,' + (0.3 * (1 - d2 / LINK2)).toFixed(2) + ')';
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          }
+        }
+        if (touch) {
+          dx = touch.x - a.x; dy = touch.y - a.y; d2 = dx * dx + dy * dy;
+          if (d2 < REACH2) {
+            ctx.strokeStyle = 'hsla(' + a.h + ',40%,66%,' + (0.55 * (1 - d2 / REACH2)).toFixed(2) + ')';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(touch.x, touch.y); ctx.stroke();
+            ctx.lineWidth = .8;
+          }
+        }
+        ctx.fillStyle = 'hsla(' + a.h + ',35%,64%,.8)';
+        ctx.beginPath(); ctx.arc(a.x, a.y, a.r, 0, 6.283); ctx.fill();
+      }
+    }
+    function start() {
+      if (started) return;
+      cv = document.getElementById('dashboardCanvas');
+      if (!cv) return;
+      started = true;
+      ctx = cv.getContext('2d');
+      size(); build();
+      window.addEventListener('resize', function() { size(); });
+      var setT = function(e) { touch = { x: e.clientX, y: e.clientY }; };
+      document.addEventListener('pointerdown', setT, { passive: true });
+      document.addEventListener('pointermove', function(e) { if (e.pointerType === 'mouse' || e.buttons || touch) setT(e); }, { passive: true });
+      ['pointerup', 'pointercancel'].forEach(function(n) { document.addEventListener(n, function() { touch = null; }, { passive: true }); });
+      requestAnimationFrame(frame);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  })();
+
   // 首頁「電子目錄」：開 Ebook 首頁
   window.openEbookCatalog = function() {
     window.open("https://bigt.cc/line/ebook.html", "_blank");

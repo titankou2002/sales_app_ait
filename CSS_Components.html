@@ -348,7 +348,7 @@
     .dashboard-grid .dash-card { padding: 14px 10px; border-radius: 22px; }
     .dashboard-grid .dash-label { font-size: 19px; margin-bottom: 4px; letter-spacing: 2px; }
     .dashboard-grid .dash-desc { font-size: 9px; }
-    .dashboard-grid .dash-card-empty { min-height: 0; }
+    .dashboard-grid .dash-card { min-height: clamp(72px, calc((100dvh - 338px) / 5), 112px); }
     #page-dashboard > .admin-hidden-entrance { padding-top: 10px; }
   }
   @media (min-width: 992px) {
