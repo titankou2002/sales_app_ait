@@ -326,6 +326,21 @@
   #page-dashboard > .admin-hidden-entrance { position: static; width: 100%; margin-bottom: auto; padding: 22px 15px 6px; flex-shrink: 0; }
   #page-dashboard .powerby-ticker { display: block; margin-left: auto; margin-right: auto; width: max-content; max-width: 90%; text-align: center; }
   #page-dashboard .premium-subtitle { white-space: normal; line-height: 1.5; }
+  /* 📱 手機首頁：10 格要一屏放完，卡片與抬頭都縮小 */
+  @media (max-width: 600px) {
+    #page-dashboard { padding: 14px 16px 16px; }
+    #page-dashboard .dashboard-header { margin-bottom: 12px; }
+    #page-dashboard .dashboard-brand-logo { width: 44px; }
+    #page-dashboard .dashboard-logo-container { margin-bottom: 4px; }
+    #page-dashboard .dash-title { font-size: 18px; margin-top: 6px; }
+    #page-dashboard .premium-subtitle { font-size: 9px; margin-top: 4px; letter-spacing: 3px; }
+    .dashboard-grid { gap: 12px; }
+    .dashboard-grid .dash-card { padding: 14px 10px; border-radius: 22px; }
+    .dashboard-grid .dash-label { font-size: 19px; margin-bottom: 4px; letter-spacing: 2px; }
+    .dashboard-grid .dash-desc { font-size: 9px; }
+    .dashboard-grid .dash-card-empty { min-height: 0; }
+    #page-dashboard > .admin-hidden-entrance { padding-top: 10px; }
+  }
   @media (min-width: 992px) {
     #page-dashboard { padding-top: 24px; }
     .dashboard-grid { max-width: 560px; }
