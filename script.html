@@ -4020,15 +4020,15 @@
     setTimeout(function() { card.classList.remove('tap'); }, 500);
   }, { passive: true });
 
-  // 首頁動畫：亮點沿著卡片邊框跑，跑一段就跳到旁邊的卡片，落地時那張卡的邊框會亮一下。
-  // 手指按卡片會從那張卡射出亮點到鄰近卡片。只在首頁顯示時才畫（約 30 張/秒），其他頁或離開 App 就停。
+  // 首頁動畫：一顆金色小光點慢慢沿著卡片邊框滑一段，拖著柔和的尾巴，滑到旁邊那張卡時那張卡邊框輕輕亮一下，
+  // 休息一會兒再接力到下一張。同一時間只有一顆。按卡片時那張卡邊框柔光一閃。
+  // 只在首頁顯示時才畫；沒有光點、也沒有柔光時完全不畫，其他頁或離開 App 就停。
   (function() {
-    var cv = null, ctx = null, W = 0, H = 0, started = false, last = 0, lastT = 0;
+    var cv = null, ctx = null, W = 0, H = 0, started = false, lastT = 0;
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    var HUES = [45, 140, 265, 210, 335, 20];
     var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    var RADIUS = 22, RUNNERS = 12, TRAIL = 12;
-    var cards = [], runners = [];
+    var RADIUS = 22, SPEED = 95, TAIL = 90, SEGS = 26;
+    var cards = [], comet = null, pending = null, nextAt = 0, clock = 0, cleared = true;
 
     function size() {
       W = window.innerWidth; H = window.innerHeight;
@@ -4044,21 +4044,22 @@
       var els = document.querySelectorAll('#dashboardGrid .dash-card');
       for (var i = 0; i < els.length; i++) {
         var r = els[i].getBoundingClientRect();
-        var c = cards[i] || (cards[i] = { pulse: 0, el: els[i] });
-        c.el = els[i]; c.l = r.left + 1; c.t = r.top + 1; c.w = r.width - 2; c.h = r.height - 2;
+        var c = cards[i] || (cards[i] = { pulse: 0 });
+        c.l = r.left + 1; c.t = r.top + 1; c.w = r.width - 2; c.h = r.height - 2;
         c.cx = r.left + r.width / 2; c.cy = r.top + r.height / 2;
         c.r = Math.min(RADIUS, c.w / 2, c.h / 2);
         c.P = 2 * (c.w - 2 * c.r) + 2 * (c.h - 2 * c.r) + 2 * Math.PI * c.r;
+        c.empty = els[i].classList.contains('dash-card-empty');
       }
       cards.length = els.length;
     }
     // 沿圓角矩形周長 s 的位置（順時針，從上緣左端開始）
     function perim(c, s) {
-      var r = c.r, w = c.w, h = c.h, L = c.l, T = c.t, R = L + w, B = T + h, arc = Math.PI * r / 2;
+      var r = c.r, w = c.w, h = c.h, L = c.l, T = c.t, R = L + w, B = T + h, arc = Math.PI * r / 2, a;
       s = ((s % c.P) + c.P) % c.P;
       var seg = w - 2 * r;
       if (s < seg) return [L + r + s, T];
-      s -= seg; if (s < arc) { var a = -Math.PI / 2 + s / r; return [R - r + r * Math.cos(a), T + r + r * Math.sin(a)]; }
+      s -= seg; if (s < arc) { a = -Math.PI / 2 + s / r; return [R - r + r * Math.cos(a), T + r + r * Math.sin(a)]; }
       s -= arc; seg = h - 2 * r;
       if (s < seg) return [R, T + r + s];
       s -= seg; if (s < arc) { a = s / r; return [R - r + r * Math.cos(a), B - r + r * Math.sin(a)]; }
@@ -4070,101 +4071,103 @@
       s -= seg; a = Math.PI + s / r;
       return [L + r + r * Math.cos(a), T + r + r * Math.sin(a)];
     }
-    // 卡片周長上離某點最近的 s
     function nearestS(c, x, y) {
-      var best = 0, bd = 1e12, n = 64;
+      var best = 0, bd = 1e12, n = 96;
       for (var i = 0; i < n; i++) {
         var s = c.P * i / n, p = perim(c, s), dx = p[0] - x, dy = p[1] - y, d = dx * dx + dy * dy;
         if (d < bd) { bd = d; best = s; }
       }
       return best;
     }
-    function neighbors(ci) {
+    function pickNext(ci) {
       var me = cards[ci], list = [];
-      for (var i = 0; i < cards.length; i++) if (i !== ci) list.push({ i: i, d: Math.pow(cards[i].cx - me.cx, 2) + Math.pow(cards[i].cy - me.cy, 2) });
+      for (var i = 0; i < cards.length; i++) if (i !== ci && !cards[i].empty) list.push({ i: i, d: Math.pow(cards[i].cx - me.cx, 2) + Math.pow(cards[i].cy - me.cy, 2) });
       list.sort(function(a, b) { return a.d - b.d; });
-      return list.slice(0, 3).map(function(o) { return o.i; });
+      list = list.slice(0, 3);
+      return list.length ? list[Math.floor(Math.random() * list.length)].i : ci;
     }
-    function makeRunner(ci) {
-      return { c: ci, s: Math.random() * cards[ci].P, v: (50 + Math.random() * 60) * (Math.random() < .5 ? 1 : -1),
-               hop: 150 + Math.random() * 250, h: HUES[Math.floor(Math.random() * HUES.length)], fly: null, trail: [] };
-    }
-    function startFlight(rn, from, ti, delay) {
-      var tc = cards[ti], p0 = perim(cards[from], rn.s);
-      var ts = nearestS(tc, p0[0], p0[1]), p1 = perim(tc, ts);
-      var dx = p1[0] - p0[0], dy = p1[1] - p0[1], dist = Math.sqrt(dx * dx + dy * dy);
-      var bend = (Math.random() < .5 ? 1 : -1) * Math.min(60, dist * .35);
-      rn.fly = { x0: p0[0], y0: p0[1], x1: p1[0], y1: p1[1], cx: (p0[0] + p1[0]) / 2 - dy / (dist || 1) * bend, cy: (p0[1] + p1[1]) / 2 + dx / (dist || 1) * bend,
-                 t: -(delay || 0), dur: Math.max(.22, dist / 420), to: ti, ts: ts };
-      cards[from].pulse = Math.max(cards[from].pulse, .6);
-    }
-    function burst(ci) {
-      if (reduce || !cards[ci]) return;
-      cards[ci].pulse = 1;
-      var nb = neighbors(ci);
-      for (var k = 0; k < 4; k++) {
-        var rn = makeRunner(ci); rn.s = nearestS(cards[ci], cards[ci].cx, cards[ci].cy) + Math.random() * 80;
-        startFlight(rn, ci, nb[k % nb.length], k * .06);
-        runners.push(rn);
-        if (runners.length > RUNNERS + 8) runners.shift();
-      }
+    function launch(ci, s0) {
+      var ni = pickNext(ci), a = cards[ci], b = cards[ni];
+      var ts = nearestS(a, b.cx, b.cy), P = a.P;
+      var cw = ((ts - s0) % P + P) % P, dir = 1, dist = cw;
+      if (cw > P / 2) { dir = -1; dist = P - cw; }
+      if (dist < P * .3) { dir = -dir; dist = P - dist; }
+      comet = { c: ci, to: ni, s0: s0, dir: dir, dist: dist, run: 0 };
     }
     function step(dt) {
-      var i, rn, p;
-      for (i = 0; i < runners.length; i++) {
-        rn = runners[i];
-        if (rn.fly) {
-          var f = rn.fly; f.t += dt;
-          if (f.t < 0) continue;
-          var u = Math.min(1, f.t / f.dur), e = u * u * (3 - 2 * u), q = 1 - e;
-          p = [q * q * f.x0 + 2 * q * e * f.cx + e * e * f.x1, q * q * f.y0 + 2 * q * e * f.cy + e * e * f.y1];
-          if (u >= 1) { rn.c = f.to; rn.s = f.ts; rn.fly = null; rn.hop = 150 + Math.random() * 250; cards[rn.c].pulse = 1; }
-        } else {
-          var ds = rn.v * dt; rn.s += ds; rn.hop -= Math.abs(ds);
-          p = perim(cards[rn.c], rn.s);
-          if (rn.hop <= 0) { var nb = neighbors(rn.c); startFlight(rn, rn.c, nb[Math.floor(Math.random() * nb.length)]); }
+      var i;
+      for (i = 0; i < cards.length; i++) cards[i].pulse = Math.max(0, cards[i].pulse - dt * .9);
+      if (reduce) return;
+      clock += dt;
+      if (comet) {
+        comet.run += SPEED * dt;
+        if (comet.run >= comet.dist + TAIL * .5) {
+          var to = comet.to;
+          cards[to].pulse = Math.max(cards[to].pulse, .55);
+          var b = cards[to], a = cards[comet.c];
+          var p = perim(a, comet.s0 + comet.dir * comet.dist);
+          comet = null; nextAt = clock + 2.5 + Math.random() * 3;
+          pending = { c: to, s: nearestS(b, p[0], p[1]) };
         }
-        rn.trail.push(p); if (rn.trail.length > TRAIL) rn.trail.shift();
-        rn.head = p;
+      } else if (pending && clock >= nextAt) {
+        launch(pending.c, pending.s); pending = null;
+      } else if (!pending && clock >= nextAt) {
+        var ci = Math.floor(Math.random() * cards.length);
+        if (cards[ci].empty) ci = 0;
+        launch(ci, Math.random() * cards[ci].P);
       }
     }
     function draw() {
+      var i, any = false;
       ctx.clearRect(0, 0, W, H);
-      var i, j, c, rn;
+      ctx.lineCap = 'round';
       for (i = 0; i < cards.length; i++) {
-        c = cards[i];
+        var c = cards[i];
         if (c.pulse > .02) {
-          ctx.strokeStyle = 'rgba(214,190,130,' + (0.55 * c.pulse).toFixed(2) + ')'; ctx.lineWidth = 1.6;
+          any = true;
+          ctx.strokeStyle = 'rgba(222,198,140,' + (0.5 * c.pulse * c.pulse).toFixed(3) + ')'; ctx.lineWidth = 1.2;
           ctx.beginPath();
           if (ctx.roundRect) ctx.roundRect(c.l, c.t, c.w, c.h, c.r); else ctx.rect(c.l, c.t, c.w, c.h);
           ctx.stroke();
         }
       }
-      for (i = 0; i < runners.length; i++) {
-        rn = runners[i]; if (!rn.head || (rn.fly && rn.fly.t < 0)) continue;
-        var tr = rn.trail;
-        for (j = 1; j < tr.length; j++) {
-          ctx.strokeStyle = 'hsla(' + rn.h + ',40%,68%,' + (0.75 * j / tr.length).toFixed(2) + ')';
-          ctx.lineWidth = .8 + 1.4 * j / tr.length;
-          ctx.beginPath(); ctx.moveTo(tr[j - 1][0], tr[j - 1][1]); ctx.lineTo(tr[j][0], tr[j][1]); ctx.stroke();
+      if (comet) {
+        any = true;
+        var cd = comet.c, card = cards[cd], u = comet.run / (comet.dist + TAIL * .5);
+        var env = Math.min(1, u / .18) * Math.min(1, (1 - u) / .35);
+        env = Math.max(0, env);
+        var head = comet.s0 + comet.dir * Math.min(comet.run, comet.dist + TAIL * .5);
+        var prev = perim(card, head), k, q;
+        for (k = 1; k <= SEGS; k++) {
+          q = perim(card, head - comet.dir * TAIL * k / SEGS);
+          var f = 1 - k / SEGS;
+          ctx.strokeStyle = 'rgba(230,205,150,' + (0.7 * env * f * f).toFixed(3) + ')';
+          ctx.lineWidth = .6 + 2 * f;
+          ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+          prev = q;
         }
-        ctx.fillStyle = 'hsla(' + rn.h + ',45%,78%,.95)';
-        ctx.beginPath(); ctx.arc(rn.head[0], rn.head[1], 2.2, 0, 6.283); ctx.fill();
+        var hp = perim(card, head);
+        var g = ctx.createRadialGradient(hp[0], hp[1], 0, hp[0], hp[1], 11);
+        g.addColorStop(0, 'rgba(255,238,200,' + (0.6 * env).toFixed(3) + ')');
+        g.addColorStop(1, 'rgba(255,238,200,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(hp[0], hp[1], 11, 0, 6.283); ctx.fill();
+        ctx.fillStyle = 'rgba(255,248,230,' + (0.95 * env).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc(hp[0], hp[1], 1.7, 0, 6.283); ctx.fill();
       }
+      return any;
     }
     function frame(t) {
       if (!active()) { lastT = 0; setTimeout(function() { requestAnimationFrame(frame); }, 400); return; }
       requestAnimationFrame(frame);
-      if (t - last < 33) return;
-      var dt = lastT ? Math.min(.1, (t - lastT) / 1000) : .033;
-      last = t; lastT = t;
+      var dt = lastT ? Math.min(.05, (t - lastT) / 1000) : .016;
+      lastT = t;
       readCards();
       if (!cards.length) return;
-      while (runners.length < RUNNERS) runners.push(makeRunner(Math.floor(Math.random() * cards.length)));
-      for (var i = 0; i < runners.length; i++) if (runners[i].c >= cards.length) runners[i].c = 0;
-      for (i = 0; i < cards.length; i++) cards[i].pulse = Math.max(0, cards[i].pulse - dt * 1.4);
-      if (!reduce) step(dt);
-      draw();
+      step(dt);
+      var any = !!comet;
+      for (var i = 0; i < cards.length; i++) if (cards[i].pulse > .02) any = true;
+      if (any) { draw(); cleared = false; }
+      else if (!cleared) { ctx.clearRect(0, 0, W, H); cleared = true; }
     }
     function start() {
       if (started) return;
@@ -4174,12 +4177,14 @@
       cv.style.zIndex = '20';
       ctx = cv.getContext('2d');
       size();
+      nextAt = 1.2;
       window.addEventListener('resize', size);
       document.addEventListener('pointerdown', function(e) {
         var card = e.target.closest && e.target.closest('#dashboardGrid .dash-card');
-        if (!card || card.classList.contains('dash-card-empty')) { if (card) burst([].indexOf.call(card.parentNode.children, card)); return; }
+        if (!card || card.classList.contains('dash-card-empty')) return;
         readCards();
-        burst([].indexOf.call(card.parentNode.children, card));
+        var ci = [].indexOf.call(card.parentNode.children, card);
+        if (cards[ci]) cards[ci].pulse = 1;
       }, { passive: true });
       requestAnimationFrame(frame);
     }
