@@ -4007,6 +4007,19 @@
 
   // ─── 📖 Ebook 電子型錄結合模組 ───────────────────────────────
 
+  // 首頁卡片觸碰光暈：只記按下位置、加一個 class，動畫全由 CSS 負責
+  document.addEventListener('pointerdown', function(e) {
+    var card = e.target.closest && e.target.closest('.dash-card');
+    if (!card || card.classList.contains('dash-card-empty')) return;
+    var r = card.getBoundingClientRect();
+    card.style.setProperty('--rx', (e.clientX - r.left) + 'px');
+    card.style.setProperty('--ry', (e.clientY - r.top) + 'px');
+    card.classList.remove('tap');
+    void card.offsetWidth;
+    card.classList.add('tap');
+    setTimeout(function() { card.classList.remove('tap'); }, 500);
+  }, { passive: true });
+
   // 首頁「電子目錄」：開 Ebook 首頁
   window.openEbookCatalog = function() {
     window.open("https://bigt.cc/line/ebook.html", "_blank");

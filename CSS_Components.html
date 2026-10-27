@@ -88,6 +88,12 @@
     transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   }
   .dash-card:active { transform: scale(0.94); background: rgba(255,255,255,0.2); }
+  /* 👆 觸碰光暈：按下的位置擴散一圈亮光（純 CSS，沒有額外載入） */
+  .dash-card { position: relative; -webkit-tap-highlight-color: transparent; }
+  .dash-card::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+    background: radial-gradient(circle at var(--rx, 50%) var(--ry, 50%), rgba(255,255,255,0.35), rgba(255,255,255,0) 60%); }
+  .dash-card.tap::after { animation: dashTap 0.45s ease-out; }
+  @keyframes dashTap { 0% { opacity: 1; transform: scale(0.6); } 100% { opacity: 0; transform: scale(1.15); } }
   .dash-card-empty { background: transparent; border: 1.5px dashed rgba(255,255,255,0.1); cursor: default; pointer-events: none; min-height: 80px; }
 
   .dash-label { font-size: 22px; font-weight: 700; letter-spacing: 3px; color: #fff; margin-bottom: 8px; }
@@ -329,11 +335,15 @@
   /* 📱 手機首頁：10 格要一屏放完，卡片與抬頭都縮小 */
   @media (max-width: 600px) {
     #page-dashboard { padding: 14px 16px 16px; }
+    #page-dashboard > .dashboard-header { margin-top: 4px; }
+    #page-dashboard .premium-subtitle { font-size: 8px; letter-spacing: 2px; }
+    #page-dashboard .powerby-ticker { font-size: 9.5px !important; letter-spacing: 0.5px !important; margin-top: 4px !important; }
+    .dashboard-grid .layout-badge { top: -7px; right: 12px; font-size: 9px; padding: 2px 7px; }
     #page-dashboard .dashboard-header { margin-bottom: 12px; }
     #page-dashboard .dashboard-brand-logo { width: 44px; }
     #page-dashboard .dashboard-logo-container { margin-bottom: 4px; }
     #page-dashboard .dash-title { font-size: 18px; margin-top: 6px; }
-    #page-dashboard .premium-subtitle { font-size: 9px; margin-top: 4px; letter-spacing: 3px; }
+    #page-dashboard .premium-subtitle { margin-top: 4px; }
     .dashboard-grid { gap: 12px; }
     .dashboard-grid .dash-card { padding: 14px 10px; border-radius: 22px; }
     .dashboard-grid .dash-label { font-size: 19px; margin-bottom: 4px; letter-spacing: 2px; }
