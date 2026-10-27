@@ -77,7 +77,7 @@ const BRANCHES = {
     reserveSS: '1uFKKWBfulg-GmCbJsSomimT5LW5r0N2w28rubrPveTA',
     dbSS: '1uFKKWBfulg-GmCbJsSomimT5LW5r0N2w28rubrPveTA',
     sheetName: '保留單',
-    salesSheetName: '月報表',
+    salesSheetName: '經銷銷售報表',   // 舊名「月報表」，統一改名；目前只有診斷函式會讀這個分頁，已兩個名字都認
     // 品牌白名單：貨櫃到貨品項歸屬判斷用（Step3，依 MD讀取/貨櫃欄位.md 四-1）
     brands: ['STN', 'SINTESI', 'RONDINE', 'KERADOM', 'KEOPE', 'ELIOS'],
     // 貨櫃到貨排程系統（倉庫日誌專案）的「到貨明細(唯讀)」，與高雅瓷共用同一份試算表，靠 Remark 關鍵字區分分公司
@@ -480,8 +480,7 @@ function isArchiveProgress_(status, progressText) {
  * 注意：這跟 isArchiveProgress_ 不同——後者還用在保留單清單顯示、自動封存、通知，不能把「過期釋出」併進去。
  */
 function isNotHoldingStock_(status, progressText) {
-  if (isArchiveProgress_(status, progressText)) return true;
-  return (String(status || '') + ' ' + String(progressText || '')).indexOf('過期釋出') >= 0;
+  return stockRuleIsReleased_(status, progressText); // 標準規則見 Stock_Core.js
 }
 
 /**
@@ -808,7 +807,7 @@ function getReserveData() {
       }
       return s;
     })
-    .filter(s => !isArchiveProgress_(s.deposit, s.progress))
+    .filter(s => !isNotHoldingStock_(s.deposit, s.progress)) // 保留單清單：不佔庫存的（結案／取消／刪除／過期釋出）不列
     .sort((a, b) => b.days - a.days);
   return { sites, webAppUrl: RESERVE_EXEC_URL_ + '?view=reserve' };
 }
@@ -1414,41 +1413,13 @@ function getRestockAlerts(br, forceFresh) {
     Object.keys(metaMap).forEach(c => { perPingMapForContainer[c] = metaMap[c].perPing; });
     const containerMap = getIncomingContainerMap_(perPingMapForContainer, br);
 
-    // 2. 讀取「庫存表」
-    const stockSh = dbSs.getSheetByName('庫存表');
-    const stockRows = stockSh.getDataRange().getValues();
-    const stockHeaders = stockRows[0];
-    const sIdxCode = rsvFindHeaderIndex_(stockHeaders, ['產品編號', '編號']);
-    const sIdxQty = rsvFindHeaderIndex_(stockHeaders, ['庫存坪數', '坪數']);
-    
-    const stockMap = {};
-    for (let i = 1; i < stockRows.length; i++) {
-      const code = String(stockRows[i][sIdxCode !== -1 ? sIdxCode : 0] || '').trim().toUpperCase().replace(/[\s\-]/g, '');
-      const qty = sIdxQty !== -1 ? parseFloat(stockRows[i][sIdxQty]) : parseFloat(stockRows[i][12]);
-      if (code && !isNaN(qty)) stockMap[code] = (stockMap[code] || 0) + qty;
-    }
-    
-    // 3. 讀取「保留單」 (主系統之正式保留紀錄)
-    const resSh = SpreadsheetApp.openById(b.reserveSS).getSheetByName(b.sheetName); // 🚀 讀正確來源，不讀 1G5q 同步複本
-    const resRows = resSh.getDataRange().getValues();
-    const resHeaders = resRows[0];
-    const rIdxCode = rsvFindHeaderIndex_(resHeaders, ['編號', '產品編號']);
-    const rIdxQty = rsvFindHeaderIndex_(resHeaders, ['數量', '片數']);
-    const rIdxProgress = rsvFindHeaderIndex_(resHeaders, ['業務更新', '最新進度']);
-    const rIdxDeposit = rsvFindHeaderIndex_(resHeaders, ['訂金確認']);
-
+    // 2、3. 庫存與保留：一律走標準算法（Stock_Core.js）——片數為準、保留排除結案／取消／刪除／過期釋出
+    const stockStd = stockRuleReadStock_(br, c => (metaMap[c] && metaMap[c].perPing) || STOCK_RULE.defaultPerPing);
+    const stockMap = stockStd.map;                // 編號 → 片數
+    const reserveStd = stockRuleReadReserve_(br); // 編號 → {pieces, count}
     const reserveMap = {};
-    for (let i = 1; i < resRows.length; i++) {
-      const code = String(resRows[i][rIdxCode !== -1 ? rIdxCode : 0] || '').trim().toUpperCase().replace(/[\s\-]/g, '');
-      const qty = parseFloat(resRows[i][rIdxQty !== -1 ? rIdxQty : 1]) || 0;
-      if (!code) continue;
-      // 排除已結案/取消/刪除的死案，避免佔用保留量把可用庫存誤壓成負數
-      const progressText = rIdxProgress >= 0 ? resRows[i][rIdxProgress] : '';
-      const depositText = rIdxDeposit >= 0 ? resRows[i][rIdxDeposit] : '';
-      if (isNotHoldingStock_(depositText, progressText)) continue;
-      reserveMap[code] = (reserveMap[code] || 0) + qty;
-    }
-    
+    Object.keys(reserveStd).forEach(k => { reserveMap[k] = reserveStd[k].pieces; });
+
     // 4. 讀取「產品戰情分類」，跟戰情室共用同一份 getWarRoomMapFast_()，統一計算來源
     //    （不再各自重讀，也不再用人工指定安全坪數，一律採系統算出的有效月均銷/建議安全庫存）
     const wrMapForAlerts = getWarRoomMapFast_(dbSs);
@@ -1458,9 +1429,9 @@ function getRestockAlerts(br, forceFresh) {
     const over50Codes = [];
     for (const code in metaMap) {
       const meta = metaMap[code];
-      const stockPing = stockMap[code] || 0;
-      const reservedPieces = reserveMap[code] || 0;
       const perPing = meta.perPing || 36;
+      const stockPing = (stockMap[code] || 0) / perPing;
+      const reservedPieces = reserveMap[code] || 0;
       
       const reservedPing = reservedPieces / perPing;
       const availPing = stockPing - reservedPing;
@@ -1538,8 +1509,8 @@ const RESTOCK_ORDER_SHEET = '補貨清單';
 const LISTING_SS_ID = '1zTTl3IjrwZvYdxvX3UZk6YLVaGF7m_DBhb_tWM2LjW0';
 
 /** 快取 key 全部掛上目前分支，避免三家公司（高雅瓷/安帝嘉/喜悅納）共用同一把 key 而互相讀到對方的資料 */
-function restockAlertsCacheKey_(br) { return 'restock-alerts-v6-' + (br || currentBranchName_()); }
-function shortageBoardCacheKey_(br) { return 'shortage-board-v12-' + (br || currentBranchName_()); }
+function restockAlertsCacheKey_(br) { return 'restock-alerts-v7-' + (br || currentBranchName_()); }
+function shortageBoardCacheKey_(br) { return 'shortage-board-v13-' + (br || currentBranchName_()); }
 const SHORTAGE_TRACKING_HEADERS = [
   '廠牌', '產品編號', '系列名稱', '缺貨分類', '入榜日期', '最後系統同步時間',
   '可用庫存', '保留量', '去峰值月均銷', '年銷量', '系統建議補貨',
@@ -1591,8 +1562,8 @@ function clearShortageCaches_() {
     const cache = CacheService.getScriptCache();
     // 三家公司各自獨立一把 key，一次全清（併發使用者可能落在不同分支）
     Object.keys(BRANCHES).forEach(function (b) {
-      cache.remove('restock-alerts-v6-' + b);
-      cache.remove('shortage-board-v12-' + b);
+      cache.remove('restock-alerts-v7-' + b);
+      cache.remove('shortage-board-v13-' + b);
     });
   } catch (e) {}
 }
@@ -1601,7 +1572,7 @@ function clearWarRoomCaches_() {
   try {
     const cache = CacheService.getScriptCache();
     Object.keys(BRANCHES).forEach(function (b) {
-      cache.remove('warroom-data-v16-' + b);
+      cache.remove('warroom-data-v17-' + b);
     });
   } catch (e) {}
 }
@@ -4002,8 +3973,8 @@ function getWarRoomData() {
   try {
     const dbSs = SpreadsheetApp.openById(getBranch_().dbSS);
     const cache = CacheService.getScriptCache();
-    // 戰情室快取 key 依分支區隔（高雅瓷仍為 warroom-data-v16-gaoyaci），三家各自獨立，避免預熱/併發時寫錯槽
-    const cacheKey = 'warroom-data-v16-' + currentBranchName_();
+    // 戰情室快取 key 依分支區隔（高雅瓷仍為 warroom-data-v17-gaoyaci），三家各自獨立，避免預熱/併發時寫錯槽
+    const cacheKey = 'warroom-data-v17-' + currentBranchName_();
     const cached = cache.get(cacheKey);
     if (cached) {
       const blob = Utilities.newBlob(Utilities.base64Decode(cached), 'application/gzip');
@@ -4253,43 +4224,14 @@ function getWarRoomData() {
       Object.keys(liveInsight).forEach(c => { if (!productInsightMap[c]) productInsightMap[c] = liveInsight[c]; });
     }
     
-    // 2. 讀取即時庫存
-    const stockSh = dbSs.getSheetByName('庫存表');
-    const stockRows = stockSh.getDataRange().getValues();
-    const stockHeaders = stockRows[0];
-    const sIdxCode = rsvFindHeaderIndex_(stockHeaders, ['產品編號', '編號']);
-    const sIdxQty = rsvFindHeaderIndex_(stockHeaders, ['庫存坪數', '坪數']);
-    
-    const stockMap = {};
-    for (let i = 1; i < stockRows.length; i++) {
-      const code = String(stockRows[i][sIdxCode !== -1 ? sIdxCode : 0] || '').trim().toUpperCase().replace(/[\s\-]/g, '');
-      const qty = sIdxQty !== -1 ? parseFloat(stockRows[i][sIdxQty]) : parseFloat(stockRows[i][12]);
-      if (code && !isNaN(qty)) stockMap[code] = (stockMap[code] || 0) + qty;
-    }
-    
-    // 3. 讀取即時保留量
-    const resSh = SpreadsheetApp.openById(getBranch_().reserveSS).getSheetByName(getBranch_().sheetName); // 🚀 讀正確來源，不讀 1G5q 同步複本
-    const resRows = resSh.getDataRange().getValues();
-    const resHeaders = resRows[0];
-    const rIdxCode = rsvFindHeaderIndex_(resHeaders, ['編號', '產品編號']);
-    const rIdxQty = rsvFindHeaderIndex_(resHeaders, ['數量', '片數']);
-    const rIdxProgress2 = rsvFindHeaderIndex_(resHeaders, ['業務更新', '最新進度']);
-    const rIdxDeposit2 = rsvFindHeaderIndex_(resHeaders, ['訂金確認']);
-
-    const reserveMap = {};
-
-    for (let i = 1; i < resRows.length; i++) {
-      const code = String(resRows[i][rIdxCode !== -1 ? rIdxCode : 0] || '').trim().toUpperCase().replace(/[\s\-]/g, '');
-      const qtyPieces = parseFloat(resRows[i][rIdxQty !== -1 ? rIdxQty : 1]) || 0;
-      // 排除已結案/取消/刪除的死案，避免佔用保留量把可用庫存誤壓成負數
-      const progressText2 = rIdxProgress2 >= 0 ? resRows[i][rIdxProgress2] : '';
-      const depositText2 = rIdxDeposit2 >= 0 ? resRows[i][rIdxDeposit2] : '';
-      if (code && !isNotHoldingStock_(depositText2, progressText2)) {
-        const perPing = perPingMap[code] || 36;
-        const qtyPing = qtyPieces / perPing;
-        reserveMap[code] = (reserveMap[code] || 0) + qtyPing;
-      }
-    }
+    // 2、3. 庫存與保留：一律走標準算法（Stock_Core.js）——片數為準、保留排除結案／取消／刪除／過期釋出
+    const stockStd = stockRuleReadStock_(null, c => perPingMap[c] || STOCK_RULE.defaultPerPing);
+    const stockPcsMap = stockStd.map;           // 編號 → 片數
+    const reserveStd = stockRuleReadReserve_(null);
+    const stockMap = {};                        // 編號 → 坪
+    Object.keys(stockPcsMap).forEach(c => { stockMap[c] = stockPcsMap[c] / (perPingMap[c] || STOCK_RULE.defaultPerPing); });
+    const reserveMap = {};                      // 編號 → 坪
+    Object.keys(reserveStd).forEach(c => { reserveMap[c] = reserveStd[c].pieces / (perPingMap[c] || STOCK_RULE.defaultPerPing); });
 
     // 🚀 即將入庫資訊改由貨櫃到貨明細（取代原本讀保留單入倉日期1/2 的舊機制）
     // 轉換成舊版消費端預期的形狀：{ code: { uniqueKey: {date, dateStr, qtyPieces} } }
@@ -5121,7 +5063,7 @@ function testBranchShortage_(branch) {
       ? { exists: true, rows: resSh.getLastRow() }
       : { exists: false, rows: 0 };
 
-    const salesSh = dbSs.getSheetByName(br.salesSheetName);
+    const salesSh = dbSs.getSheetByName(br.salesSheetName) || dbSs.getSheetByName('月報表');
     out.tables['銷貨報表(' + br.salesSheetName + ')'] = salesSh
       ? { exists: true, rows: salesSh.getLastRow() }
       : { exists: false, rows: 0 };

@@ -176,7 +176,7 @@ function sendAgingNoticesForBranch_() {
     const list60   = [];
 
     resData.sites.forEach(s => {
-      if (isArchiveProgress_(s.deposit, s.progress)) return; // 已結案/取消/刪除
+      if (isNotHoldingStock_(s.deposit, s.progress)) return; // 已結案/取消/刪除
       const days = parseFloat(s.days) || 0;
       const rep  = s.salesRep || '未指定';
 
@@ -315,7 +315,7 @@ function sendReserveFullAlert_(item, pct, brName) {
   const resData = getReserveData();
   const repSet = {};
   (resData.sites || []).forEach(s => {
-    if (isArchiveProgress_(s.deposit, s.progress)) return;
+    if (isNotHoldingStock_(s.deposit, s.progress)) return;
     let qty = 0;
     (s.products || []).forEach(p => {
       if (String(p.code || '').toUpperCase().replace(/[\s\-]/g, '') === clean) qty += (parseFloat(p.qty) || 0);
@@ -356,7 +356,7 @@ function sendReserveHalfAlert_(item, pct, brName) {
   const resData = getReserveData();
   const repSet = {};
   (resData.sites || []).forEach(s => {
-    if (isArchiveProgress_(s.deposit, s.progress)) return;
+    if (isNotHoldingStock_(s.deposit, s.progress)) return;
     let qty = 0;
     (s.products || []).forEach(p => {
       if (String(p.code || '').toUpperCase().replace(/[\s\-]/g, '') === clean) qty += (parseFloat(p.qty) || 0);
@@ -462,7 +462,7 @@ function diagnoseShortage() {
     const qty = parseFloat(resRows[i][rq]) || 0;
     const prog = String(resRows[i][rProg] || '').trim();
     const dep = String(resRows[i][rDep] || '').trim();
-    const dead = isArchiveProgress_(dep, prog);
+    const dead = isNotHoldingStock_(dep, prog);
     resTotalAll += qty;
     if (!dead) resTotalLive += qty; else nDead++;
     n++;

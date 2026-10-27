@@ -44,34 +44,12 @@ function recordInventorySnapshotForBranch_() {
   const metaMap = getPriceMetaMap_();
   const perPingOf = code => (metaMap[code] && metaMap[code].perPing) || 36;
 
-  // 現貨（坪）
-  const stockRows = dbSs.getSheetByName('庫存表').getDataRange().getValues();
-  const sCode = rsvFindHeaderIndex_(stockRows[0], ['產品編號', '編號']);
-  const sQty = rsvFindHeaderIndex_(stockRows[0], ['庫存坪數', '坪數']);
-  const stockMap = {};
-  for (let i = 1; i < stockRows.length; i++) {
-    const code = normalizeSku_(stockRows[i][sCode !== -1 ? sCode : 0]);
-    const qty = parseFloat(sQty !== -1 ? stockRows[i][sQty] : stockRows[i][12]);
-    if (code && !isNaN(qty)) stockMap[code] = (stockMap[code] || 0) + qty;
-  }
-
-  // 保留（片 → 坪、筆數），排除已結案／過期釋出／刪除
-  const resRows = SpreadsheetApp.openById(b.reserveSS).getSheetByName(b.sheetName).getDataRange().getValues();
-  const rh = resRows[0];
-  const rCode = rsvFindHeaderIndex_(rh, ['編號', '產品編號']);
-  const rQty = rsvFindHeaderIndex_(rh, ['數量', '片數']);
-  const rProg = rsvFindHeaderIndex_(rh, ['業務更新', '最新進度']);
-  const rDep = rsvFindHeaderIndex_(rh, ['訂金確認']);
-  const reservePcs = {}, reserveCount = {};
-  for (let i = 1; i < resRows.length; i++) {
-    const code = normalizeSku_(resRows[i][rCode !== -1 ? rCode : 0]);
-    if (!code) continue;
-    const prog = rProg >= 0 ? resRows[i][rProg] : '';
-    const dep = rDep >= 0 ? resRows[i][rDep] : '';
-    if (isNotHoldingStock_(dep, prog)) continue;
-    reservePcs[code] = (reservePcs[code] || 0) + (parseFloat(resRows[i][rQty !== -1 ? rQty : 1]) || 0);
-    reserveCount[code] = (reserveCount[code] || 0) + 1;
-  }
+  // 現貨、保留：標準算法（Stock_Core.js）——片數為準，高雅瓷讀 1WpBX、保留排除結案／取消／刪除／過期釋出
+  const stockMapPcs = stockRuleReadStock_(null, perPingOf).map;
+  const reserveStd = stockRuleReadReserve_(null);
+  const stockMap = {}, reservePcs = {}, reserveCount = {};
+  Object.keys(stockMapPcs).forEach(c => { stockMap[c] = stockMapPcs[c] / perPingOf(c); });
+  Object.keys(reserveStd).forEach(c => { reservePcs[c] = reserveStd[c].pieces; reserveCount[c] = reserveStd[c].count; });
 
   // 在途（坪）：貨櫃到貨明細裡今天（含）以後到的
   const perPingMap = {};

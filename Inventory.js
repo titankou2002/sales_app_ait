@@ -25,7 +25,7 @@ function _shortenArrivalDate_(dVal) {
 
 function getAggregatedInventory_impl_() {
   try {
-    const cacheKey = "inv_full_v14"; // v14: 大小寫正規化與批號關聯強化
+    const cacheKey = "inv_full_v15"; // v15: 保留量改走標準算法（不計結案/取消/刪除/過期釋出）；庫存表優先讀 1WpBX
     const cached = CacheManager.getLarge(cacheKey);
     if (cached) return { success: true, data: cached };
 
@@ -92,7 +92,7 @@ function getInventoryLightData_impl_() {
 
 function _buildInventoryData(ss) {
   // 1. 讀庫存表：SKU -> 各批號片數
-  const stockSheet = ss.getSheetByName("庫存表");
+  const stockSheet = stockRuleLiveStockSheet_() || ss.getSheetByName("庫存表"); // 標準算法：高雅瓷優先讀 1WpBX 庫存表（Stock_Core.js）
   const stockMap = {};   // key=SKU, value=[{batch, qty, pyeong}]
 
   if (stockSheet) {
@@ -146,16 +146,24 @@ function _buildInventoryData(ss) {
       inDate1: findHeaderIndex(rh, ["入倉日期1"]),
       inQty1:  findHeaderIndex(rh, ["數量1"]),
       inDate2: findHeaderIndex(rh, ["入倉日期2"]),
-      inQty2:  findHeaderIndex(rh, ["數量2"])
+      inQty2:  findHeaderIndex(rh, ["數量2"]),
+      dep:     findHeaderIndex(rh, ["訂金確認"]),
+      prog:    findHeaderIndex(rh, ["業務更新", "最新進度"]),
+      cust:    findHeaderIndex(rh, ["客戶"])
     };
     if (ri.sku !== -1 && ri.qty !== -1) {
       for (let i = 1; i < rd.length; i++) {
         const sku = String(rd[i][ri.sku] || '').trim();
         if (!sku) continue;
         const key = sku.toUpperCase().replace(/[\s\-]/g, '');
-        if (!reserveMap[key]) reserveMap[key] = { qty: 0, count: 0 };
-        reserveMap[key].qty += (parseFloat(rd[i][ri.qty]) || 0);
-        reserveMap[key].count += 1;
+        // 標準算法：結案／取消／刪除／過期釋出的保留單不佔庫存（到貨日期資訊仍照讀，不受影響）
+        const holdsStock = !(stockRuleIsReleased_(ri.dep !== -1 ? rd[i][ri.dep] : '', ri.prog !== -1 ? rd[i][ri.prog] : '')
+          || (ri.cust !== -1 && stockRuleExcludesCustomer_(rd[i][ri.cust])));
+        if (holdsStock) {
+          if (!reserveMap[key]) reserveMap[key] = { qty: 0, count: 0 };
+          reserveMap[key].qty += (parseFloat(rd[i][ri.qty]) || 0);
+          reserveMap[key].count += 1;
+        }
 
         const rawD1 = ri.inDate1 !== -1 ? rd[i][ri.inDate1] : '';
         const rawQ1 = ri.inQty1  !== -1 ? rd[i][ri.inQty1]  : '';
@@ -579,6 +587,7 @@ function getSkuReservations_impl_(sku) {
       biz: c(['客戶業務', '負責業務', '業務']),
       case: c(['案名', '工程名稱']),
       deposit: c(['訂金確認', '是否付訂', '付訂']),
+      prog: c(['業務更新', '最新進度']),
       note: header.indexOf('備註')
     };
 
@@ -634,6 +643,8 @@ function getSkuReservations_impl_(sku) {
     let rawList = data.slice(1).map(r => {
       if (!r || r.every(v => !v)) return null;
 
+      // 標準算法：不佔庫存的保留單（結案／取消／刪除／過期釋出）不列入
+      if (stockRuleIsReleased_(idx.deposit >= 0 ? r[idx.deposit] : '', idx.prog >= 0 ? r[idx.prog] : '')) return null;
       const customer = idx.cust >= 0 ? String(r[idx.cust] || "").trim() : "";
       if (customer.includes("樣品") || customer.includes("扣帶")) return null;
 
@@ -737,6 +748,7 @@ function getUserReservations_impl_(company) {
       case: c(['案名', '工程名稱']),
       addr: c(['工地', '地址']),
       deposit: c(['訂金確認', '是否付訂', '付訂']),
+      prog: c(['業務更新', '最新進度']),
       note: header.indexOf('備註'),
       size: c(['尺寸'])
     };
@@ -746,6 +758,8 @@ function getUserReservations_impl_(company) {
 
     let rawList = data.slice(1).map(r => {
       if (!r || r.every(v => !v)) return null;
+      // 標準算法：不佔庫存的保留單（結案／取消／刪除／過期釋出）不列入
+      if (stockRuleIsReleased_(idx.deposit >= 0 ? r[idx.deposit] : '', idx.prog >= 0 ? r[idx.prog] : '')) return null;
       
       const rowCust = String(r[idx.cust] || "").toLowerCase();
       if (targetComp && !rowCust.includes(targetComp)) return null;

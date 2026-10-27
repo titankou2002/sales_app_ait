@@ -205,7 +205,7 @@ function sendFollowUpReminders() {
     
     resData.sites.forEach(function(s) {
       // 排除已結案、已取消、已刪除等完全結束的案子
-      if (isArchiveProgress_(s.deposit, s.progress)) return;
+      if (isNotHoldingStock_(s.deposit, s.progress)) return;
       
       // 計算此案場的跟進到期日
       var followUpDate = parseFollowUpDate_(s.progress, s.progressDate || s.dateRes);
