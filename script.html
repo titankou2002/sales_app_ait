@@ -3553,6 +3553,14 @@
         `;
       }
 
+      // 電子目錄按鈕（帶產品編號直接開到這一款）
+      const ebookBtnHtml = `
+        <button onclick="event.stopPropagation(); openEbookSku('${p.sku}')"
+          style="background:none; color:var(--staff-gold); font-size:10px; padding:4px 10px; border-radius:20px; border:1px solid rgba(194,157,102,0.4); cursor:pointer; font-weight:700;">
+          目錄
+        </button>
+      `;
+
       // 批號標籤
       let batchTagHtml = '';
       if (p.batches && p.batches.length > 0) {
@@ -3585,6 +3593,7 @@
               </div>
               <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0;">
                 ${galleryBtnHtml}
+                ${ebookBtnHtml}
               </div>
             </div>
             
@@ -3997,6 +4006,17 @@
   };
 
   // ─── 📖 Ebook 電子型錄結合模組 ───────────────────────────────
+
+  // 首頁「電子目錄」：開 Ebook 首頁
+  window.openEbookCatalog = function() {
+    window.open("https://bigt.cc/line/ebook.html", "_blank");
+  };
+
+  // 庫存卡片「目錄」：直接開到指定產品
+  window.openEbookSku = function(sku) {
+    if (!sku) return;
+    window.open("https://bigt.cc/line/ebook.html?s=" + encodeURIComponent(sku), "_blank");
+  };
 
   // 開啟當前 SKU 之 Ebook 雜誌型錄 (支援客戶端唯讀視角 v=1)
   window.openEbookCurrentSku = function(isClientView) {
