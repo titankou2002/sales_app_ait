@@ -194,8 +194,12 @@
           <div class="dash-label">電子目錄</div>
           <div class="dash-desc">E-BOOK</div>
         </div>
-        <!-- 第 10 格：預留空位（之後要放新功能，把 dash-card-empty 換成一般 dash-card 即可） -->
-        <div class="dash-card dash-card-empty" aria-hidden="true"></div>
+        <!-- 第 10 格：常用工具（連結清單在 script.html 的 TOOL_LINKS，要加新工具只改那裡） -->
+        <div class="dash-card" onclick="openToolsMenu()">
+          <div class="card-glow"></div>
+          <div class="dash-label">常用工具</div>
+          <div class="dash-desc">TOOLS</div>
+        </div>
       </div>
 
       <!-- 🤫 隱藏的管理者入口 (像入口的入口) -->
@@ -475,6 +479,17 @@
     </div>
 
     <!-- 🌟 新增版面 Modal -->
+    <!-- 🧰 常用工具選單 -->
+    <div id="tools-menu" class="modal-overlay" style="display:none; z-index:20010; align-items:flex-end; justify-content:center;" onclick="if(event.target===this)closeToolsMenu()">
+      <div class="modal-content" style="width:100%; max-width:480px; border-radius:24px 24px 0 0; padding:20px 16px calc(24px + env(safe-area-inset-bottom, 0px));">
+        <div class="modal-header" style="margin-bottom:14px;">
+          <div class="modal-title">🧰 常用工具</div>
+          <button class="btn-close" onclick="closeToolsMenu()">×</button>
+        </div>
+        <div id="tools-menu-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+      </div>
+    </div>
+
     <div id="add-modal" class="modal-overlay">
       <div class="modal-content add-modal">
         <div class="modal-header">

@@ -4343,6 +4343,30 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
   })();
 
+  // 首頁「常用工具」：要加新工具，在這個清單加一行即可
+  var TOOL_LINKS = [
+    { name: '磁磚百科', desc: 'TILE SEARCH・搜尋磁磚、以圖找磚', url: 'https://bigt.cc/web/search/' },
+    { name: '請款神器', desc: 'EXPENSE・費用請款', url: 'https://expense.gyc-apps.workers.dev' }
+  ];
+  window.openToolsMenu = function() {
+    var list = document.getElementById('tools-menu-list');
+    list.innerHTML = TOOL_LINKS.map(function(t, i) {
+      return '<div onclick="openToolLink(' + i + ')" style="padding:16px 18px; border-radius:16px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.14); cursor:pointer;">' +
+        '<div style="font-size:18px; font-weight:800; letter-spacing:2px; color:#fff;">' + t.name + '</div>' +
+        '<div style="font-size:11px; letter-spacing:1px; color:rgba(255,255,255,0.5); margin-top:4px;">' + t.desc + '</div></div>';
+    }).join('');
+    document.getElementById('tools-menu').style.display = 'flex';
+  };
+  window.closeToolsMenu = function() {
+    document.getElementById('tools-menu').style.display = 'none';
+  };
+  window.openToolLink = function(i) {
+    var t = TOOL_LINKS[i];
+    if (!t) return;
+    closeToolsMenu();
+    window.open(t.url, '_blank');
+  };
+
   // 首頁「電子目錄」：開 Ebook 首頁
   window.openEbookCatalog = function() {
     window.open("https://bigt.cc/line/ebook.html", "_blank");
