@@ -3462,7 +3462,9 @@
     var payload = buildAddPayload();
     if (!payload) return;
     addQueue.push(payload);
+    var keepGps = addState.gpsPos;
     openAddLayoutModal();          // 清空表單，讓使用者接著記錄下一個
+    if (keepGps && !addState.gpsPos) addState.gpsPos = keepGps; // 同一家客戶，定位沿用，不必重抓
     var body = document.querySelector('#add-modal .modal-body');
     if (body) body.scrollTop = 0;
     showToast('✅ 已加入清單（共 ' + addQueue.length + ' 個），請繼續下一個版面', 'success');

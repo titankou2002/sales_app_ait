@@ -2449,6 +2449,7 @@ function saveNewLayout_impl_(payload) {
   const ssMain = getSafeSsMain();
   const invMap = getInventoryMapCached(ssMain);
   let imageUrl = "";
+  let imageUrls = [];
   // 支援一次上傳多張（payload.images 陣列）；仍相容舊的單張 payload.image
   const imageList = (payload.images && payload.images.length)
     ? payload.images
@@ -2481,8 +2482,9 @@ function saveNewLayout_impl_(payload) {
         urls.push(file.getUrl());
       }
     });
-    // 多張用換行存在同一格，讓所有品項仍歸屬同一個版面
-    imageUrl = urls.join("\n");
+    // 一次傳兩張圖＝兩個獨立版面（陳列牆上各一張卡片），品項各複製一份，所以這裡不再把網址併在同一格
+    imageUrls = urls;
+    imageUrl = urls[0] || "";
   }
 
   // 2. 準備公共欄位
@@ -2491,7 +2493,7 @@ function saveNewLayout_impl_(payload) {
   const timeStr = Utilities.formatDate(now, "GMT+8", "yyyy/MM/dd HH:mm:ss");
 
   // 3. 逐一寫入 SKU 行 (改為插入到最上方)
-  const rowValues = [];
+  let rowValues = [];
   payload.items.forEach(item => {
     const newRow = new Array(headers.length).fill("");
     const rawSku = (item.sku || "").trim().toUpperCase();
@@ -2530,6 +2532,15 @@ function saveNewLayout_impl_(payload) {
     if (idx.lastUpdate !== -1) newRow[idx.lastUpdate] = timeStr;
     rowValues.push(newRow);
   });
+
+  // 多張照片：每張照片各自一份完整品項（各一個版面連結），陳列牆上就是各自獨立的卡片
+  if (imageUrls.length > 1 && idx.link !== -1) {
+    const base = rowValues;
+    rowValues = [];
+    imageUrls.forEach(function (u) {
+      base.forEach(function (r) { const c = r.slice(); c[idx.link] = u; rowValues.push(c); });
+    });
+  }
 
   if (rowValues.length > 0) {
     // 🚀 前端會同時送出多個版面（並行上傳），「插入列＋寫入」要一氣呵成，否則兩個版面的列會互相錯位，所以只鎖這一小段
