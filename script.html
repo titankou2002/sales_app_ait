@@ -30,6 +30,40 @@
   }
 
   /**
+   * 📉 上傳前先縮圖：長邊最多 1600px、JPEG 0.82。手機原圖常 3～8MB，直接上傳又慢又讓手機發燙。
+   * callback(dataUrl, mimeType, fileName)；縮圖失敗就退回用原檔。
+   */
+  function compressPhoto(file, callback) {
+    var MAX = 1600, jpgName = (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
+    function fallback() {
+      var fr = new FileReader();
+      fr.onload = function (e) { callback(e.target.result, file.type, file.name); };
+      fr.readAsDataURL(file);
+    }
+    function draw(src, w, h, done) {
+      try {
+        var k = Math.min(1, MAX / Math.max(w, h)), cw = Math.round(w * k), ch = Math.round(h * k);
+        var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        cv.getContext('2d').drawImage(src, 0, 0, cw, ch);
+        var url = cv.toDataURL('image/jpeg', 0.82);
+        cv.width = cv.height = 0; // 釋放記憶體
+        if (done) done();
+        callback(url, 'image/jpeg', jpgName);
+      } catch (err) { fallback(); }
+    }
+    if (window.createImageBitmap) {
+      createImageBitmap(file, { imageOrientation: 'from-image' }).then(function (bmp) {
+        draw(bmp, bmp.width, bmp.height, function () { if (bmp.close) bmp.close(); });
+      }).catch(fallback);
+      return;
+    }
+    var img = new Image(), u = URL.createObjectURL(file);
+    img.onload = function () { draw(img, img.naturalWidth, img.naturalHeight, function () { URL.revokeObjectURL(u); }); };
+    img.onerror = function () { URL.revokeObjectURL(u); fallback(); };
+    img.src = u;
+  }
+
+  /**
    * 📸 讀取照片 GPS 資訊 (使用 EXIF.js)
    */
   function processImageGps(file, callback) {
@@ -2617,17 +2651,11 @@
         }
       });
 
-      var reader = new FileReader();
-      reader.onload = function (e) {
-        state.newPhotoData = {
-          base64: e.target.result.split(',')[1],
-          mimeType: file.type,
-          name: file.name
-        };
+      compressPhoto(file, function (dataUrl, mime, name) {
+        state.newPhotoData = { base64: dataUrl.split(',')[1], mimeType: mime, name: name };
         // 預覽新照片
-        document.getElementById('detail-img').src = e.target.result;
-      };
-      reader.readAsDataURL(file);
+        document.getElementById('detail-img').src = dataUrl;
+      });
     }
   };
 
@@ -2897,6 +2925,12 @@
 
   window.closeAddModal = function () {
     document.getElementById('add-modal').style.display = 'none';
+    // 連續上傳多個版面時，馬上釋放上一張照片的資料與預覽圖，避免記憶體累積讓手機發燙
+    addState.imageData = null; addState.imageData2 = null;
+    ['add-photo-preview', 'add-photo-preview-2'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = '';
+    });
   };
 
   /**
@@ -3224,19 +3258,16 @@
       });
       }
 
-      var reader = new FileReader();
-      reader.onload = function (e) {
-        var base64 = e.target.result.split(',')[1];
-        var data = { base64: base64, mimeType: file.type, name: file.name };
+      compressPhoto(file, function (dataUrl, mime, name) {
+        var data = { base64: dataUrl.split(',')[1], mimeType: mime, name: name };
         if (isSecond) {
           addState.imageData2 = data;
-          document.getElementById('add-photo-preview-2').innerHTML = '<img src="' + e.target.result + '">';
+          document.getElementById('add-photo-preview-2').innerHTML = '<img src="' + dataUrl + '">';
         } else {
           addState.imageData = data;
-          document.getElementById('add-photo-preview').innerHTML = '<img src="' + e.target.result + '">';
+          document.getElementById('add-photo-preview').innerHTML = '<img src="' + dataUrl + '">';
         }
-      };
-      reader.readAsDataURL(file);
+      });
     }
   };
 
