@@ -1629,9 +1629,13 @@
       }
       if (albumSortMethod === 'frequency') return b.totalFrequency - a.totalFrequency;
       if (albumSortMethod === 'update') {
-        const dateA = a.items[0].lastUpdate ? new Date(a.items[0].lastUpdate).getTime() : 0;
-        const dateB = b.items[0].lastUpdate ? new Date(b.items[0].lastUpdate).getTime() : 0;
-        return dateB - dateA;
+        var newest = function (g) {
+          return g.items.reduce(function (m, it) {
+            var t = it.lastUpdate ? new Date(it.lastUpdate).getTime() : 0;
+            return t > m ? t : m;
+          }, 0);
+        };
+        return newest(b) - newest(a);
       }
       return b.totalSalesAmt - a.totalSalesAmt; // 預設金額
     });
@@ -2907,6 +2911,7 @@
     document.getElementById('add-series-blocks').innerHTML = '';
     addSeriesBlock();
     document.getElementById('add-modal').style.display = 'flex';
+    updateAddQueueUI();
 
     // 預先取得定位 (作為備援)
     if (document.getElementById('add-gps-sync').checked) {
@@ -3271,16 +3276,17 @@
     }
   };
 
-  window.saveNewLayoutEntry = function () {
+  // 彙整目前表單成一份上傳資料；欄位有問題就提示並回傳 null
+  function buildAddPayload() {
     var customerName = state.selectedCustomer || state.currentCustomer || '';
 
     if (!customerName) {
       showToast('⚠️ 請先選擇客戶');
-      return;
+      return null;
     }
     if (!addState.imageData) {
       showToast('⚠️ 請先拍攝或選擇版面照片');
-      return;
+      return null;
     }
 
     // 🚀 依序彙整每個「系列區塊」：自動帶入(勾選+有填片數)的品項 ＋ 手動新增的品項，
@@ -3288,7 +3294,7 @@
     var blocks = Array.prototype.slice.call(document.querySelectorAll('#add-series-blocks .series-block'));
     if (blocks.length === 0) {
       showToast('⚠️ 請至少新增一個系列');
-      return;
+      return null;
     }
 
     var items = [];
@@ -3309,18 +3315,18 @@
 
       if (!series) {
         showToast('⚠️ 有系列區塊填了品項卻沒填系列名稱，請確認');
-        return;
+        return null;
       }
       if (manualRows.length > 0 && !blockSize) {
         showToast('⚠️「' + series + '」有手動新增的品項，請填寫產品尺寸');
-        return;
+        return null;
       }
 
       checkedRows.forEach(function (row) {
         var qtyInput = row.querySelector('.autofill-item-qty');
         var batchInput = row.querySelector('.autofill-item-batch');
         var qty = Number(qtyInput && qtyInput.value ? qtyInput.value : 0) || 0;
-        if (qty <= 0) return; // 勾選了但沒填片數，不算數
+        if (qty <= 0) return null; // 勾選了但沒填片數，不算數
         items.push({
           sku: (row.dataset.sku || '').toUpperCase(),
           qty: qty,
@@ -3334,7 +3340,7 @@
         var skuInput = row.querySelector('.edit-sku-input');
         var qtyInput = row.querySelector('.edit-qty-input');
         var sku = (skuInput && skuInput.value ? skuInput.value : '').trim().toUpperCase();
-        if (!sku) return;
+        if (!sku) return null;
         items.push({
           sku: sku,
           qty: Number(qtyInput && qtyInput.value ? qtyInput.value : 1) || 1,
@@ -3348,14 +3354,7 @@
 
     if (items.length === 0) {
       showToast('⚠️ 請至少勾選一個自動帶入的品項並填入片數，或手動新增一個產品編號');
-      return;
-    }
-
-    var submitBtn = document.querySelector('#add-modal .btn-save-full');
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.dataset.originalText = submitBtn.dataset.originalText || submitBtn.innerText;
-      submitBtn.innerText = '存檔中...';
+      return null;
     }
 
     var payload = {
@@ -3368,35 +3367,91 @@
       images: [addState.imageData, addState.imageData2].filter(Boolean),
       gps: document.getElementById('add-gps-sync').checked ? addState.gpsPos : null
     };
+    return payload;
+  }
 
-    showLoading(true, false, '正在上傳新版面...');
-    google.script.run
-      .withSuccessHandler(function (res) {
-        showLoading(false);
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.innerText = submitBtn.dataset.originalText || '🚀 提交紀錄並存檔';
-        }
+  // ─── 一次記錄多個版面：先加入清單，最後一次上傳 ───
+  var addQueue = [];
 
-        if (res && res.success) {
-          closeAddModal();
-          showToast('✨ 新版面已存檔，請點擊 🔄 重新整理', 'success');
-          if (typeof selectCustomer === 'function') {
-            selectCustomer(customerName);
-          }
-        } else {
-          showToast('❌ 存檔失敗: ' + ((res && res.msg) || '未知錯誤'));
-        }
-      })
-      .withFailureHandler(function (err) {
-        showLoading(false);
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.innerText = submitBtn.dataset.originalText || '🚀 提交紀錄並存檔';
-        }
-        showToast('❌ 程式執行出錯: ' + (err && err.message ? err.message : err));
-      })
-      .saveNewLayout(payload);
+  function updateAddQueueUI() {
+    var bar = document.getElementById('add-queue-bar');
+    var btn = document.querySelector('#add-modal .btn-save-full');
+    var n = addQueue.length;
+    if (bar) {
+      bar.style.display = n ? 'block' : 'none';
+      bar.innerHTML = n ? ('<div style="font-weight:800; margin-bottom:6px;">清單裡已有 ' + n + ' 個版面（尚未上傳）</div>' +
+        addQueue.map(function (q, i) {
+          var names = q.items.map(function (it) { return it.sku; }).slice(0, 3).join('、') + (q.items.length > 3 ? '…' : '');
+          return '<div style="display:flex; align-items:center; gap:8px; padding:4px 0; border-top:1px solid rgba(255,255,255,0.08);">' +
+            '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + (i + 1) + '. ' + (q.customerName || '') + '・' + (q.series || '') + '（' + names + '）</span>' +
+            '<span onclick="removeAddQueue(' + i + ')" style="padding:4px 10px; color:#ff6b6b; cursor:pointer;">✕</span></div>';
+        }).join('')) : '';
+    }
+    if (btn) {
+      if (!btn.dataset.originalText) btn.dataset.originalText = btn.innerText.trim();
+      btn.innerText = n ? ('🚀 全部上傳（' + n + (addState.imageData ? '＋目前這個' : '') + '）') : btn.dataset.originalText;
+    }
+  }
+
+  window.removeAddQueue = function (i) {
+    addQueue.splice(i, 1);
+    updateAddQueueUI();
+  };
+
+  window.addLayoutToQueue = function () {
+    var payload = buildAddPayload();
+    if (!payload) return;
+    addQueue.push(payload);
+    openAddLayoutModal();          // 清空表單，讓使用者接著記錄下一個
+    var body = document.querySelector('#add-modal .modal-body');
+    if (body) body.scrollTop = 0;
+    showToast('✅ 已加入清單（共 ' + addQueue.length + ' 個），請繼續下一個版面', 'success');
+  };
+
+  function uploadAddQueue() {
+    var total = addQueue.length, done = 0;
+    var submitBtn = document.querySelector('#add-modal .btn-save-full');
+    if (submitBtn) submitBtn.disabled = true;
+    function finish() {
+      showLoading(false);
+      if (submitBtn) submitBtn.disabled = false;
+      updateAddQueueUI();
+    }
+    function next() {
+      if (!addQueue.length) {
+        finish();
+        closeAddModal();
+        showToast('✨ ' + total + ' 個版面已全部存檔', 'success');
+        if (typeof selectCustomer === 'function') selectCustomer(lastCustomer);
+        return;
+      }
+      var job = addQueue[0];
+      lastCustomer = job.customerName || lastCustomer;
+      showLoading(true, false, '正在上傳版面 ' + (done + 1) + '/' + total + '...');
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.success) { addQueue.shift(); done++; next(); return; }
+          finish();
+          showToast('❌ 第 ' + (done + 1) + ' 個存檔失敗: ' + ((res && res.msg) || '未知錯誤') + '（已存 ' + done + ' 個，其餘還在清單裡）');
+        })
+        .withFailureHandler(function (err) {
+          finish();
+          showToast('❌ 第 ' + (done + 1) + ' 個程式執行出錯: ' + (err && err.message ? err.message : err) + '（已存 ' + done + ' 個，其餘還在清單裡）');
+        })
+        .saveNewLayout(job);
+    }
+    var lastCustomer = state.selectedCustomer || state.currentCustomer || '';
+    next();
+  }
+
+  window.saveNewLayoutEntry = function () {
+    // 清單裡已有東西、而且目前表單沒拍照 → 視為「目前這個不用了」，直接上傳清單
+    if (!(addQueue.length && !addState.imageData)) {
+      var payload = buildAddPayload();
+      if (!payload) return;
+      addQueue.push(payload);
+    }
+    uploadAddQueue();
   };
 
   // ─── 庫存查詢與影像模組 (AIT 旗艦版) ─────────────────────────

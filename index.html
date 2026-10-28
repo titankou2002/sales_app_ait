@@ -421,14 +421,14 @@
           style="margin-left:5px; font-size:20px; background:none; border:none; color:white;">🔗</button>
         <select id="album-sort-select" class="sort-select" style="margin-left:10px; margin-right:auto; max-width:80px;"
           onchange="renderAlbum()">
-          <option value="stale" selected>最久沒賣</option>
+          <option value="stale">最久沒賣</option>
           <option value="amount">按金額</option>
           <option value="pyeong">按坪數</option>
           <option value="status">按缺貨</option>
           <option value="days">按天數</option>
           <option value="frequency">按頻率</option>
           <option value="sample">按樣品</option>
-          <option value="update">按更新</option>
+          <option value="update" selected>按更新</option>
         </select>
         <div class="nav-title" id="album-customer-title" style="flex:1; text-align:center;">陳列牆</div>
         <button class="btn-share" onclick="selectCustomer(state.selectedCustomer)"
@@ -534,6 +534,10 @@
         </div>
 
         <div class="modal-footer">
+          <div id="add-queue-bar" style="display:none; max-height:96px; overflow-y:auto; margin-bottom:10px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,0.06); font-size:12px; color:#fff;"></div>
+          <button type="button" onclick="addLayoutToQueue()" style="width:100%; margin-bottom:10px; padding:13px; border-radius:14px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.18); color:#fff; font-weight:800; font-size:14px;">
+            ＋ 先加入清單，繼續記錄下一個版面
+          </button>
           <button class="btn-save-full" onclick="saveNewLayoutEntry()">
             🚀 提交紀錄並存檔
           </button>
