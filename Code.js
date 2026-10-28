@@ -2405,6 +2405,14 @@ function toThumbUrl_(raw, width) {
   return id ? ('https://lh3.googleusercontent.com/d/' + id + '=w' + (width || 1000)) : raw;
 }
 
+/** 資料夾是否已對「知道連結的人」開放檢視（是的話，裡面的新檔案自動繼承，不必逐檔設定） */
+function isFolderLinkShared_(folder) {
+  try {
+    const a = folder.getSharingAccess();
+    return a === DriveApp.Access.ANYONE_WITH_LINK || a === DriveApp.Access.ANYONE;
+  } catch (e) { return false; }
+}
+
 function saveNewLayout_impl_(payload) {
   const now = new Date(); // 🚀 Move to top to avoid ReferenceError
   const ss = getSafeSsBusiness();
@@ -2461,7 +2469,8 @@ function saveNewLayout_impl_(payload) {
       try {
         const parentFolder = DriveApp.getFolderById(CONFIG.IMG_FOLDER_ID || "");
         const file = parentFolder.createFile(blob);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        // 🚀 逐檔 setSharing 很慢（每張約 1 秒以上）；資料夾本身已是「知道連結的人可檢視」時，檔案會自動繼承，就不必再設
+        if (!isFolderLinkShared_(parentFolder)) file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         urls.push(file.getUrl());
       } catch (e) {
         console.error("圖片上傳失敗，改用備援資料夾:", e);
@@ -2523,8 +2532,15 @@ function saveNewLayout_impl_(payload) {
   });
 
   if (rowValues.length > 0) {
-    sheet.insertRowsBefore(3, rowValues.length);
-    sheet.getRange(3, 1, rowValues.length, headers.length).setValues(rowValues);
+    // 🚀 前端會同時送出多個版面（並行上傳），「插入列＋寫入」要一氣呵成，否則兩個版面的列會互相錯位，所以只鎖這一小段
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+      sheet.insertRowsBefore(3, rowValues.length);
+      sheet.getRange(3, 1, rowValues.length, headers.length).setValues(rowValues);
+    } finally {
+      lock.releaseLock();
+    }
   }
 
   // 4. 同步更新 GPS 客戶定位

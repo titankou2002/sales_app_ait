@@ -3006,6 +3006,66 @@
    */
   var _seriesInputDebounce = {};
   var _seriesSuggestToken = {};
+  // ─── 系列／編號查詢：庫存資料手機裡早就有了（開 App 時已載入），直接在本機查，不必再等後端 ───
+  function _invReady() { return state.inventoryData && state.inventoryData.length > 0; }
+  var _seriesLocal = {
+    getSeriesNameSuggestions: function (query) {
+      if (!_invReady()) return null;
+      var q = String(query || '').trim();
+      if (!q) return { success: true, names: [] };
+      var qs = q.toUpperCase().replace(/[\s\-]/g, ''), seen = {}, names = [];
+      state.inventoryData.forEach(function (p) {
+        var name = p.sCn;
+        if (!name || seen[name]) return;
+        if (name.indexOf(q) !== -1 || (p.sku && String(p.sku).toUpperCase().replace(/[\s\-]/g, '').indexOf(qs) !== -1)) { seen[name] = true; names.push(name); }
+      });
+      names.sort(function (a, b) { return a.localeCompare(b, 'zh-TW'); });
+      return { success: true, names: names.slice(0, 12) };
+    },
+    getSeriesSkuOptions: function (seriesName) {
+      // 輕量版庫存沒有批號，這種情況交給後端查；找不到系列也交給後端再確認一次
+      if (!_invReady() || !('batches' in state.inventoryData[0])) return null;
+      var target = String(seriesName || '').trim(), data = state.inventoryData;
+      if (!target) return null;
+      var matched = data.filter(function (p) { return p.sCn === target; });
+      if (!matched.length) matched = data.filter(function (p) { return p.sCn && (p.sCn.indexOf(target) !== -1 || target.indexOf(p.sCn) !== -1); });
+      if (!matched.length) {
+        var key = target.toUpperCase().replace(/[\s\-]/g, '');
+        var hit = data.find(function (p) { return p.sku && String(p.sku).toUpperCase().replace(/[\s\-]/g, '') === key; });
+        if (hit && hit.sCn) matched = data.filter(function (p) { return p.sCn === hit.sCn; });
+      }
+      if (!matched.length) return null;
+      var bySize = {};
+      matched.forEach(function (p) {
+        var sk = p.size || '規格外', set = {};
+        (bySize[sk] = bySize[sk] || []);
+        (p.batches || []).forEach(function (b) {
+          var bv = String(b.batch || '').trim();
+          if (bv && bv !== '無' && bv !== '-' && bv !== 'null' && bv !== 'undefined') set[bv] = true;
+        });
+        bySize[sk].push({ sku: p.sku, color: p.colorName || p.colorTag || '', img: p.img || '', batches: Object.keys(set).sort() });
+      });
+      var sizes = Object.keys(bySize).sort().map(function (sz) {
+        return { size: sz, items: bySize[sz].sort(function (a, b) { return a.sku.localeCompare(b.sku); }) };
+      });
+      return { success: true, seriesFound: true, matchedSeriesName: matched[0].sCn, sizes: sizes };
+    }
+  };
+  // 回傳跟 google.script.run 同樣用法的物件：本機算得出來就直接回，算不出來才問後端
+  function seriesRunner(method) {
+    var ok = null, shim = {
+      withSuccessHandler: function (f) { ok = f; return shim; },
+      withFailureHandler: function () { return shim; }
+    };
+    shim[method] = function (arg) {
+      var r = null;
+      try { r = _seriesLocal[method](arg); } catch (e) { r = null; }
+      if (r) { setTimeout(function () { ok(r); }, 0); return; }
+      google.script.run.withSuccessHandler(ok).withFailureHandler(function () { ok({ success: false }); })[method](arg);
+    };
+    return shim;
+  }
+
   window.handleSeriesInput = function (id) {
     var block = document.getElementById('series-block-' + id);
     if (!block) return;
@@ -3037,7 +3097,7 @@
     if (spinnerEl) spinnerEl.style.display = 'block';
     var myToken = _seriesSuggestToken[id];
     _seriesInputDebounce[id] = setTimeout(function () {
-      google.script.run
+      seriesRunner('getSeriesNameSuggestions')
         .withSuccessHandler(function (res) {
           if (_seriesSuggestToken[id] !== myToken) return; // 已經有更新的查詢在跑，這筆回應作廢（避免舊回應把清單蓋掉/閃現又消失）
           var stillSuggestEl = document.getElementById('series-suggest-' + id);
@@ -3063,7 +3123,7 @@
           if (stillSpinnerEl) stillSpinnerEl.style.display = 'none';
         })
         .getSeriesNameSuggestions(q);
-    }, 250);
+    }, _invReady() ? 60 : 250);
   };
 
   window.selectSeriesSuggestion = function (id, name) {
@@ -3119,7 +3179,7 @@
     if (spinnerEl) spinnerEl.style.display = 'block';
     if (statusEl) { statusEl.textContent = '正在查詢「' + series + '」的既有編號...'; statusEl.className = 'autofill-status'; }
 
-    google.script.run
+    seriesRunner('getSeriesSkuOptions')
       .withSuccessHandler(function (res) {
         if (_seriesFetchToken[id] !== myToken) return; // 已經有更新的查詢在跑，這筆回應作廢
         // 使用者可能在查詢期間已經移除這個區塊
@@ -3409,39 +3469,43 @@
   };
 
   function uploadAddQueue() {
-    var total = addQueue.length, done = 0;
+    var jobs = addQueue.slice(), total = jobs.length, done = 0, running = 0, failed = null, next = 0;
+    var POOL = 3; // 同時上傳 3 個；後端寫表時有加鎖，不會互相錯位
+    var lastCustomer = jobs[jobs.length - 1].customerName || state.selectedCustomer || state.currentCustomer || '';
     var submitBtn = document.querySelector('#add-modal .btn-save-full');
     if (submitBtn) submitBtn.disabled = true;
+    function show() { showLoading(true, false, '正在上傳版面 ' + done + '/' + total + '...'); }
     function finish() {
       showLoading(false);
       if (submitBtn) submitBtn.disabled = false;
       updateAddQueueUI();
-    }
-    function next() {
-      if (!addQueue.length) {
-        finish();
-        closeAddModal();
-        showToast('✨ ' + total + ' 個版面已全部存檔', 'success');
-        if (typeof selectCustomer === 'function') selectCustomer(lastCustomer);
+      if (failed) {
+        showToast('❌ 有版面存檔失敗: ' + failed + '（已存 ' + done + ' 個，沒存成功的還在清單裡，可再按一次）');
+        if (done && typeof selectCustomer === 'function') selectCustomer(lastCustomer);
         return;
       }
-      var job = addQueue[0];
-      lastCustomer = job.customerName || lastCustomer;
-      showLoading(true, false, '正在上傳版面 ' + (done + 1) + '/' + total + '...');
+      closeAddModal();
+      showToast('✨ ' + total + ' 個版面已全部存檔', 'success');
+      if (typeof selectCustomer === 'function') selectCustomer(lastCustomer);
+    }
+    function pump() {
+      while (!failed && running < POOL && next < jobs.length) launch(jobs[next++]);
+      if (running === 0) finish(); else show();
+    }
+    function launch(job) {
+      running++;
+      function settle(ok, msg) {
+        running--;
+        if (ok) { done++; var qi = addQueue.indexOf(job); if (qi >= 0) addQueue.splice(qi, 1); }
+        else if (!failed) failed = msg;
+        pump();
+      }
       google.script.run
-        .withSuccessHandler(function (res) {
-          if (res && res.success) { addQueue.shift(); done++; next(); return; }
-          finish();
-          showToast('❌ 第 ' + (done + 1) + ' 個存檔失敗: ' + ((res && res.msg) || '未知錯誤') + '（已存 ' + done + ' 個，其餘還在清單裡）');
-        })
-        .withFailureHandler(function (err) {
-          finish();
-          showToast('❌ 第 ' + (done + 1) + ' 個程式執行出錯: ' + (err && err.message ? err.message : err) + '（已存 ' + done + ' 個，其餘還在清單裡）');
-        })
+        .withSuccessHandler(function (res) { res && res.success ? settle(true) : settle(false, (res && res.msg) || '未知錯誤'); })
+        .withFailureHandler(function (err) { settle(false, err && err.message ? err.message : String(err)); })
         .saveNewLayout(job);
     }
-    var lastCustomer = state.selectedCustomer || state.currentCustomer || '';
-    next();
+    pump();
   }
 
   window.saveNewLayoutEntry = function () {
