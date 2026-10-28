@@ -82,8 +82,8 @@ function stockRuleReadStock_(br, perPingOf) {
         if (!code) continue;
         if (iName >= 0 && String(rows[i][iName]).indexOf('小計') >= 0) continue;
         let pcs;
-        if (iPcs >= 0) pcs = parseFloat(rows[i][iPcs]);
-        else pcs = (parseFloat(rows[i][iPing]) || 0) * ((perPingOf && perPingOf(code)) || STOCK_RULE.defaultPerPing);
+        if (iPcs >= 0) pcs = parseFloat(String(rows[i][iPcs] == null ? '' : rows[i][iPcs]).replace(/,/g, ''));
+        else pcs = (parseFloat(String(rows[i][iPing] == null ? '' : rows[i][iPing]).replace(/,/g, '')) || 0) * ((perPingOf && perPingOf(code)) || STOCK_RULE.defaultPerPing);
         if (isNaN(pcs)) continue;
         map[code] = (map[code] || 0) + pcs;
       }
@@ -114,7 +114,7 @@ function stockRuleReadReserve_(br) {
     if (!code) continue;
     if (stockRuleIsReleased_(iDep >= 0 ? rows[i][iDep] : '', iProg >= 0 ? rows[i][iProg] : '')) continue;
     if (iCust >= 0 && stockRuleExcludesCustomer_(rows[i][iCust])) continue;
-    const qty = parseFloat(rows[i][iQty >= 0 ? iQty : 1]) || 0;
+    const qty = parseFloat(String(rows[i][iQty >= 0 ? iQty : 1] == null ? '' : rows[i][iQty >= 0 ? iQty : 1]).replace(/,/g, '')) || 0;
     if (!map[code]) map[code] = { pieces: 0, count: 0 };
     map[code].pieces += qty;
     map[code].count += 1;

@@ -479,9 +479,9 @@
     </div>
 
     <!-- 🌟 新增版面 Modal -->
-    <!-- 🧰 常用工具選單 -->
-    <div id="tools-menu" class="modal-overlay" style="display:none; z-index:20010; align-items:flex-end; justify-content:center;" onclick="if(event.target===this)closeToolsMenu()">
-      <div class="modal-content" style="width:100%; max-width:480px; border-radius:24px 24px 0 0; padding:20px 16px calc(24px + env(safe-area-inset-bottom, 0px));">
+    <!-- 🧰 常用工具選單 (BottomSheet) -->
+    <div id="tools-menu" class="modal-overlay" style="display:none; z-index:20010; background:rgba(0,0,0,0.65); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); align-items:flex-end; justify-content:center;" onclick="if(event.target===this)closeToolsMenu()">
+      <div class="modal-content" style="flex:0 0 auto !important; min-height:0 !important; width:100%; max-width:480px; background:#161618; border:1px solid rgba(255,255,255,0.12); border-bottom:none; border-radius:24px 24px 0 0; padding:20px 16px calc(24px + env(safe-area-inset-bottom, 0px)); box-shadow:0 -10px 40px rgba(0,0,0,0.7);">
         <div class="modal-header" style="margin-bottom:14px;">
           <div class="modal-title">🧰 常用工具</div>
           <button class="btn-close" onclick="closeToolsMenu()">×</button>

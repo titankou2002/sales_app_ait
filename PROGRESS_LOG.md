@@ -1,3 +1,31 @@
+## 🛡️ [2026-10-28] 深度 Code Review 健全化：佇列空值防禦、連續新增第二張照片與GPS殘留修復、常用工具BottomSheet優化、千分位容錯 (版本 655)
+
+**審查與修復細節**：
+1. **新增佇列空值安全防禦（`uploadAddQueue`）**：
+   - 修正 `uploadAddQueue()` 當 `jobs.length === 0` 時取 `jobs[jobs.length - 1].customerName` 拋出 `TypeError: Cannot read properties of undefined` 的潛在崩潰漏洞，加入短路保護 `(jobs.length && jobs[jobs.length - 1] && jobs[jobs.length - 1].customerName)`。
+2. **連續新增版面照片與 GPS 提示殘留修正（`openAddLayoutModal`）**：
+   - 原先開窗僅重置第一張照片，第二張照片 `#add-photo-preview-2` 未重置回佔位符，且 `#photo-gps-badge` 未隱藏，導致連續新增版面時第二張預覽框殘留上一筆照片縮圖與綠色 GPS 標籤。
+   - 修復：在 `openAddLayoutModal()` 顯式重置第二張照片佔位圖、隱藏 GPS 標籤、並清空兩個 file input 之 `.value`，確保選擇相同檔案能正常觸發 `change`。
+3. **首頁「常用工具」選單真正 BottomSheet 視覺化（`#tools-menu`）**：
+   - 解決 `#tools-menu` 繼承 `.modal-overlay` 100% 不透明黑底與 `.modal-content` `min-height: 100%` 導致全屏純黑覆蓋的缺失。
+   - 改為高質感毛玻璃半透明底襯（`rgba(0,0,0,0.65)` + `backdrop-filter: blur(8px)`），選單本體改為深灰 `#161618` 懸浮底部抽屜（`flex: 0 0 auto; min-height: 0;`），邊框帶金色/白色微光與圓角，真正達成點擊由下向上滑出的現代化選單體驗。
+4. **標準庫存與保留量算法千分位字串容錯（`Stock_Core.js`）**：
+   - 在 `stockRuleReadStock_` 與 `stockRuleReadReserve_` 中，針對片數／坪數／數量欄位加上 `.replace(/,/g, '')` 防護，杜絕儲存格文字格式中若包含千分位逗號（如 `"1,500"`）被 `parseFloat` 誤截斷為 `1` 的隱蔽數值災難。
+
+**部署**：`clasp push -f` → 版本 655 → redeploy `AKfycbyx1oJ4qeZzRTrjJ2wh2TvlixoN7OWJrqynMCPW90nfL_D5pKn_-SzNUNsYiMzTwbd0vg @655`。
+
+---
+
+## 🧰 [2026-10-28] 首頁第10格改為常用工具選單、版面佇列多並行上傳與定位沿用 (版本 650 ～ 654)
+
+- **首頁第 10 格常用工具**：點擊開啟常用工具選單（磁磚百科、請款神器），以 `TOOL_LINKS` 集中管理。
+- **單系列兩張圖獨立版面**：單系列若有兩張照片，自動存成 2 個獨立版面（品項各複製一份），陳列牆上呈現兩張獨立卡片。
+- **加入清單沿用定位**：同客戶連續加入清單時沿用首次 GPS 定位，不需每筆重新定位。
+- **多版面並行上傳與加鎖防錯位**：`uploadAddQueue` 並行 3 筆上傳，後端插入試算表以 `LockService.getScriptLock()` 加鎖確保列不交錯；資料夾已公開則略過逐檔 `setSharing`。
+- **上傳前自動縮圖**：長邊縮至 1600px JPEG，關閉視窗主動釋放記憶體。
+
+---
+
 ## 🚀 [2026-10-22] 影像庫極速讀取加速（Session快取＋縮圖優化）與電腦版正常介面顯示完整修復 (版本 639)
 
 **問題與修復內容**：

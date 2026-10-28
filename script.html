@@ -2907,6 +2907,21 @@
       '<div style="font-weight:800; font-size:13px;">拍攝現場或從相簿選擇</div>' +
       '<div style="font-size:10px; opacity:0.6; margin-top:3px;">支援相機拍照與手機相簿上傳</div>' +
       '</div>';
+    var prev2 = document.getElementById('add-photo-preview-2');
+    if (prev2) {
+      prev2.innerHTML = '<div class="photo-placeholder">' +
+        '<div style="font-size:20px; margin-bottom:4px;">➕</div>' +
+        '<div style="font-weight:800; font-size:12px;">第二張（選填）</div>' +
+        '<div style="font-size:10px; opacity:0.6; margin-top:3px;">另存成獨立的第二個版面</div>' +
+        '</div>';
+    }
+    var badge = document.getElementById('photo-gps-badge');
+    if (badge) badge.style.display = 'none';
+    var inp1 = document.getElementById('add-photo-input');
+    if (inp1) inp1.value = '';
+    var inp2 = document.getElementById('add-photo-input-2');
+    if (inp2) inp2.value = '';
+
     _seriesBlockSeq = 0;
     document.getElementById('add-series-blocks').innerHTML = '';
     addSeriesBlock();
@@ -3473,7 +3488,7 @@
   function uploadAddQueue() {
     var jobs = addQueue.slice(), total = jobs.length, done = 0, running = 0, failed = null, next = 0;
     var POOL = 3; // 同時上傳 3 個；後端寫表時有加鎖，不會互相錯位
-    var lastCustomer = jobs[jobs.length - 1].customerName || state.selectedCustomer || state.currentCustomer || '';
+    var lastCustomer = (jobs.length && jobs[jobs.length - 1] && jobs[jobs.length - 1].customerName) || state.selectedCustomer || state.currentCustomer || '';
     var submitBtn = document.querySelector('#add-modal .btn-save-full');
     if (submitBtn) submitBtn.disabled = true;
     function show() { showLoading(true, false, '正在上傳版面 ' + done + '/' + total + '...'); }
