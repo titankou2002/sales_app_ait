@@ -10,7 +10,7 @@
  *   片數 ÷ 片/箱(編號價目表) = 箱數
  *   箱數 ÷ 箱/板(編號價目表，沒填就不顯示棧板數) = 棧板數
  *
- * 對外入口：getIncomingCargoContainers(branch) → 前端 google.script.run 呼叫
+ * 對外入口：getIncomingCargoContainers(branch, forceRefresh) → 前端 google.script.run 呼叫
  */
 
 var INCOMING_CARGO_SS_ID = typeof INCOMING_CARGO_SS_ID !== 'undefined' ? INCOMING_CARGO_SS_ID : '13la6Rx4cuLFg0lcbtG-q0YZcq_vBA83l9TcA7T7MNiY';
@@ -26,45 +26,47 @@ var INCOMING_CARGO_BRANCH_SS_ID = typeof INCOMING_CARGO_BRANCH_SS_ID !== 'undefi
   '喜悅納': '1uFKKWBfulg-GmCbJsSomimT5LW5r0N2w28rubrPveTA'
 };
 
+var CARGO_MASTER_CACHE_KEY = 'INCOMING_CARGO_MASTER_v3';
+
 // 🚢 港口代碼 → 中文全名
 var INCOMING_CARGO_PORT_NAMES = typeof INCOMING_CARGO_PORT_NAMES !== 'undefined' ? INCOMING_CARGO_PORT_NAMES : {
   'KEE': '基隆港', 'KEEL': '基隆港', 'KAO': '高雄港', 'K.O.': '高雄港', 'KO': '高雄港', 'TPE': '台北港'
 };
 
 function _cargoPortName_(rawPort) {
-  const p = String(rawPort || '').trim().toUpperCase().replace(/\./g, '');
+  var p = String(rawPort || '').trim().toUpperCase().replace(/\./g, '');
   if (!p) return '';
   return INCOMING_CARGO_PORT_NAMES[p] || INCOMING_CARGO_PORT_NAMES[rawPort.trim().toUpperCase()] || rawPort;
 }
 
-const INCOMING_CARGO_WEEKDAY_CN = ['日', '一', '二', '三', '四', '五', '六'];
+var INCOMING_CARGO_WEEKDAY_CN = ['日', '一', '二', '三', '四', '五', '六'];
 
 /** 日期格式化成「8月19日(週三)」 */
 function _cargoFormatDateWithWeekday_(dateVal) {
-  const d = parseDate(dateVal);
+  var d = parseDate(dateVal);
   if (!d || isNaN(d.getTime())) return '';
   return (d.getMonth() + 1) + '月' + d.getDate() + '日(週' + INCOMING_CARGO_WEEKDAY_CN[d.getDay()] + ')';
 }
 
 /** 距今天還有幾天（負數＝已過期幾天） */
 function _cargoDaysUntil_(dateVal) {
-  const d = parseDate(dateVal);
+  var d = parseDate(dateVal);
   if (!d || isNaN(d.getTime())) return null;
-  const today = new Date();
-  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var today = new Date();
+  var todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  var dOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   return Math.round((dOnly - todayOnly) / 86400000);
 }
 
 /** ETA + N 個「工作日」（跳過六日），常規預估入庫時間 = ETA + 10 個工作日 */
 function _cargoAddBusinessDays_(dateVal, businessDays) {
-  const d = parseDate(dateVal);
+  var d = parseDate(dateVal);
   if (!d || isNaN(d.getTime())) return null;
-  const result = new Date(d.getTime());
-  let added = 0;
+  var result = new Date(d.getTime());
+  var added = 0;
   while (added < businessDays) {
     result.setDate(result.getDate() + 1);
-    const dow = result.getDay(); // 0=日, 6=六
+    var dow = result.getDay(); // 0=日, 6=六
     if (dow !== 0 && dow !== 6) added++;
   }
   return result;
@@ -75,21 +77,21 @@ function _cargoAddBusinessDays_(dateVal, businessDays) {
  */
 function _cargoParseContainerNoAndWeight_(rawText) {
   if (!rawText) return { containerNo: '', totalWeightKg: 0, weightDetailStr: '' };
-  const str = String(rawText).trim();
-  const lines = str.split('\n').map(s => s.trim()).filter(Boolean);
+  var str = String(rawText).trim();
+  var lines = str.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
 
-  let containerNo = lines[0] || '';
-  let weightLines = lines.slice(1).join(' ');
+  var containerNo = lines[0] || '';
+  var weightLines = lines.slice(1).join(' ');
   if (!weightLines && lines[0] && lines[0].toLowerCase().includes('kg')) {
     weightLines = lines[0];
     containerNo = '';
   }
 
-  const matches = str.match(/([\d.]+)\s*kg/gi) || [];
-  let totalWeightKg = 0;
-  const detailWeights = [];
-  matches.forEach(m => {
-    const num = parseFloat(m.replace(/kg/gi, '').trim());
+  var matches = str.match(/([\d.]+)\s*kg/gi) || [];
+  var totalWeightKg = 0;
+  var detailWeights = [];
+  matches.forEach(function(m) {
+    var num = parseFloat(m.replace(/kg/gi, '').trim());
     if (!isNaN(num) && num > 0) {
       totalWeightKg += num;
       detailWeights.push(num);
@@ -109,23 +111,23 @@ function _cargoParseContainerNoAndWeight_(rawText) {
  * - NEW／期貨：雖然還沒建檔進價目表，但有真實尺寸與數量，isNewLike=true，改用尺寸幾何反推片數/坪數（見 _cargoParseSizeCm_）。
  */
 function _cargoParseProductCode_(codeStr) {
-  const raw = String(codeStr || '').trim();
-  const nonProductKeywords = ['展示磚', '展示架', '樣品', '計價棧板', '紙箱'];
-  const newLikeMap = { 'NEW': '新品', '期貨': '期貨' };
+  var raw = String(codeStr || '').trim();
+  var nonProductKeywords = ['展示磚', '展示架', '樣品', '計價棧板', '紙箱'];
+  var newLikeMap = { 'NEW': '新品', '期貨': '期貨' };
 
-  const isNonProduct = !raw || nonProductKeywords.some(k => raw.toUpperCase().includes(k.toUpperCase()));
+  var isNonProduct = !raw || nonProductKeywords.some(function(k) { return raw.toUpperCase().includes(k.toUpperCase()); });
   if (isNonProduct) {
     return { mainCode: raw || '', hqCode: '', isSpecial: true, isNewLike: false, newTag: '' };
   }
 
-  const upperRaw = raw.toUpperCase();
-  const newLikeKey = Object.keys(newLikeMap).find(k => upperRaw.includes(k.toUpperCase()));
+  var upperRaw = raw.toUpperCase();
+  var newLikeKey = Object.keys(newLikeMap).find(function(k) { return upperRaw.includes(k.toUpperCase()); });
   if (newLikeKey) {
     return { mainCode: raw, hqCode: '', isSpecial: false, isNewLike: true, newTag: newLikeMap[newLikeKey] };
   }
 
   if (raw.includes('/')) {
-    const parts = raw.split('/').map(s => s.trim());
+    var parts = raw.split('/').map(function(s) { return s.trim(); });
     return { mainCode: parts[1] || parts[0], hqCode: parts[0] || '', isSpecial: false, isNewLike: false, newTag: '' };
   }
 
@@ -138,10 +140,10 @@ function _cargoParseProductCode_(codeStr) {
  * 解析失敗（例如空白、非兩段數字）回傳 null。
  */
 function _cargoParseSizeCm_(sizeStr) {
-  const s = String(sizeStr || '').toUpperCase().replace(/CM|㎝/g, '').replace(/[＊×]/g, 'X').trim();
-  const m = s.match(/^(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)$/);
+  var s = String(sizeStr || '').toUpperCase().replace(/CM|㎝/g, '').replace(/[＊×]/g, 'X').trim();
+  var m = s.match(/^(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)$/);
   if (!m) return null;
-  const w = parseFloat(m[1]), h = parseFloat(m[2]);
+  var w = parseFloat(m[1]), h = parseFloat(m[2]);
   if (!w || !h) return null;
   return { w: w, h: h };
 }
@@ -151,11 +153,11 @@ function _cargoParseSizeCm_(sizeStr) {
  * 用於 NEW/期貨這類還沒建進「編號價目表」、但實際有標尺寸與數量(m²)的品項。
  */
 function _cargoCalcFromSize_(qtyM2, sizeStr) {
-  const dim = _cargoParseSizeCm_(sizeStr);
+  var dim = _cargoParseSizeCm_(sizeStr);
   if (!dim) return null;
-  const piecesPerM2 = 10000 / (dim.w * dim.h);
-  const pieces = Math.round(qtyM2 * piecesPerM2);
-  const pyeong = Math.floor(qtyM2 * INCOMING_CARGO_M2_TO_PING); // 坪數無條件捨去、不留小數
+  var piecesPerM2 = 10000 / (dim.w * dim.h);
+  var pieces = Math.round(qtyM2 * piecesPerM2);
+  var pyeong = Math.floor(qtyM2 * INCOMING_CARGO_M2_TO_PING); // 坪數無條件捨去、不留小數
   return { pieces: pieces, pyeong: pyeong };
 }
 
@@ -164,7 +166,7 @@ function _cargoCalcFromSize_(qtyM2, sizeStr) {
  */
 function _cargoToThumbUrl_(rawUrl) {
   if (!rawUrl) return '';
-  const id = _extractDriveId(rawUrl);
+  var id = _extractDriveId(rawUrl);
   return id ? ('https://lh3.googleusercontent.com/d/' + id + '=w400') : rawUrl;
 }
 
@@ -172,9 +174,29 @@ function _cargoToThumbUrl_(rawUrl) {
  * Remark 分公司識別器
  */
 function _cargoParseBranchesFromRemark_(remarkStr) {
-  const str = String(remarkStr || '').trim();
-  const list = INCOMING_CARGO_BRANCHES.filter(b => str.includes(b));
+  var str = String(remarkStr || '').trim();
+  var list = INCOMING_CARGO_BRANCHES.filter(function(b) { return str.includes(b); });
   return list.length ? list : ['總公司'];
+}
+
+/**
+ * 🚀 單次請求記憶體快取：避免同一趟執行內數百次重複呼叫 _getProductMasterMap_
+ */
+var _masterMapMemoryCache_ = {};
+
+function _getProductMasterMapMemoized_(ssId) {
+  var key = ssId || (typeof CONFIG !== 'undefined' && CONFIG.SS_ID_MAIN ? CONFIG.SS_ID_MAIN : 'MAIN');
+  if (_masterMapMemoryCache_[key]) {
+    return _masterMapMemoryCache_[key];
+  }
+  var map = null;
+  try {
+    map = _getProductMasterMap_(ssId);
+  } catch (e) {
+    console.warn('_getProductMasterMap_ 讀取失敗 (' + key + '): ' + e);
+  }
+  _masterMapMemoryCache_[key] = map || {};
+  return _masterMapMemoryCache_[key];
 }
 
 /**
@@ -182,78 +204,88 @@ function _cargoParseBranchesFromRemark_(remarkStr) {
  */
 function _cargoLookupMeta_(pKey, branches) {
   if (!pKey) return null;
-  for (let i = 0; i < branches.length; i++) {
-    const ssId = INCOMING_CARGO_BRANCH_SS_ID[branches[i]];
+  for (var i = 0; i < branches.length; i++) {
+    var ssId = INCOMING_CARGO_BRANCH_SS_ID[branches[i]];
     if (ssId === undefined) continue; // 該分公司沒有獨立試算表設定，跳過
-    const map = _getProductMasterMap_(ssId || undefined);
-    if (map[pKey]) return map[pKey];
+    var map = _getProductMasterMapMemoized_(ssId || undefined);
+    if (map && map[pKey]) return map[pKey];
   }
   // 都沒找到，退回高雅瓷主表當最後備援
-  const mainMap = _getProductMasterMap_();
-  return mainMap[pKey] || null;
+  var mainMap = _getProductMasterMapMemoized_();
+  return (mainMap && mainMap[pKey]) || null;
 }
 
 /**
  * 🎯 對外主入口：取得到貨明細（依分公司篩選），回傳貨櫃列表（每櫃內含品項明細）
- * 這份「到貨明細(唯讀)」資料不常更新（國貿小姐才會改），所以整包結果依分公司快取，預設 1 小時；
- * 點畫面上的 ⟳ 重新整理按鈕會強制略過快取重讀。
+ * 全集團各分公司共用同一份解析主快取（1 小時），點畫面上的 ⟳ 重新整理按鈕會強制略過快取重讀。
  * @param {string} branch 分公司名稱，預設「高雅瓷」；傳 "全部" 則不篩選
  * @param {boolean} [forceRefresh] 為 true 時忽略快取，強制重新讀取試算表
  */
 function getIncomingCargoContainers_impl_(branch, forceRefresh) {
-  const targetBranch = String(branch || '高雅瓷').trim();
-  const cacheKey = 'INCOMING_CARGO_v2_' + targetBranch; // v2: 修正 ETA 排序失準/NaN 天數 bug，改用 etaTs 時間戳
+  var targetBranch = String(branch || '高雅瓷').trim();
+  var allContainers = null;
 
   if (!forceRefresh) {
     try {
-      const cached = CacheManager.getLarge(cacheKey);
-      if (cached) return cached;
-    } catch (e) {}
+      allContainers = CacheManager.getLarge(CARGO_MASTER_CACHE_KEY);
+    } catch (e) {
+      console.warn('讀取到貨主快取失敗:', e);
+    }
   }
 
-  const result = _getIncomingCargoContainersUncached_(targetBranch);
-  if (result && result.success) {
-    try { CacheManager.putLarge(cacheKey, result, 3600); } catch (e) {} // 1 小時快取
+  if (!allContainers || !Array.isArray(allContainers) || allContainers.length === 0) {
+    var loadRes = _loadAllIncomingCargoContainers_();
+    if (!loadRes.success) {
+      return { success: false, msg: loadRes.msg || '無法讀取到貨明細' };
+    }
+    allContainers = loadRes.containers;
+    try {
+      CacheManager.putLarge(CARGO_MASTER_CACHE_KEY, allContainers, 3600); // 1 小時全公司共用主快取
+    } catch (e) {
+      console.warn('寫入到貨主快取失敗:', e);
+    }
   }
-  return result;
+
+  return _buildCargoResultForBranch_(allContainers, targetBranch);
 }
 
 /**
- * 🔥 到貨明細快取預熱：4 家分公司＋全部（共 5 個快取鍵）＋各分公司「編號價目表」對照表。
- * 讓使用者一打開「到貨明細」永遠讀到熱快取，不必再顯示「第一次讀取比較久」這種提示。
+ * 🔥 到貨明細快取預熱：只需讀一次外部試算表即可溫熱全部分公司資料。
  * 掛在 Sales.js:prewarmAllCaches（每 5 分鐘跑一次），搶在 1 小時 TTL 過期前刷新。
  */
 function prewarmIncomingCargo() {
   try {
-    // 依賴的「編號價目表」對照表（30 分鐘快取）先熱，避免貨櫃清單重算時卡在這一步
-    [undefined, INCOMING_CARGO_BRANCH_SS_ID['安帝嘉'], INCOMING_CARGO_BRANCH_SS_ID['喜悅納']].forEach(ssId => {
-      try { _getProductMasterMap_(ssId); } catch (e) { console.error('【編號價目表預熱】' + (ssId || '高雅瓷主表') + ' 錯誤：' + e); }
+    // 依賴的「編號價目表」對照表先熱
+    [undefined, INCOMING_CARGO_BRANCH_SS_ID['安帝嘉'], INCOMING_CARGO_BRANCH_SS_ID['喜悅納']].forEach(function(ssId) {
+      try { _getProductMasterMapMemoized_(ssId); } catch (e) {}
     });
 
-    INCOMING_CARGO_BRANCHES.concat(['全部']).forEach(branch => {
-      try {
-        const res = getIncomingCargoContainers(branch, false);
-        console.log('【到貨明細預熱】' + branch + '：' + (res && res.success ? '成功' : '失敗：' + (res && res.msg)));
-      } catch (e) {
-        console.error('【到貨明細預熱】' + branch + ' 錯誤：' + e);
-      }
-    });
+    var loadRes = _loadAllIncomingCargoContainers_();
+    if (loadRes.success && loadRes.containers) {
+      CacheManager.putLarge(CARGO_MASTER_CACHE_KEY, loadRes.containers, 3600);
+      console.log('【到貨明細預熱】成功快取，共 ' + loadRes.containers.length + ' 櫃');
+    } else {
+      console.warn('【到貨明細預熱】失敗：' + (loadRes && loadRes.msg));
+    }
   } catch (e) {
     console.error('【到貨明細預熱】整體錯誤：' + e);
   }
 }
 
-function _getIncomingCargoContainersUncached_(targetBranch) {
+/**
+ * 📦 讀取外部「到貨明細(唯讀)」試算表並一次性解析出所有貨櫃清單（不依分公司過濾）
+ */
+function _loadAllIncomingCargoContainers_() {
   try {
-    const ss = SpreadsheetApp.openById(INCOMING_CARGO_SS_ID);
-    const sheet = ss.getSheetByName(INCOMING_CARGO_SHEET_NAME);
+    var ss = SpreadsheetApp.openById(INCOMING_CARGO_SS_ID);
+    var sheet = ss.getSheetByName(INCOMING_CARGO_SHEET_NAME);
     if (!sheet) return { success: false, msg: '找不到「' + INCOMING_CARGO_SHEET_NAME + '」分頁' };
 
-    const data = sheet.getDataRange().getValues();
-    if (data.length < 2) return { success: true, containers: [], branch: targetBranch };
+    var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return { success: true, containers: [] };
 
-    const headers = data[0];
-    const idx = {
+    var headers = data[0];
+    var idx = {
       brand: findHeaderIndex(headers, ['品牌']),
       pi: findHeaderIndex(headers, ['PI']),
       containerCount: findHeaderIndex(headers, ['櫃數']),
@@ -272,25 +304,25 @@ function _getIncomingCargoContainersUncached_(targetBranch) {
     };
     if (idx.brand === -1 && idx.code === -1) return { success: false, msg: '到貨明細分頁格式不符（找不到品牌/編號欄位）' };
 
-    const containers = [];
-    let current = null;
+    var containers = [];
+    var current = null;
 
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      const brand = idx.brand !== -1 ? String(row[idx.brand] || '').trim() : '';
-      const containerNoRaw = idx.containerNo !== -1 ? String(row[idx.containerNo] || '').trim() : '';
-      const etaRaw = idx.eta !== -1 ? row[idx.eta] : '';
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var brand = idx.brand !== -1 ? String(row[idx.brand] || '').trim() : '';
+      var containerNoRaw = idx.containerNo !== -1 ? String(row[idx.containerNo] || '').trim() : '';
+      var etaRaw = idx.eta !== -1 ? row[idx.eta] : '';
 
       // 標頭列（合併儲存格的頂端才會有值）：出現品牌或櫃號或 ETA 視為新貨櫃開始
       if (brand || containerNoRaw || etaRaw) {
-        const parsedCtn = _cargoParseContainerNoAndWeight_(containerNoRaw);
-        const remark = idx.remark !== -1 ? String(row[idx.remark] || '').trim() : '';
-        const rawPort = idx.port !== -1 ? String(row[idx.port] || '').trim() : '';
+        var parsedCtn = _cargoParseContainerNoAndWeight_(containerNoRaw);
+        var remark = idx.remark !== -1 ? String(row[idx.remark] || '').trim() : '';
+        var rawPort = idx.port !== -1 ? String(row[idx.port] || '').trim() : '';
 
-        // 🚀 ETA 只解析一次，後面排序/格式化/天數計算/入庫日全部共用同一個 Date 物件，避免「先轉字串再重新解析」造成排序錯亂
-        const etaDateObj = etaRaw ? parseDate(etaRaw) : null;
-        const etaValid = !!(etaDateObj && !isNaN(etaDateObj.getTime()));
-        const warehouseInDate = etaValid ? _cargoAddBusinessDays_(etaDateObj, 10) : null;
+        // 🚀 ETA 只解析一次，後面排序/格式化/天數計算/入庫日全部共用同一個 Date 物件
+        var etaDateObj = etaRaw ? parseDate(etaRaw) : null;
+        var etaValid = !!(etaDateObj && !isNaN(etaDateObj.getTime()));
+        var warehouseInDate = etaValid ? _cargoAddBusinessDays_(etaDateObj, 10) : null;
 
         current = {
           key: parsedCtn.containerNo || ('CTN_' + i),
@@ -302,7 +334,7 @@ function _getIncomingCargoContainersUncached_(targetBranch) {
           containerCount: idx.containerCount !== -1 ? String(row[idx.containerCount] || '').trim() : '',
           etd: idx.etd !== -1 && row[idx.etd] ? String(row[idx.etd]).trim() : '',
           eta: etaValid ? Utilities.formatDate(etaDateObj, 'Asia/Taipei', 'yyyy/MM/dd') : '',
-          etaTs: etaValid ? etaDateObj.getTime() : null, // 排序專用的可靠時間戳，不再用字串重新解析
+          etaTs: etaValid ? etaDateObj.getTime() : null, // 排序專用的可靠時間戳
           etaFormatted: etaValid ? _cargoFormatDateWithWeekday_(etaDateObj) : '未定',
           daysUntilEta: etaValid ? _cargoDaysUntil_(etaDateObj) : null,
           warehouseInFormatted: warehouseInDate ? _cargoFormatDateWithWeekday_(warehouseInDate) : '',
@@ -319,30 +351,30 @@ function _getIncomingCargoContainersUncached_(targetBranch) {
 
       // 品項列
       if (current) {
-        const productName = idx.productName !== -1 ? String(row[idx.productName] || '').trim() : '';
-        const codeRaw = idx.code !== -1 ? String(row[idx.code] || '').trim() : '';
-        const qtyM2 = idx.qty !== -1 ? (parseFloat(row[idx.qty]) || 0) : 0;
+        var productName = idx.productName !== -1 ? String(row[idx.productName] || '').trim() : '';
+        var codeRaw = idx.code !== -1 ? String(row[idx.code] || '').trim() : '';
+        var qtyM2 = idx.qty !== -1 ? (parseFloat(row[idx.qty]) || 0) : 0;
         if (!productName && !codeRaw) continue; // 純標頭列，沒有品項資料，跳過
 
-        const isProject = idx.isProject !== -1 && String(row[idx.isProject] || '').trim() !== '';
-        const size = idx.size !== -1 ? String(row[idx.size] || '').trim() : '';
-        const codeParsed = _cargoParseProductCode_(codeRaw);
-        const pKey = codeParsed.mainCode.replace(/[\s\-]/g, '').toUpperCase();
-        const meta = (!codeParsed.isSpecial && !codeParsed.isNewLike && pKey) ? _cargoLookupMeta_(pKey, current.branches) : null;
+        var isProject = idx.isProject !== -1 && String(row[idx.isProject] || '').trim() !== '';
+        var size = idx.size !== -1 ? String(row[idx.size] || '').trim() : '';
+        var codeParsed = _cargoParseProductCode_(codeRaw);
+        var pKey = codeParsed.mainCode.replace(/[\s\-]/g, '').toUpperCase();
+        var meta = (!codeParsed.isSpecial && !codeParsed.isNewLike && pKey) ? _cargoLookupMeta_(pKey, current.branches) : null;
 
-        const pyeongExact = qtyM2 * INCOMING_CARGO_M2_TO_PING;
-        let pyeong = Math.floor(pyeongExact); // 坪數無條件捨去，不留小數
-        let pieces = null, pallets = null;
+        var pyeongExact = qtyM2 * INCOMING_CARGO_M2_TO_PING;
+        var pyeong = Math.floor(pyeongExact); // 坪數無條件捨去，不留小數
+        var pieces = null, pallets = null;
 
         if (meta && meta.perPing) {
           pieces = Math.round(pyeongExact * meta.perPing);
           if (meta.perBox && meta.boxPerPallet) {
-            const boxesExact = pieces / meta.perBox;
+            var boxesExact = pieces / meta.perBox;
             pallets = Math.ceil(boxesExact / meta.boxPerPallet); // 棧板數無條件進位，不留小數
           }
         } else if (codeParsed.isNewLike && size) {
-          const calc = _cargoCalcFromSize_(qtyM2, size);
-          if (calc) { pieces = calc.pieces; pyeong = calc.pyeong; } // 新品/期貨：用尺寸幾何反推，沒有箱/板資料所以沒有棧板數
+          var calc = _cargoCalcFromSize_(qtyM2, size);
+          if (calc) { pieces = calc.pieces; pyeong = calc.pyeong; } // 新品/期貨：用尺寸幾何反推
         }
 
         current.items.push({
@@ -366,37 +398,49 @@ function _getIncomingCargoContainersUncached_(targetBranch) {
       }
     }
 
-    // 分公司篩選（"全部" 不篩）
-    let filtered = containers;
-    if (targetBranch && targetBranch !== '全部') {
-      filtered = containers.filter(c => c.branches.includes(targetBranch));
-    }
-
-    // 彙總每櫃總片數/總坪數/品項數，並依 ETA → 分公司 → 系列排序
-    const result = filtered.map(c => {
-      const totalPyeong = Math.floor(c.items.reduce((s, it) => s + (it.pyeong || 0), 0)); // 坪數無條件捨去、不留小數
-      const totalPieces = c.items.reduce((s, it) => s + (it.pieces || 0), 0);
-      return Object.assign({}, c, {
-        totalPyeong: totalPyeong,
-        totalPieces: totalPieces,
-        itemCount: c.items.length
-      });
-    });
-
-    result.sort((a, b) => {
-      // 到港日愈靠近的愈上面；用先前解析好的 etaTs 時間戳，未定的排最後
-      const tA = (a.etaTs === null || a.etaTs === undefined) ? Infinity : a.etaTs;
-      const tB = (b.etaTs === null || b.etaTs === undefined) ? Infinity : b.etaTs;
-      if (tA !== tB) return tA - tB;
-      const branchA = (a.branches[0] || ''), branchB = (b.branches[0] || '');
-      if (branchA !== branchB) return branchA.localeCompare(branchB, 'zh-TW');
-      const seriesA = (a.items[0] && a.items[0].series) || '';
-      const seriesB = (b.items[0] && b.items[0].series) || '';
-      return seriesA.localeCompare(seriesB, 'zh-TW');
-    });
-
-    return { success: true, containers: result, branch: targetBranch, availableBranches: INCOMING_CARGO_BRANCHES };
+    return { success: true, containers: containers };
   } catch (e) {
     return { success: false, msg: e.toString() };
   }
+}
+
+/**
+ * ⚡ 依指定分公司從主清單中過濾、計算合計並排序
+ */
+function _buildCargoResultForBranch_(allContainers, targetBranch) {
+  var filtered = allContainers || [];
+  if (targetBranch && targetBranch !== '全部') {
+    filtered = filtered.filter(function(c) {
+      return c.branches && c.branches.includes(targetBranch);
+    });
+  }
+
+  // 彙總每櫃總片數/總坪數/品項數，並依 ETA → 分公司 → 系列排序
+  var result = filtered.map(function(c) {
+    var totalPyeong = Math.floor(c.items.reduce(function(s, it) { return s + (it.pyeong || 0); }, 0));
+    var totalPieces = c.items.reduce(function(s, it) { return s + (it.pieces || 0); }, 0);
+    return Object.assign({}, c, {
+      totalPyeong: totalPyeong,
+      totalPieces: totalPieces,
+      itemCount: c.items.length
+    });
+  });
+
+  result.sort(function(a, b) {
+    var tA = (a.etaTs === null || a.etaTs === undefined) ? Infinity : a.etaTs;
+    var tB = (b.etaTs === null || b.etaTs === undefined) ? Infinity : b.etaTs;
+    if (tA !== tB) return tA - tB;
+    var branchA = (a.branches[0] || ''), branchB = (b.branches[0] || '');
+    if (branchA !== branchB) return branchA.localeCompare(branchB, 'zh-TW');
+    var seriesA = (a.items[0] && a.items[0].series) || '';
+    var seriesB = (b.items[0] && b.items[0].series) || '';
+    return seriesA.localeCompare(seriesB, 'zh-TW');
+  });
+
+  return {
+    success: true,
+    containers: result,
+    branch: targetBranch,
+    availableBranches: INCOMING_CARGO_BRANCHES
+  };
 }

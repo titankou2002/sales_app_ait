@@ -4360,6 +4360,7 @@
 
   // 首頁「常用工具」：要加新工具，在這個清單加一行即可
   var TOOL_LINKS = [
+    { name: '到貨明細', desc: 'INCOMING CARGO・在途貨櫃與入庫預告', action: 'cargo' },
     { name: '磁磚百科', desc: 'TILE SEARCH・搜尋磁磚、以圖找磚', url: 'https://bigt.cc/web/search/' },
     { name: '請款神器', desc: 'EXPENSE・費用請款', url: 'https://expense.gyc-apps.workers.dev' }
   ];
@@ -4379,6 +4380,14 @@
     var t = TOOL_LINKS[i];
     if (!t) return;
     closeToolsMenu();
+    if (t.action === 'cargo' || t.name === '到貨明細') {
+      if (typeof openIncomingCargoPage === 'function') {
+        openIncomingCargoPage();
+      } else {
+        showPage('page-incoming-cargo');
+      }
+      return;
+    }
     window.open(t.url, '_blank');
   };
 
