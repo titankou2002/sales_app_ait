@@ -60,6 +60,11 @@
     backdrop-filter: blur(10px);
   }
   .customer-item:active { transform: scale(0.95); background: var(--card-hover); }
+  /* 💻 電腦版：客戶格子不要被拉成超大正方形，依螢幕寬度自動排多欄、固定矮一點的高度 */
+  @media (min-width: 992px) {
+    .customer-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+    .customer-item { aspect-ratio: auto; min-height: 88px; }
+  }
   .customer-name { font-size: 19px; font-weight: 900; line-height: 1.1; letter-spacing: -0.5px; }
 
   .album-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding: 20px 16px 120px; }

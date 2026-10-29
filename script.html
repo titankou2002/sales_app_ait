@@ -4436,14 +4436,29 @@
 
   var mosaicGridSize = 2; // 2 for 2x2, 3 for 3x3
 
+  // 拼貼只用「這個編號自己的」模面圖（沒有再退到自己的單片圖）：檔名要含這個編號，
+  // 不拿同資料夾裡別的編號、也不拿實景圖來湊。
+  function getMosaicPool() {
+    var d = currentGalleryData || {};
+    var full = String(currentSku || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    var base = full.replace(/[A-Z]$/, ''); // RT61243-S → RT61243
+    function own(list) {
+      return (list || []).filter(function (f) {
+        if (!f || f.isVideo) return false;
+        var n = String(f.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        return n.indexOf(full) !== -1 || (base.length >= 5 && n.indexOf(base) !== -1);
+      });
+    }
+    var m = own(d.molds);
+    return m.length ? m : own(d.singles);
+  }
+
   window.openMoldMosaicModal = function() {
     if (!currentGalleryData) return;
-    var molds = (currentGalleryData.molds && currentGalleryData.molds.length > 0)
-      ? currentGalleryData.molds
-      : ((currentGalleryData.scenes && currentGalleryData.scenes.length > 0) ? currentGalleryData.scenes : currentGalleryData.singles);
+    var molds = getMosaicPool();
 
     if (!molds || molds.length === 0) {
-      showToast("目前尚無可供拼貼之紋理影像");
+      showToast("這個編號自己還沒有模面圖，無法拼貼");
       return;
     }
 
@@ -4472,9 +4487,7 @@
   };
 
   function renderMosaicGrid() {
-    var molds = (currentGalleryData && currentGalleryData.molds && currentGalleryData.molds.length > 0)
-      ? currentGalleryData.molds
-      : ((currentGalleryData && currentGalleryData.scenes) || []);
+    var molds = getMosaicPool();
 
     if (!molds.length) return;
 
