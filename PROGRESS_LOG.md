@@ -1,3 +1,27 @@
+## 📖 [2026-10-29] 全專案 22 個原始碼檔案代碼級功能清冊與非 GAS 遷移手冊全面落地 (MIGRATION_HANDOVER.md)
+
+**程式碼層級全量功能梳理與落地**：
+1. **全面盤點全專案 22 個原始碼檔案**：`Code.js`、`Stock_Core.js`、`Inventory.js`、`Client_Inventory.js`、`Sales.js`、`Export_BonusExcel.js`、`FieldWork.js`、`Code_SalesDelivery.js`、`Reserve_Main.js`、`Reserve_Service.js`、`Reserve_Email.js`、`Reserve_Notify.js`、`Reserve_Snapshot.js`、`Reserve_Telegram.js`、`ShelfTracking.js`、`CustomerAnalysis.js`、`IncomingCargo.js`、`AIQuery.js`、`Attendance.js`、`LineBot.js`、`Auth.js`、`AitGuard.js`。
+2. **完整收錄 14 大後端模組與 API 接口**：
+   - 模組 1：版面記錄模組（`Code.js`，展示抓取、批次上傳、雙照拆列、下架軟刪除、欄位批次修改、官方系列自動推薦）
+   - 模組 2：庫存查詢與客戶端圖庫（`Inventory.js`、`Stock_Core.js`、`Client_Inventory.js`，4 級單位換算、R2 圖庫優先、客戶充足性檢查不洩露庫存、每小時頻率防刷）
+   - 模組 3：業績概況與業務獎金精算（`Sales.js`、`Export_BonusExcel.js`，業務分區歸屬、高雅瓷 5 大專屬獎金規則、一次載入跨月 Excel 匯出）
+   - 模組 4：智能報表與外勤車輛管理（`FieldWork.js`，日誌、里程加油、車輛保養、考勤 300m 半徑檢核、全知視角彙整、YoY 到訪矩陣）
+   - 模組 5：業務配送模組（`Code_SalesDelivery.js`，任務優先序、撿貨子表、拍照完工四向聯動、換人轉派）
+   - 模組 6：保留日誌、缺貨進榜與戰情室（`Reserve_Main.js`、`Reserve_Service.js`、`Code_Customer.js`，`webGetData` 21 項動作、去峰月均銷、安全水位、缺貨 3 級分類、第 2 列插單）
+   - 模組 7：上架追蹤模組（`ShelfTracking.js`，3 級新品分齡漏斗、價目表標準名清洗）
+   - 模組 8：客戶分析模組（`CustomerAnalysis.js`，戰情室 API 串接、5 層名稱清洗、真樣品與門市陳列 $6000\text{ cm}^2$ 分流、拿樣成交中位數追蹤）
+   - 模組 9：國貿貨櫃與到貨明細（`IncomingCargo.js`，雙層快取、箱片坪換算、各分公司即時篩選）
+   - 模組 10：AI 智慧查詢助理（`AIQuery.js`，Gemini 2.5 Flash / Claude Haiku 結構化解析、頻率限制防刷、reserve/sales/inventory 3 大查詢分派）
+   - 模組 11：人事出缺勤與薪資精算（`Attendance.js`，員工清單、打卡 09:00 遲到門檻、工時加班計算、請假審核、月薪精算）
+   - 模組 12：LINE Bot 出缺勤 Webhook（`LineBot.js`，非同步佇列、HMAC-SHA256 簽名驗證、打卡與請假文字指令）
+   - 模組 13：保留系統定時排程、通知與快照（`Reserve_Notify.js`、`Reserve_Email.js`、`Reserve_Snapshot.js`、`Reserve_Telegram.js`，30/45/60 天帳齡通知、每週一週報、每日 03:30 差異快照、防 Telegram 爬蟲預覽消耗 Token）
+   - 模組 14：身分驗證、白名單與金鑰體系（`Auth.js`、`AitGuard.js`、`Code.js`，4 級 RBAC 權限、HMAC-SHA256 令牌、直達金鑰）
+3. **Google Sheets ↔ Supabase 雙向同步核心規則**：廢除實體行號依賴、動態單號尋列、全域 Unicode NFKC 清洗、未稅金額標準防線。
+4. **全系統 11 大工作表自體建表（Self-Healing Schema）規格全數入冊**。
+
+---
+
 ## 🔍 [2026-10-29] 企業實體營運深水區：6 大實務隱患與防禦鐵律全面入庫 (MIGRATION_HANDOVER.md)
 
 **營運深水區防護細節**：

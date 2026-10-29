@@ -1,601 +1,515 @@
-# 內部版（高雅瓷）↔ 外部版（安喜）全面整併交接明細與避坑指南
+# 內部版（GAS）全功能代碼級遷移規格手冊（非 GAS / Cloudflare / Supabase 實作指南）
 
-> **檔案用途**：作為未來將內部版（GAS 版面記錄神器）完整遷入外部版（React + Supabase + Cloudflare，`ait-layout`），或在外部版進行功能對齊與重構時的**核心交接手冊與業務邏輯規則寶典**。
+> **文件定位**：本手冊為本專案（Google Apps Script 內部版）所有現有程式碼功能轉移至**非 GAS 環境（Cloudflare Workers / Pages、Supabase Edge Functions、Node.js / TypeScript）**的完整程式碼層級交接規格書。
+> **核心原則**：**完全以現有程式碼（Code-Level）為準**，不含任何未發生的臆測。逐一詳列：檔案來源、函式名稱、輸入參數、讀寫試算表與分頁、欄位對位別名、核心計算邏輯、回傳資料結構與寫回規則。
 
 ---
 
-## 壹、核心專案環境與資料來源對照表
+## 壹、全系統試算表架構與自體建表規格
 
-| 項目 | 內部版（高雅瓷） | 外部版（安喜共用） | 磁磚百科（圖庫中心） |
+### 1. 核心試算表配置表
+
+| 常數代號 | 試算表 ID | 內部工作表（Tabs） | 用途說明 |
 |---|---|---|---|
-| **專案路徑** | `/Users/titankou2002/.../版面記錄神器` | `/Users/titankou2002/Projects/ait-layout` | `/Users/titankou2002/.../磁磚百科` |
-| **運行架構** | Google Apps Script (GAS) + Sheets | React 18 + TS + Vite + Supabase | Cloudflare Pages + R2 + Supabase |
-| **生產網址** | GAS Web App（版本 @659） | `https://bigt.cc/layout/` | `https://bigt.cc/web/search/` |
-| **多租戶 ID** | 單一（高雅瓷專用） | `tenant_id`: `antiga`（安帝嘉）、`siena`（喜悅納），**預留 `gaoya`（高雅瓷）** | 共用全球圖庫與向量庫 |
-| **圖庫儲存** | Google Drive（舊）+ R2（新） | **Cloudflare R2** (`pub-98cd476501d5474480c785e41e1eec1d.r2.dev`) | Cloudflare R2 |
-
-### 關鍵試算表 ID 清單
-1. **高雅瓷主表**（白名單／系統核心）：`1VzCscugffW4QvOxk45qPRs4hFpHQ3_qP41tB35g1qD8`
-2. **高雅瓷編號價目表**（主檔／尺寸／片坪／圖片）：`1G5q-GixMWSdJJeF8ZiXWMOfrx4FMobER25jNc8m4Zds`
-3. **安帝嘉編號價目表**：`16QNID9hLs2K1iy_ePo7MxYxhW4kpDrDlfEIZ2p83ixo`
-4. **喜悅納編號價目表**：`1uFKKWBfulg-GmCbJsSomimT5LW5r0N2w28rubrPveTA`
-5. **在途貨櫃表**（國貿小姐「到貨明細(唯讀)」）：`13la6Rx4cuLFg0lcbtG-q0YZcq_vBA83l9TcA7T7MNiY`
-6. **智慧物流系統表**（業務配送清單）：`1l-d2Nqm4QGgLqC1Vj0Fj_61pI4oF0i90gA4t6k1M7Zg`（或 `1M-Ewy58fQs-QmqzO5nERoXDCm7lm6S_mrrAIR1mUOtA`）
-7. **業務庫**（工作日誌／客戶備註／版面詢問）：`CONFIG.SS_ID_BUSINESS`（分頁：`版面詢問紀錄`、`工作日誌`）
-8. **操作審計日誌庫**：`1N-tOQEP26akmcGRV34OwDusg0yFrtKfnJ79W3O-uNLM`（分頁：`鈦傳速_操作記錄`）
+| `CONFIG.SS_ID_MAIN` | `1VzCscugffW4QvOxk45qPRs4hFpHQ3_qP41tB35g1qD8` | `經銷銷售報表`<br>`編號價目表`<br>`庫存表`<br>`缺貨進榜追蹤`<br>`白名單` | 核心庫存、主產品檔、銷售歷史與缺貨記錄 |
+| `CONFIG.SS_ID_BUSINESS` | `1zTTl3IjrwZvYdxvX3UZk6YLVaGF7m_DBhb_tWM2LjW0` | `版面上架清單`<br>`業務分區`<br>`版面詢問紀錄`<br>`LOG` | 門市陳列記錄、客戶負責業務、店面座標、業務筆記、客戶查詢日誌 |
+| `LOGISTICS_SS_ID` | `1M-Ewy58fQs-QmqzO5nERoXDCm7lm6S_mrrAIR1mUOtA` | `業務配送清單`<br>`撿貨明細`<br>`系統白名單` | 智慧物流系統派單、撿貨子表、全公司人員白名單 |
+| `RESERVE_SS_ID` | `CONFIG.RESERVE_SS_ID` 或 `SS_ID_MAIN` | `保留單`<br>`庫存每日快照`<br>`庫存快照_最新`<br>`TG_DEBUG` | 業務保留單主表、每日快照、除錯日誌 |
+| `INCOMING_CARGO_SS_ID` | `13la6Rx4cuLFg0lcbtG-q0YZcq_vBA83l9TcA7T7MNiY` | `到貨明細(唯讀)` | 國貿在途貨櫃與入庫預告 |
+| `FW_CONFIG.SS_ID` | `CONFIG.SS_ID` | `智能_工作日誌`<br>`智能_行駛日誌`<br>`智能_保養紀錄`<br>`智能_打卡紀錄`<br>`外勤_請假報備` | 外勤日誌、里程、車輛保養、考勤與請假 |
+| `ATT_SHEET_ID` | `1Hcj7dSOc0KoRhEeGGKsxPazTKb4CUWEN7h2tqFkUfw0` | `員工資料`<br>`打卡紀錄`<br>`請假紀錄`<br>`系統設定`<br>`年度特休額度` | 出缺勤、LINE 打卡、薪資計算、請假審核 |
+| `AIT_AUDIT_SS_ID` | `1N-tOQEP26akmcGRV34OwDusg0yFrtKfnJ79W3O-uNLM` | `鈦傳速_操作記錄` | 與物流系統共用之審計操作記錄 |
 
 ---
 
-## ⚡ 關鍵生命線：Supabase ↔ Google Sheets 雙向同步架構與人工維護防線
+### 2. 分頁不存在時的自體建表規格（Self-Healing Schema）
 
-> ⚠️ **最高架構原則**：**Google Sheets 是辦公室內勤人員（國貿小姐、助理、會計、倉管、物流）日常工作的實體人機介面！**
-> 系統遷移至 Supabase 絕非把 Google Sheets 廢除，而是將 Supabase 作為「高速邊緣快取與行動 API」，**所有業務端在 App 上的異動寫入，必須 100% 透過 Edge Functions 即時回寫對應的 Google Sheets**，保持雙向互通。如果沒有回寫，辦公室小姐將完全看不到業務外勤進度，整個企業運作將陷入斷鏈癱瘓！
+在非 GAS 環境中，若背景排程或 API 寫入 Google Sheets 時發現目標工作表不存在，必須自動建立該分頁並注入預設表頭：
 
-### 一、全系統 6 大模組回寫試算表明細總表
-
-| 功能模組 | 觸發動作（業務 App 端） | 目標試算表（Google Sheet） | 目標分頁名稱 | 寫入方式 | 回寫欄位清單與動態對位別名 | 同步聯動動作 |
-|---|---|---|---|---|---|---|
-| **業務配送** | 完工拍照回報 (`completeSalesDeliveryTask`) | 智慧物流表 (`LOGISTICS_SS_ID`) | `業務配送清單` | 依單號動態尋列更新 (`setValue`) | `狀態`='已完成', `配送完成時間`='yyyy/MM/dd HH:mm', `貨單縮圖`=圖片網址 | 1. 同步插入 `智能_工作日誌`<br>2. 推播 LINE 完工通知<br>3. 寫入操作記錄 |
-| **業務配送** | 任務換人轉派 (`transferSalesDeliveryTask`) | 智慧物流表 (`LOGISTICS_SS_ID`) | `業務配送清單` | 依單號動態尋列更新 (`setValue`) | `派遣司機`=新承接業務姓名 | 記錄審計日誌 |
-| **保留日誌** | 新增保留單 (`createReservation`) | 保留單主表 (`RESERVE_SS_ID`) | `保留單` | 插入第 2 列 (`insertRowsBefore`) | `客戶`, `產品編號`, `保留數量`, `保留日期`, `負責業務`, `案名`, `工地`, `業務更新`='保留中', `訂金確認`='已付訂'/'未付訂', `備註` | 同步寫入工作日誌 (全知視角看得到) |
-| **保留日誌** | 更新保留進度 / Telegram 展期續約 | 保留單主表 (`RESERVE_SS_ID`) | `保留單` | 依列號動態尋列更新 (`setValue`) | `業務更新`='展期14天' / '已結案' / '保留中' / '取消' | 刷新後台快取 |
-| **版面記錄** | 新增版面與照片 (`addCustomerDisplays`) | 業務庫 (`SS_ID_BUSINESS`) | `版面上架清單` | 尾端附加列 (`appendRow`) | `客戶名稱`, `中文系列`, `編號`, `展示方式`, `版面連結`, `上架日期`, `業務姓名` | **雙圖時必須拆為 2 筆獨立列** |
-| **版面記錄** | 版面下架 (`removeCustomerDisplay`) | 業務庫 (`SS_ID_BUSINESS`) | `版面上架清單` | 依客戶+系列+照片尋列更新 | `下架日期`='yyyy-MM-dd' (軟刪除) | 清除陳列牆快取 |
-| **版面記錄** | 客戶店面 GPS 首次定位 | 業務庫 (`SS_ID_BUSINESS`) | `業務分區` | 依客戶名稱尋列更新 | `經度`, `緯度`, `定位時間` | 供地圖導航與半徑計算 |
-| **智能報表** | 外勤工作日誌 (`saveWorkLog`) | 主系統表 (`SS_ID_MAIN`) | `智能_工作日誌` | 尾端附加列 (`appendRow`) | `日期`, `業務姓名`, `客戶名稱`, `任務摘要`, `詳細內容`, `GPS資訊`, `建立時間`, `記錄ID`, `線上圖片` | 主管全知視角即時顯示 |
-| **智能報表** | 行駛里程與加油 (`saveDrivingLog`) | 主系統表 (`SS_ID_MAIN`) | `智能_行駛日誌` | 尾端附加列 (`appendRow`) | `日期`, `業務姓名`, `車牌號碼`, `開始里程`, `結束里程`, `行駛距離`, `今日行程`, `加油公升`, `加油金額`, `備註`, `記錄ID` | 油單發票拍照存檔 |
-| **智能報表** | 車輛保養紀錄 (`saveMaintenanceLog`) | 主系統表 (`SS_ID_MAIN`) | `智能_保養紀錄` | 尾端附加列 (`appendRow`) | `保養日期`, `業務姓名`, `車牌號碼`, `本次里程`, `下次保養里程`, `保養項目`, `保養金額`, `照片`, `備註`, `記錄ID` | 保養里程預警計算 |
-| **智能報表** | 上下班打卡 (`punchAttendance`) | 主系統表 (`SS_ID_MAIN`) | `智能_打卡紀錄` | 尾端附加列 (`appendRow`) | `記錄ID`, `業務姓名`, `打卡類型`, `打卡時間`, `日期`, `打卡狀態`, `備註/距離`, `地圖查看`, `緯度`, `經度`, `設備ID`, `系統時間` | 300公尺半徑異常判定 |
-| **智能報表** | 外勤請假申請 (`submitLeave`) | 主系統表 (`SS_ID_MAIN`) | `外勤_請假報備` | 尾端附加列 (`appendRow`) | `時間戳記`, `人員`, `類型`, `開始日期`, `結束日期`, `原因說明`, `證明照片`, `設備ID` | 發送主管通知審核 |
-| **客戶分析** | 新增版面詢問備註 (`addDisplayNote`) | 業務庫 (`SS_ID_BUSINESS`) | `版面詢問紀錄` | 尾端附加列 (`appendRow`) | `建立時間`, `客戶名稱`, `版面連結`, `系列`, `業務姓名`, `詢問內容` | 雙向同步至陳列牆詳情彈窗 |
-| **操作審計** | 全系統所有異動操作 (`_aitAuditLog_`) | 操作記錄庫 (`AIT_AUDIT_SS_ID`) | `鈦傳速_操作記錄` | 尾端附加列 (`appendRow`) | `時間`, `系統`='版面神器', `操作者`, `動作`, `明細JSON`, `IP/設備` | 與物流系統共用審計日誌 |
-
----
-
-### 二、回寫試算表的 5 大技術鐵律（避坑必讀）
-
-#### 鐵律 1：動態表頭定位（Dynamic Header Resolution，嚴禁寫死欄位英文字母）
-* **慘痛教訓**：內勤小姐在 Google Sheets 作業時，經常會手動插入或調換欄位（例如在 C 欄與 D 欄之間插入「小姐備註」或「司機加簽」）。如果後端代碼寫死 `sheet.getRange(row, 7).setValue(...)`（寫死 G 欄），只要小姐一插欄，所有完工時間、狀態全部會寫錯到別的欄位，導致資料毀滅性污染！
-* **必備標準做法**：每次回寫前，必須先抓取第 1 列表頭，用別名陣列動態查詢 column index：
-```typescript
-function findHeaderCol(headers: string[], candidates: string[]): number {
-  for (let i = 0; i < headers.length; i++) {
-    const h = String(headers[i] || '').trim().toLowerCase();
-    for (const c of candidates) {
-      if (h.includes(c.toLowerCase())) return i + 1; // 1-based index
-    }
-  }
-  return -1;
-}
-```
-
-#### 鐵律 2：非同步可靠重試佇列（Queue & Retry with Backoff）
-* **Google API 限制**：Google Sheets API 有每分鐘 300 次寫入限額（Quota 429），或連線偶發 503 超時。
-* **架構防線**：
-  - 業務在手機端按下「完成」時，Supabase 資料庫立刻寫入並標記 `sync_status = 'pending'`。
-  - Supabase Edge Function（或後台背景 Worker）負責呼叫 Google Sheets API 進行回寫。
-  - 若遇 Google 429 / 503，採用指數退避重試（Exponential Backoff，重試 3~5 次）。回寫成功後更新 `sync_status = 'synced'` 與 `synced_at`。
-  - 絕不能讓業務端的手機因為 Google 試算表連線慢而轉圈 10 秒，更不能直接報錯噴掉資料！
-
-#### 鐵律 3：雙圖雙版面獨立列拆分
-* 當業務上傳一個系列包含 2 張照片時，回寫 `版面上架清單` 時**必須拆成 2 筆獨立列寫入**，品項資料各複製一份，各自帶入第一張與第二張照片連結。
-* 若偷懶只寫一筆，內勤小姐在 Google Sheet 篩選查看時只會看到一張圖，且後續下架或換圖時會產生錯位。
-
-#### 鐵律 4：Google Sheets $\to$ Supabase 反向變更同步（小姐修改後的防線）
-* **內勤手動改表**：國貿小姐更新「到貨明細 ETA」、會計小姐調整「保留單審核狀態」、倉管更新「庫存數」。
-* **同步方案**：
-  1. **Apps Script 編輯觸發器（即時）**：在主要試算表設定 `onEdit` 觸發器，當指定欄位（如 ETA、狀態、備註）被人工修改時，透過 `UrlFetchApp` 呼叫 Supabase Edge Function Webhook，即時同步特定列。
-  2. **定時雙向對帳（保險）**：Supabase 每小時排程執行一次對帳掃描，若發現 Google Sheet 上有手動修改而 Supabase 未更新的欄位，以試算表人工維護為準進行合併更新。
-
-#### 鐵律 5：業務個人工作日誌自動連動（主管全知視角防線）
-* 業務在配送模組回報「完工」或在保留模組建立「新保留」時，後端除了回寫物流表與保留單之外，**必須同時在 `智能_工作日誌` 附加一筆紀錄**（`saveWorkLog`）。
-* 理由：主管只會盯著「全知視角」的時間軸看業務今天做了什麼。若沒有聯動寫入工作日誌，主管會以為業務今天沒跑客戶、沒送貨，產生內部考勤與考核爭議！
+1. **`智能_工作日誌`**：
+   - 表頭：`["日期", "業務姓名", "客戶名稱", "任務摘要", "詳細內容", "GPS資訊", "建立時間", "記錄ID", "線上圖片"]`
+2. **`智能_行駛日誌`**：
+   - 表頭：`["日期", "業務姓名", "車牌號碼", "開始里程", "結束里程", "行駛距離", "今日行程", "加油公升", "加油金額", "備註", "記錄ID"]`
+3. **`智能_保養紀錄`**：
+   - 表頭：`["保養日期", "業務姓名", "車牌號碼", "本次里程", "下次保養里程", "保養項目", "保養金額", "照片", "備註", "記錄ID"]`
+4. **`智能_打卡紀錄`**：
+   - 表頭：`["打卡時間", "員工姓名", "打卡類型", "GPS資訊", "打卡地址", "打卡狀態", "記錄ID"]`
+5. **`外勤_請假報備`**：
+   - 表頭：`["申請時間", "員工姓名", "假別", "開始日期", "結束日期", "請假天數", "事由說明", "記錄ID"]`
+6. **`版面詢問紀錄`**：
+   - 表頭：`["建立時間", "客戶名稱", "版面連結", "系列", "業務姓名", "詢問內容"]`
+7. **`LOG`（客戶查詢行為）**：
+   - 表頭：`["操作時間", "功能代碼", "類別", "操作人", "身分等級", "詳細內容", "執行備註"]`
+8. **`庫存每日快照`**：
+   - 表頭：`["日期", "編號", "現貨(坪)", "保留(坪)", "可用(坪)", "在途(坪)", "保留筆數"]`
+9. **`員工資料`**：
+   - 表頭：`["員工ID", "姓名", "職稱", "LINE userId", "LINE綁定時間", "底薪", "投保底薪", "餐費", "電話費", "全勤獎金", "主管ID", "到職日", "狀態"]`
+10. **`打卡紀錄`（Attendance）**：
+    - 表頭：`["日期", "員工ID", "員工姓名", "上班時間", "下班時間", "是否遲到", "遲到分鐘", "工時", "加班工時", "打卡方式", "備註"]`
+11. **`請假紀錄`（Attendance）**：
+    - 表頭：`["假單ID", "申請時間", "員工ID", "員工姓名", "假別", "開始日期", "結束日期", "請假天數", "請假事由", "審核狀態", "審核人", "審核時間", "審核備註"]`
 
 ---
 
-### 三、缺表防線：目標試算表若無該分頁（Tab）的「自體修復 5 層防護機制」
-
-在多租戶或內勤人員操作中，常會發生：新分公司建立、小姐不小心手動刪除分頁、或全新功能上線首次寫入。系統必須具備以下 **5 層自體修復防護機制**，絕不報錯中斷：
-
-#### 1. 第一層防線：自動偵測與自體建表（Self-Healing Auto-Provisioning）
-* **絕不崩潰**：程式在回寫前，透過 Google Sheets API 檢查目標試算表中是否存在該工作表名稱（Tab Name）。
-* **動態建表（AddSheet）**：若分頁不存在，立刻發送 `AddSheetRequest`（Google Sheets API `batchUpdate`），以標準分頁名稱動態建立新分頁。
-* **標準標題與格式化一次到位**：建表瞬間自動注入標準表頭（Header Row），並將第一列設定為深色底（`#2c3e50`）、白字粗體、並設定凍結首列（`frozenRowCount: 1`）。
-* **無感續行**：建好分頁與表頭後，毫秒級直接將業務當前的資料附加進去。**業務端與小姐端 0 感知、0 報錯、0 人工介入！**
-
-#### 2. 第二層防線：表頭欄位自我升級（Header Auto-Upgrade）
-* 若分頁已存在，但內勤使用的是舊版，缺少某些新欄位（例如缺少「業務更新」、「貨單縮圖」、「GPS資訊」）：
-* 程式比對表頭與標準定義，自動在最後一欄之後附加該欄位名稱，隨後寫入資料。既不破壞原有資料與小姐的公式，又能讓新欄位順利落地。
-
-#### 3. 第三層防線：本地保證落庫（Supabase Local-First Persistence）
-* 無論 Google 試算表發生什麼問題（即使試算表被誤刪、Google 權限遺失、或 Google API 故障）：
-* 業務在手機端的寫入**永遠最優先寫入 Supabase 資料庫**（標記 `sync_status = 'pending'`）。
-* 手機端立刻顯示「儲存成功」，業務的外勤作業絕對不會卡死在路上。
-
-#### 4. 第四層防線：離線重試與自動補登（Background Reconciliation Worker）
-* Supabase 背景 Edge Worker 每 5 分鐘自動巡檢 `sync_status = 'pending'` 的孤兒資料。
-* 一旦試算表被自體修復建好或權限恢復，Worker 自動將積壓資料依照時間序完整補回試算表，標記 `sync_status = 'synced'`。
-
-#### 5. 第五層防線：標準分頁結構定義清單（Schema Registry）
-後端程式備有全系統所有分頁的標準結構字典：
-* `業務配送清單`：`["單號", "日期", "客戶", "地址", "電話", "配送方式", "狀態", "派遣司機", "完成時間", "貨單縮圖", "備註"]`
-* `保留單`：`["保留日期", "產品編號", "保留數量", "客戶", "負責業務", "案名", "工地", "訂金確認", "業務更新", "備註"]`
-* `版面上架清單`：`["上架日期", "客戶名稱", "中文系列", "產品編號", "展示方式", "版面連結", "負責業務", "下架日期"]`
-* `智能_工作日誌`：`["記錄ID", "業務姓名", "日期", "客戶名稱", "任務摘要", "詳細內容", "GPS資訊", "建立時間", "線上圖片"]`
-* `智能_行駛日誌`：`["記錄ID", "業務姓名", "日期", "車牌號碼", "開始里程", "結束里程", "行駛距離", "今日行程", "加油公升", "加油金額", "備註"]`
-* `智能_保養紀錄`：`["記錄ID", "業務姓名", "保養日期", "車牌號碼", "本次里程", "下次保養里程", "保養項目", "保養金額", "照片", "備註"]`
-* `智能_打卡紀錄`：`["記錄ID", "業務姓名", "打卡類型", "打卡時間", "日期", "打卡狀態", "備註/距離", "地圖查看", "緯度", "經度", "設備ID", "系統時間"]`
-* `外勤_請假報備`：`["時間戳記", "人員", "類型", "開始日期", "結束日期", "原因說明", "證明照片", "設備ID"]`
-* `版面詢問紀錄`：`["建立時間", "客戶名稱", "版面連結", "系列", "業務姓名", "詢問內容"]`
+## 貳、全系統後端函式實作規格（逐檔詳列）
 
 ---
 
-### 四、深水區運作防線：真實企業營運中致命的 6 大實務隱患
+### 1. 版面記錄模組（`Code.js`）
 
-在實際商業現場運作中，系統還會面臨以下 6 個直接關乎金錢、庫存客訴與資安的核心深水隱患：
-
-#### 1. 行號錯位毀滅性災難（Row Index vs Unique Key）
-* **問題**：早期代碼在幾處使用實體列號 `rowIdx`（如 `completeSalesDeliveryTask(rowIdx)`）。若內勤小姐在 Google Sheet 中間插入一列、刪除一列、或是按了「依日期排序」、「依客戶排序」，該單據的實體行號瞬間位移！
-* **致命後果**：業務在手機上點擊完工，回寫時會寫到完全不同客戶的另一張單據上，造成資料毀滅性竄改。
-* **鐵律防線**：**全系統全面廢除依賴實體行號 `rowIdx`**。每次回寫必須強制使用**單據唯一編號（如配送單號 `orderId`、保留單主鍵、或時間戳+業務姓名）**，在試算表中動態掃描比對尋列，小姐怎麼排序、插列都絕不出錯。
-
-#### 2. 文字格式與「隱形字符」比對失效（NFKC、不可見字元清洗）
-* **問題**：內勤小姐從 ERP 或 LINE 複製文字貼入試算表時，經常夾帶「零寬空格（`\u200B`）」、換行符號（`\n`）、全形英數字（`Ａ１２０`）。
-* **致命後果**：PostgreSQL 執行 `WHERE sku = 'A120'` 時，完全比對不到帶有全形或隱形字符的品號，導致系統回報庫存為 0、破圖、尺寸系列全空。
-* **鐵律防線**：在 Supabase Ingest 與 Google Sheets 回寫兩端，強制全域執行 Unicode NFKC 正規化與隱形字符清洗：
-  ```typescript
-  function cleanInputStr(raw: string): string {
-    return String(raw || '')
-      .replace(/[\u200B-\u200D\uFEFF]/g, '') // 剝除零寬空格
-      .normalize('NFKC')                    // 全形英數轉半形
-      .trim();
+#### 1.1 `getCustomerDisplays(customerName)`
+* **檔案來源**：`Code.js:247`
+* **輸入參數**：`customerName`（字串，例如 `"東春"`）
+* **讀取目標**：`CONFIG.SS_ID_BUSINESS` $\to$ 分頁 `版面上架清單`
+* **表頭別名**：
+  - `cust`: `["客戶名稱", "客戶"]`
+  - `series`: `["中文系列", "系列"]`
+  - `sku`: `["編號", "產品編號"]`
+  - `mode`: `["展示方式"]`
+  - `img`: `["版面連結", "連結", "圖片", "照片"]`
+  - `onDate`: `["上架日期", "日期"]`
+  - `offDate`: `["下架日期"]`
+  - `sales`: `["業務姓名", "業務"]`
+  - `batch`: `["批號"]`
+  - `note`: `["備註"]`
+* **核心邏輯**：
+  1. 客戶名稱透過 `mergeCustomer(raw)` 正規化比對。
+  2. 若 `下架日期` 為空，放入 `active` 陣列（在架）。
+  3. 若 `下架日期` 有值，放入 `history` 陣列（歷史下架）。
+  4. 圖片網址轉換：Google Drive 連結透過 `extractIdFromUrl` 轉成 `https://lh3.googleusercontent.com/d/{id}=w600`。
+* **回傳結構**：
+  ```json
+  {
+    "success": true,
+    "active": [{ "series": "...", "sku": "...", "img": "...", "onDate": "...", "mode": "...", "sales": "..." }],
+    "history": [{ "series": "...", "sku": "...", "img": "...", "onDate": "...", "offDate": "..." }]
   }
   ```
 
-#### 3. 磁磚批號（Lot / Batch）色差與混合出貨防線
-* **問題**：磁磚具有天然窯燒特性，不同生產批號（如批號 A 與批號 B）存在自然色差與模數差異，施工時同一空間絕不可混用。
-* **致命後果**：若 Supabase 僅按品號 `SUM(qty)` 計算可用量，業務看到總數夠就答應客戶出貨，結果現場送去的是兩批不同色差的磁磚，引發重大工務客訴與賠償。
-* **鐵律防線**：庫存資料庫必須保留**「批號（Batch / Lot Number）」維度**，手機端展示可用庫存時，必須明確標記批號分布（如：`可用 50 坪 [批號 B24: 30坪, 批號 C01: 20坪]`），杜絕混批風險。
-
-#### 4. 未稅金額 vs 含稅金額 5% 財務偏差防線
-* **問題**：經銷銷售報表常有 `未稅金額`、`稅額`、`含稅金額`、`銷額` 等多個金額欄位。公司的業績目標（每人 1650 萬、全公司 6600 萬）、達成率計算、低於六折折半精算，**全數嚴格以「未稅金額」為基準**。
-* **致命後果**：若欄位映射誤抓「含稅金額」（1.05 倍），全公司業績數據虛增 5%、獎金溢發、對帳全面失準。
-* **鐵律防線**：表頭解析白名單嚴格鎖定 `['未稅金額', '銷額', '銷售金額']`，顯式排除 `['含稅金額', '發票金額', '總計']`。
-
-#### 5. 加工磚與破損退貨防線（嚴禁回流一般可用庫存）
-* **問題**：磁磚若經水刀倒角加工、開槽，或運送破損補件，在報表備註常帶有「加工」、「工補」、「破損」。
-* **致命後果**：業務若在配送模組登記「退貨」，若後台盲目將退貨數量加回可用庫存，會讓已被切斷加工或破損的磁磚再次被當成正常良品賣給下一家客戶。
-* **鐵律防線**：退貨單回寫與庫存計算必須判定備註；含「工/破損」之退貨只能入庫至「次級/呆料庫存」，絕不可回流為正品可用庫存。
-
-#### 6. 單次銷毀 Nonce 權限（防 Telegram/LINE 一鍵續約被重放攻擊）
-* **問題**：滿 30 天未出貨之保留單，排程會發布帶有「一鍵展期 14 天」快速連結的 Telegram / LINE 通知。若連結未受保護，可能被重複點擊、被通訊軟體爬蟲預防性抓取（Link Prefetch）提前觸發、或被他人偽造參數惡意展期。
-* **鐵律防線**：快速展期連結必須帶有 **HMAC-SHA256 簽署且具 7 天時效的單次 Nonce Token**；後端驗證通過執行的當下，立刻將該 Token 標記為已銷毀（`used_at = NOW()`），防範任何重複重放攻擊。
-
----
-
-## 貳、全系統 12 大功能模組業務邏輯完整交接手冊
-
----
-
-### 1. 📊 客戶分析（CUSTOMER）
-
-客戶分析為全系統計算層級最深、對齊戰情室最核心的模組。
-
-#### 1.1 資料架構與權威單一來源
-* **設計原則**：**前端與手機端不做任何銷售數字與毛利重複計算**。
-* **權威來源**：睡美人戰情室 API（`https://bigt.cc/sleeping-beauty/api.php`，以 `company=elitile` 區隔）。
-* **身分驗證**：透過 HTTP Header `X-App-Token` 帶入 Script Property `WARROOM_APP_READ_TOKEN`。
-* **唯讀 Actions 清單**：
-  1. `customer-analysis`：全客戶總表（含業績、去年同期、YoY、健康度、最後下單），快取 30 分鐘（TTL 1800s）。
-  2. `customer-timeline`：時間軸明細（銷售／拜訪／備註歷史）。
-  3. `customer-warroom`：版面戰情室（各版面有銷售 vs 掛零統計）。
-  4. `customer-sales-breakdown`：品項銷售分析（含 `skus`、`totals`、`years`、`monthly`）。
-  5. `customer-detail`：逐筆交易明細（供常銷商品下探出貨案件）。
-
-#### 1.2 客戶名稱 5 層正規化演算法
-手機端業務分區原始名稱（如「東春建材行」），戰情室為 4 字正規化名稱（如「滿財」）：
-```javascript
-function caPhpTrim_(s) {
-  return s.replace(/^[ \t\n\r\0\x0B]+/, '').replace(/[ \t\n\r\0\x0B]+$/, '');
-}
-function caNormalizeCustomerName_(name) {
-  return caPhpTrim_(String(name == null ? '' : name))
-    .replace(/[()（）【】\[\]「」『』,，.。\/／:： \t\n\r\f\v]+/g, '');
-}
-function caDisplayCustomerName_(name) {
-  let s = caNormalizeCustomerName_(name);
-  if (s === '') return '未知客戶';
-
-  // 1. 固定合併字典（長名優先）
-  if (s.indexOf('德思特尼') !== -1 || s.indexOf('德思') !== -1) return '德思特尼';
-  if (s.indexOf('漢樺') !== -1 || s.indexOf('波爾泰') !== -1) return '漢樺';
-  if (s.indexOf('大永') !== -1 || s.indexOf('新大永') !== -1) return '大永';
-  if (s.indexOf('伊特') !== -1 || s.indexOf('喬弈') !== -1 || s.indexOf('喬翌') !== -1) return '伊特';
-  if (s.indexOf('鏷城') !== -1 || s.indexOf('璞城') !== -1) return '鏷城';
-  if (s.indexOf('鼎康') !== -1 || s.indexOf('鼎晨') !== -1) return '鼎晨';
-  if (s.indexOf('今冠') !== -1 || s.indexOf('金冠') !== -1) return '金冠';
-  if (s.indexOf('東春') !== -1 || s.indexOf('滿財') !== -1) return '滿財';
-  if (s.indexOf('傅邦') !== -1 || s.indexOf('盛邦') !== -1) return '傅邦';
-  if (s.indexOf('錦義') !== -1 || s.indexOf('睿敏') !== -1) return '錦義';
-  if (s.indexOf('高頓') !== -1 || s.indexOf('馬來高') !== -1) return '馬來高';
-  if (s.indexOf('太爾') !== -1) return '信義星';
-  if (s.indexOf('琮達') !== -1) return '琮威';
-
-  // 2. 前綴例外字
-  const prefix2 = s.substring(0, 2);
-  if (prefix2 === '專岩') return '專岩';
-  if (prefix2 === '禾昇') return '禾昇';
-
-  // 3. 連字號截斷
-  s = s.split(/[-－—]/)[0] || s;
-
-  // 4. 例外保護詞清單
-  const CA_CUST_EXCEPTIONS = [
-    '夏綠蒂', '德思特尼', '百事得', '百達富麗', '鑫東聖', '海格斯',
-    '信義星', '好仕齊', '新睦豐', '富利鴻', '金豪益'
-  ];
-  for (let i = 0; i < CA_CUST_EXCEPTIONS.length; i++) {
-    if (s.indexOf(CA_CUST_EXCEPTIONS[i]) !== -1) return CA_CUST_EXCEPTIONS[i];
+#### 1.2 `saveNewLayout_impl_(payload)` / `addCustomerDisplays`
+* **檔案來源**：`Code.js:820` / `Code.js:1560`
+* **輸入參數**：
+  ```json
+  {
+    "customerName": "東春",
+    "series": "浮光",
+    "photoUrl": "https://...",
+    "photoUrl2": "https://...",
+    "items": [{ "sku": "ED61201", "qty": 1, "size": "60x120" }],
+    "salesName": "謝博皓",
+    "mode": "展示架",
+    "lat": 25.04,
+    "lng": 121.55
   }
+  ```
+* **寫入目標**：`CONFIG.SS_ID_BUSINESS` $\to$ 分頁 `版面上架清單`
+* **核心邏輯**：
+  1. 加鎖 `LockService.getScriptLock().waitLock(20000)`。
+  2. **雙照片拆存**：若有 `photoUrl2`，後端將品項拆為 2 筆獨立列寫入（第一筆帶 `photoUrl`，第二筆帶 `photoUrl2`）。
+  3. **GPS 寫入**：若帶座標且該客戶在 `業務分區` 尚無座標，自動回寫 `業務分區` 之 `經度`、`緯度` 欄。
 
-  // 5. 迴圈剝除公司後綴至穩定
-  const CA_CUST_SUFFIXES = [
-    '企業股份有限公司', '開發有限公司', '股份有限公司', '有限公司',
-    '企業', '建材', '國際', '磁磚', '磁藝', '工程', '設計部', '出貨',
-    '保留收訂', '公司', '實業', '精品', '工作室', '開發', '室內裝修',
-    '室內設計', '設計', '行銷', '商行', '建業', '綜合'
-  ];
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (let i = 0; i < CA_CUST_SUFFIXES.length; i++) {
-      const pos = s.indexOf(CA_CUST_SUFFIXES[i]);
-      if (pos > 0) {
-        s = s.substring(0, pos);
-        changed = true;
-        break;
-      }
-    }
-  }
+#### 1.3 `offShelfDisplayBatch_impl_(customerName, skus, salesperson, photoUrl)`
+* **檔案來源**：`Code.js:1034`
+* **核心邏輯**：
+  遍歷 `版面上架清單`，比對 `客戶名稱`、`品號`、`版面連結`。比對成功時，將該列 `下架日期` 設為當天日期 `yyyy-MM-dd`（軟刪除），不刪除整列。
 
-  return s.substring(0, 4);
-}
-```
-* **⚠️ 關鍵防坑點**：戰情室 `name` 有部分為數字型別（如週期日期 `1226`）。比對必須強制轉型：`String(list[i].name) === key`。
+#### 1.4 `deleteDisplayBatchPermanent_impl_(customerName, skus, photoUrl)`
+* **檔案來源**：`Code.js:1150`
+* **核心邏輯**：
+  硬刪除符合 `客戶名稱`、`品號`、`版面連結` 的列（由底層倒序執行 `deleteRow`）。
 
-#### 1.3 客戶健康度 8 級分級與呼吸閃爍規則
-* `critical`（嚴重衰退）：$\text{YoY} \le -50\%$，紫色 `#a855f7`，**呼吸閃爍動畫 (`blink: true`)**。
-* `mid`（中等退步）：$-50\% < \text{YoY} \le -30\%$，淡紅 `#f87171`。
-* `slip`（退步）：$-30\% < \text{YoY} < -10\%$，橘黃 `#f5a623`。
-* `normal`（正常）：$-10\% \le \text{YoY} < +10\%$ 或為空。
-* `growth`（成長）：$+10\% \le \text{YoY} < +50\%$，綠色 `#22c55e`。
-* `surge`（大幅成長）：$\text{YoY} \ge +50\%$，金黃 `#facc15`。
-* `dormant`（沉睡）：`health === 'dormant' || 'no_sales'`，灰色 `#94a3b8`。
-* `unknown`（無資料）：查無資料。
-* **YoY 色彩慣例**：**嚴格遵守台股慣例：成長紅（`▲+X%`）、衰退綠（`▼-X%`）**。
-* **標籤防消失設計**：分級標籤（特、A、B、C）筆數計算採用「全量清單」；狀態標籤採用「已套分級、未套狀態」清單。
+#### 1.5 `updateLayoutFieldBatch_impl_(customerName, skus, fieldName, newVal)`
+* **檔案來源**：`Code.js:1230`
+* **核心邏輯**：
+  批次修改指定客戶、品號之特定欄位（如 `備註`、`展示方式`、`業務姓名`）。
 
-#### 1.4 經銷銷售報表「真樣品 vs 門市陳列」智能分流
-* **樣品列判定**：客戶代碼 `-S\d*` 或客戶名稱 `-(計價)?樣品`。
-* **分流規則**（`caClassifySample_`）：
-  - 備註含「扣」（扣帶）$\implies$ **門市陳列（display）**。
-  - 面積門檻 $6000\text{ cm}^2$（60x120、80x80 為大磚；60x60 為小磚）。
-  - 大磚片數 $>1$ 片 $\implies$ **門市陳列**。
-  - 中小磚片數 $>6$ 片 $\implies$ **門市陳列**。
-  - 其餘 $\implies$ **真樣品（sample）**。
+#### 1.6 `getSeriesSkuOptions_impl_(seriesName)` 與 `getSeriesNameSuggestions_impl_(query)`
+* **檔案來源**：`Code.js:1420`
+* **讀取目標**：`CONFIG.SS_ID_MAIN` $\to$ `編號價目表`
+* **核心邏輯**：
+  反查該系列名下所有 SKU 清單，或依關鍵字推薦系列名稱，用於前端上架表單自動完成。
 
-#### 1.5 拿樣成交中位數與逾期成交追蹤
-* $\text{Gap} = \text{firstSale} - \text{firstSampleDate}$（排除負值與 $\ge 3$ 年無關聯樣本）。
-* 有效樣本 $\ge 3$ 筆時計算中位數（`median`）。
-* 已拿樣、歷年銷額為 0、且距拿樣日已超過中位數者 $\implies$ 列入「拿樣逾期未成交（Overdue）」優先追蹤名單。
-
-#### 1.6 常銷商品前 10 名與出貨案件歸納演算法
-* **出貨案件歸納（`caCaseKey`）**：全形轉半形、`之` 轉 `-`、剝除前綴 `^(工地|案名|案件|地址|工程)[:：]?`、反覆剝除結尾 `[-－]?(工補|補工|工破損|破損|補貨|補|工)$`。將補貨、破損、加工廠出貨自動併入主工程案件。
-
-#### 1.7 💤 遺忘產品矩陣（Forgotten SKUs）
-* 近兩年曾成交，但**近半年完全掛零（銷額 = 0）**。排除睡美人與停產。
-* 停售天數色帶：$120 \sim 200$ 天橘黃、$200 \sim 300$ 天紅、$300$ 天以上紫。
-
-#### 1.8 📌 該上版產品推薦矩陣（Should Display SKUs）
-* 近半年熱賣，但**目前未掛在該客戶任何一面實體陳列牆上**。排除睡美人與停產。直接轉化為現成拓銷商機。
-
-#### 1.9 版面效益與業務訪問日誌
-* 統計名下版面總數，細分「近一年有銷售版面」與「近一年掛零版面（標示天數）」。
-* 版面詢問紀錄（`addDisplayNote`）：儲存於業務庫「版面詢問紀錄」分頁（欄位：`建立時間`、`客戶名稱`、`版面連結`、`系列`、`業務姓名`、`詢問內容`）。
-
-#### 1.10 資安隔離（Client-View Security）
-* 帶有 `?view=client` 或 `state.isClientView === true` 時，**客戶分析分頁完全不載入（強制清空）**，嚴禁外洩內部毛利率、低毛利明細與合約餘額。
+#### 1.7 `getLatestLayoutActivities_impl_()`
+* **檔案來源**：`Code.js:2830`
+* **讀取目標**：`CONFIG.SS_ID_BUSINESS` $\to$ `版面上架清單`
+* **核心邏輯**：
+  讀取最後 50 筆記錄，過濾出最近 10 筆異動（上架、下架），回傳主頁動態跑馬燈。
 
 ---
 
-### 2. 🖼️ 版面記錄（RECORD）
+### 2. 庫存查詢與客戶端圖庫（`Inventory.js`、`Stock_Core.js`、`Client_Inventory.js`）
 
-#### 2.1 雙照片雙版面自動拆存規則
-* 當單一版面記錄包含第二張照片（`photoUrl2`）時，後端必須**自動拆存為 2 個獨立版面**（品項各複製一份），在陳列牆上呈現為 2 張獨立卡片，嚴禁將兩張照片塞在同一個記錄導致照片被覆蓋或陳列牆漏圖。
-
-#### 2.2 GPS 店面定位沿用機制
-* 新增版面時首次抓取經緯度，寫入該客戶的店面座標。
-* **同客戶連續加入清單時沿用首次定位**，不重複呼叫瀏覽器 GPS，避免手機發熱、電池消耗與等待定時超時。
-
-#### 2.3 前端 Canvas 照片極限壓縮
-* 手機拍攝原圖通常為 10MB~20MB HEIC/JPEG。
-* 上傳前必須在前端 Canvas 等比縮圖至**長邊 1600px、壓縮品質 0.75 JPEG**（約 300KB~600KB），關閉視窗後顯式釋放記憶體，杜絕行動瀏覽器崩潰或後端 504 傳輸超時。
-
-#### 2.4 批次清單上傳與並行寫入加鎖
-* 前端暫存佇列支援批次上傳（`uploadAddQueue`），設定 **3 筆並行**傳輸。
-* 後端寫入試算表前必須調用 `LockService.getScriptLock()`，鎖定上限 20 秒，確保連續插入列時不會產生列錯位（Race Condition）。
-* 若上傳目錄資料夾已設為公開檢視，則略過逐檔執行 `setSharing`，大幅提速。
-
-#### 2.5 下架與 7 天動態輪播
-* 下架不是實體刪除列，而是填入 `下架日期`（軟刪除）。陳列牆預設過濾 `!offDate`。
-* 首頁歷史動態彈窗輪播近 7 天新增與下架版面動態。
-
----
-
-### 3. 📦 庫存查詢（INVENTORY）
-
-#### 3.1 4 級標準單位換算鏈（全集團統一，不可更改）
-$$\text{坪數} = \lfloor \text{數量}(m^2) \times 0.3025 \rfloor \quad (\text{無條件捨去整數})$$
-$$\text{片數} = \text{坪數} \times \text{每坪片數}(\text{編號價目表})$$
-$$\text{箱數} = \lfloor \text{片數} \div \text{每箱片數} \rfloor$$
-$$\text{棧板數} = \lceil \text{箱數} \div \text{每棧板箱數} \rceil \quad (\text{無條件進位整數})$$
-
-#### 3.2 暫記後綴正規化（必做）
-* 庫存與保留單中常有 `RS61280-掛`、`RS61280-期` 等暫記品號。
-* 查編號價目表前必須先執行正規化：
+#### 2.1 `getAggregatedInventory(forceRefresh)`
+* **檔案來源**：`Inventory.js:42`、`Stock_Core.js:15`
+* **讀取目標**：`CONFIG.SS_ID_MAIN` $\to$ `編號價目表`、`庫存表`
+* **品號正規化函式**（`Stock_Core.js:105`）：
   ```javascript
   function normalizeIncomingSkuKey_(sku) {
     return String(sku || '').toUpperCase().replace(/[-\s]*(掛|期)\s*$/, '').replace(/[\s\-]/g, '');
   }
   ```
-  否則主檔完全對不到，導致圖片破圖、尺寸系列全空。
+* **4 級單位換算公式**（`Inventory.js:312`）：
+  - $\text{坪數} = \lfloor \text{數量}(m^2) \times 0.3025 \rfloor$
+  - $\text{片數} = \text{坪數} \times \text{每坪片數}$（價目表 `每坪片數` 欄，預設 36）
+  - $\text{箱數} = \lfloor \text{片數} \div \text{每箱片數} \rfloor$
+  - $\text{棧板數} = \lceil \text{箱數} \div \text{每棧板箱數} \rceil$
+* **可用庫存**：$$\text{可用庫存} = \text{現有庫存量} - \text{有效保留量}$$
+* **圖庫載入優先級**：
+  `R2_單片1` > `R2_主圖URL` > `Cloudflare R2 CDN`（`https://pub-98cd476501d5474480c785e41e1eec1d.r2.dev/{sku}.jpg`）> `單片連結網址`（Google Drive 縮圖）。
 
-#### 3.3 千分位逗號防呆
-* 所有數值解析前必須強制清除逗號：`parseFloat(String(val || 0).replace(/,/g, ''))`。防範 `"1,500"` 被 `parseFloat` 誤截為 `1`。
+#### 2.2 `checkClientStock(sku, requiredPyeong, userId, userName)`
+* **檔案來源**：`Client_Inventory.js:20`
+* **讀取目標**：`CONFIG.SS_ID_MAIN` $\to$ `庫存表`
+* **核心邏輯**：
+  客戶端專用，**不回傳具體數字**，僅計算 $\text{可用庫存} \ge \text{需求坪數}$，回傳「🟢 庫存數量充足」或「🟡 庫存數量不足，請聯繫業務確認到貨時間」。同時在業務表單 `LOG` 留下查詢軌跡。
 
-#### 3.4 可用庫存與保留單穿透
-* $$\text{可用庫存} = \text{現有庫存} - \text{有效保留量}$$
-* 點擊可用量數字可穿透彈出保留清單（`getReservedOrdersGrouped`），列出被哪位業務、哪個工地案名、保留幾片幾坪、付訂狀態與保留天數。
+#### 2.3 `logExternalClientSearch_impl_(sku, pyeong, result, userId, level, clientNamePassed, clientCompanyPassed)`
+* **檔案來源**：`Client_Inventory.js:148`
+* **寫入目標**：`CONFIG.SS_ID_BUSINESS` $\to$ `LOG`
+* **頻率防刷限制**：
+  - `VIP`：不限次數。
+  - `LEVEL 1`：每小時最多 20 次。
+  - 其他等級：每小時最多 10 次。超過回傳 `exceeded: true`。
 
-#### 3.5 跨分公司庫存檢視
-* 支援單鍵在「高雅瓷 / 安帝嘉 / 喜悅納」三家分公司庫存間切換檢視。
-
-#### 3.6 圖庫優先級與全寬無圖模式
-* 縮圖匹配優先級：`R2_單片1` > `R2_主圖URL` > `Cloudflare R2 CDN` > `Google Drive 縮圖`。
-* 遇到 403 破圖或無圖品項，自動平滑切換為「無圖全寬卡片」，品號與可用量置中高亮，杜絕深黑方塊死洞。
-
----
-
-### 4. 📈 業績概況（SALES）
-
-#### 4.1 核心數據維度
-* 今日銷額、本月累計銷額、今年累計銷額。
-* 每月業績走勢長條圖（支援去年同期對比）。
-* 前 30 大經銷客戶排行。
-
-#### 4.2 業務歸屬權威判定規則
-* 每一筆交易之負責業務判定，**優先查詢「業務分區」該客戶目前指派的負責業務**；若客戶不在業務分區表中，才退回使用「經銷銷售報表」該列的「負責業務」欄原文。
-
-#### 4.3 樣品列與運費列排除規則
-* **樣品排除**：客戶代碼 `-S\d*`、客戶名稱含「樣品/代領」、或備註含「樣品/扣帶/代領」者，一律排除於業績與獎金之外。
-* **運費列排除**：產品編號包含「運費」者，獨立列示扣抵，不計入銷售業績。
-
-#### 4.4 高雅瓷專屬五大獎金與分攤規則（安喜不套用）
-1. **睡美人業績加成**：戰情室標記之睡美人品項出貨，享有專屬業績加成係數。
-2. **低於同行價六折業績折半**：
-   - 門檻：$\text{單價} < \text{同行價} \times 0.60$（`PEER_PRICE_DISCOUNT_THRESHOLD: 0.60`）。
-   - 折算：該筆成交金額以 **5 折計算**（`PEER_PRICE_ADJUSTMENT_FACTOR: 0.50`）。
-3. **金友利客戶加倍**：金友利之成交業績以 **2 倍計算**（$\times 2$）。
-4. **漢樺 / 波爾泰 1/3 分攤**：客戶名稱包含「漢樺」或「波爾泰」者，業績由 **謝博皓、潘右森、陳勁多 3 人平均各分攤 1/3**（`weight = 1/3`）。
-5. **配送點數獎金加計**：業務自送配送獎金（`deliveryBonus`）依送達件數與趟次計入個人月結獎金。
-
-#### 4.5 跨月獎金精算與 Excel 匯出
-* 支援管理後台小姐選取月份進行獎金精算，並透過 `Export_BonusExcel.js` 產出完整明細 Excel。
+#### 2.4 `getDriveImageUrl(url, formula)`
+* **檔案來源**：`Client_Inventory.js:116`
+* **核心邏輯**：
+  解析 `=IMAGE("https://...")` 公式，或自 Google Drive 網址提取 File ID，轉換為 `https://drive.google.com/thumbnail?id={id}&sz=w1000`。
 
 ---
 
-### 5. 📋 智能報表（REPORTS / 外勤工作管理）
+### 3. 業績概況與業務獎金精算（`Sales.js`、`Export_BonusExcel.js`）
 
-#### 5.1 三大核心功能頁籤
-1. **工作日誌（WORKLOG）**：
-   - 欄位：`日期`、`業務姓名`、`客戶名稱`、`任務摘要`、`詳細內容`、`GPS資訊`、`建立時間`、`記錄ID`、`線上圖片`。
-   - 拜訪客戶定位打卡，支援主管在後台給予評語與點讚批示。
-2. **行駛日誌（DRIVING_LOG）**：
-   - 欄位：`日期`、`業務姓名`、`車牌號碼`、`開始里程`、`結束里程`、`行駛距離`、`今日行程`、`加油公升`、`加油金額`、`備註`、`記錄ID`。
-   - 支援里程表與加油發票拍照上傳。
-3. **保養紀錄（MAINTENANCE）**：
-   - 欄位：`保養日期`、`業務姓名`、`車牌號碼`、`本次里程`、`下次保養里程`、`保養項目`、`保養金額`、`照片`、`備註`、`記錄ID`。
-   - 系統依下次保養里程自動發布預警。
+#### 3.1 `getSalesOverview(forceRefresh)`
+* **檔案來源**：`Sales.js:142`
+* **讀取目標**：`CONFIG.SS_ID_MAIN` $\to$ `經銷銷售報表`，以及 `CONFIG.SS_ID_BUSINESS` $\to$ `業務分區`
+* **業務歸屬判定邏輯**（`Sales.js:130`）：
+  ```javascript
+  function resolveRowOwnerStr_(ss, custRaw, rawSalesColStr) {
+    const ownerMap = getCustomerOwnerMap_(ss);
+    const owner = ownerMap[getCustomerShortName(custRaw)];
+    return owner || rawSalesColStr;
+  }
+  ```
+* **樣品列排除規則**（`Sales.js:329`）：
+  客戶編號符合 `/-S\d*$/`，或客戶名稱含「樣品/代領」，或備註含「樣品/扣帶/代領」，整列排除不計入業績與獎金。
+* **高雅瓷 5 大專屬計算規則**：
+  1. **運費列**：品號含「運費」者，獨立為 `freightDeductionAmount`，不計入銷額。
+  2. **漢樺/波爾泰 1/3 分攤**：客戶名稱含「漢樺」或「波爾泰」者，`weight = 1/3`，業績由謝博皓、潘右森、陳勁多 3 人均分。
+  3. **金友利客戶加倍**：客戶名稱含「金友利」者，業績 $\times 2$。
+  4. **低於同行價六折折半**：若 $\text{成交單價} < \text{同行價} \times 0.60$，金額以 $50\%$ 計算。
+  5. **睡美人加成**：戰情室標記之睡美人品項，加計業績加成獎金。
 
-#### 5.2 考勤打卡與請假報備（高雅瓷專用）
-* **GPS 打卡半徑檢驗**：公司座標 `(25.000486, 121.033914)`，允許打卡半徑 **300 公尺**。超過範圍自動標記「外勤打卡/異常」。
-* **外勤請假報備**：支援線上填寫請假單並上傳證明文件。
+#### 3.2 `getAdminBonusReport_impl_(year, monthIdx, forceRefresh)`
+* **檔案來源**：`Sales.js:80`
+* **核心邏輯**：
+  後台業務獎金精算，計算每位業務的門檻獎金、級距獎金、突破獎金與睡美人獎金。
+
+#### 3.3 `exportBonusRangeToExcel_impl_(year, startMonthIdx, endMonthIdx)`
+* **檔案來源**：`Export_BonusExcel.js:83`
+* **核心邏輯**：
+  1. `_loadBonusContext_(year)`：銷貨表、同行價、睡美人、配送資料**只讀一次**供所有月份共用。
+  2. 呼叫 `_computeAdminBonusReport` 逐月計算。
+  3. 生成文字算式 `_bonusFormulaText_(p)`。
+  4. 在暫存 Google 試算表中套版，透過 `export?format=xlsx` 轉為 Blob 存至 Drive `獎金報表匯出(暫存)` 資料夾，回傳下載網址，排程保留 7 天自動刪除。
 
 ---
 
-### 6. 🚚 業務配送（DELIVERY）
+### 4. 智能報表與外勤車輛管理（`FieldWork.js`）
 
-#### 6.1 任務清單與智慧分流
-* 每日任務與明日預告清單（`getSalesDeliveryTasks`），資料源自「業務配送清單」。
-* **單據類型判定優先順序**：
+#### 4.1 `saveWorkLog(entry)`
+* **檔案來源**：`FieldWork.js:312`
+* **寫入目標**：`FW_CONFIG.SS_ID` $\to$ `智能_工作日誌`
+* **欄位結構**：
+  `["日期", "業務姓名", "客戶名稱", "任務摘要", "詳細內容", "GPS資訊", "建立時間", "記錄ID", "線上圖片"]`
+* **客戶名稱簡稱化**：調用 `fwShortenCustomerForSave_`，特殊值「回公司(永安)」保留原樣。
+
+#### 4.2 `saveDrivingFuelRecord_impl_(payload)`
+* **檔案來源**：`FieldWork.js:420`
+* **寫入目標**：`FW_CONFIG.SS_ID` $\to$ `智能_行駛日誌`
+* **欄位結構**：
+  `["日期", "業務姓名", "車牌號碼", "開始里程", "結束里程", "行駛距離", "今日行程", "加油公升", "加油金額", "備註", "記錄ID"]`
+
+#### 4.3 `saveMaintenanceRecord_impl_(payload)`
+* **檔案來源**：`FieldWork.js:510`
+* **寫入目標**：`FW_CONFIG.SS_ID` $\to$ `智能_保養紀錄`
+* **欄位結構**：
+  `["保養日期", "業務姓名", "車牌號碼", "本次里程", "下次保養里程", "保養項目", "保養金額", "照片", "備註", "記錄ID"]`
+
+#### 4.4 `saveAttendance_impl_(payload)`
+* **檔案來源**：`FieldWork.js:180`
+* **寫入目標**：`FW_CONFIG.SS_ID` $\to$ `智能_打卡紀錄`
+* **打卡中心點**：`lat: 25.00048642501761, lng: 121.03391437844508`，半徑 **300 公尺**。超出半徑狀態標記為「外勤打卡/異常」。
+
+#### 4.5 `getOmniscientLogs_impl_(dateStr)`（全知視角）
+* **檔案來源**：`FieldWork.js:720`
+* **讀取目標**：`智能_工作日誌`、`智能_打卡紀錄`、`智能_行駛日誌`
+* **核心邏輯**：
+  主管專用視角，依目標日期彙總所有業務當天的打卡、日誌、軌跡與車輛里程。
+
+#### 4.6 `getCustomerVisitRanking_impl_(employeeName)` 與 `getCustomerYoyVisitMatrix_impl_`
+* **檔案來源**：`FieldWork.js:380`
+* **核心邏輯**：
+  分析業務在 `智能_工作日誌` 中的到訪頻率排行，以及相較於去年同期（YoY）的到訪次數增減矩陣。
+
+---
+
+### 5. 業務配送模組（`Code_SalesDelivery.js`）
+
+#### 5.1 `getSalesDeliveryTasks(salesName, targetDateStr)`
+* **檔案來源**：`Code_SalesDelivery.js:22`
+* **讀取目標**：`LOGISTICS_SS_ID` $\to$ `業務配送清單` 與 `撿貨明細`
+* **篩選規則**：`派遣司機 === salesName`，且日期符合或當日已完工單據。
+* **單據類型優先序**（`Code_SalesDelivery.js:128`）：
   $$\text{門市/入店} > \text{樣品} > \text{退貨} > \text{送貨}$$
-* 支援 Google Maps 一鍵導航與客戶電話直撥。
 
-#### 6.2 撿貨明細子表映射（`_loadAllPickingItemsMap`）
-* 以單號關聯「撿貨明細」分頁，讀取品號、片數、中文系列，並支援反轉單號模糊比對（如 `123-高` 與 `高-123`）。
+#### 5.2 `completeSalesDeliveryTask(rowIdx, imageData, reportNote, isDamaged)`
+* **檔案來源**：`Code_SalesDelivery.js:331`
+* **寫入目標**：`LOGISTICS_SS_ID` $\to$ `業務配送清單`
+* **執行動作**：
+  1. 上傳照片取得 URL。
+  2. 更新 `狀態` 為 `"已完成"`、`完成時間`、`貨單縮圖`。
+  3. 自動跨模組調用 `saveWorkLog`，同步在 `智能_工作日誌` 寫入完工記錄。
+  4. 發送 LINE 完工通知。
 
-#### 6.3 任務轉派（更換司機）
-* 當業務因行程衝突無法自送時，可線上執行「換人」（`transferSalesDeliveryTask`），將派單轉移給其他業務同仁。
-
-#### 6.4 完工拍照回報與四向聯動
-業務送達拍照回報時（`completeSalesDeliveryTask`），後端自動執行：
-1. **上傳完工照片**至指定目錄（Drive/R2）。
-2. **回寫物流表**：將單據狀態更新為「已完成」、填入「配送完成時間」與縮圖連結。
-3. **自動同步外勤工作日誌**：調用 `saveWorkLog`，在業務個人日誌寫入「配送完工：單號/案名」，確保主管在全知視角直接看到。
-4. **發送 LINE 完工通知**：自動推播業務姓名、客戶、地址、單號、時間與完工照至內部群組。
-
----
-
-### 7. 📑 保留日誌 ＆ 戰情室（RESERVE）
-
-#### 7.1 去峰值月均銷算法（Shaved Monthly Average）
-* 計算過去 12 個月銷售量時，**必須剔除單月最大峰值（重大工程專案爆量）**，再計算月均銷，以杜絕補貨水位失真。
-
-#### 7.2 水位與補貨公式
-$$\text{安全水位} = \text{去峰值月均銷} \times 1.5 \text{ 個月}$$
-$$\text{目標備貨} = \text{去峰值月均銷} \times 3.0 \text{ 個月}$$
-$$\text{補貨建議量} = \max(0, \text{目標備貨} - \text{可用庫存} - \text{在途貨櫃量})$$
-
-#### 7.3 缺貨等級分類演算法（`classifyShortageLevel_`）
-* **一級缺貨（紅色 🔴）**：可用量 $\le 0$，且無在途貨櫃（完全缺貨）。
-* **二級缺貨（橘色 🟠）**：可用量 $\le 0$，但在途貨櫃已出港（有在途量）。
-* **三級缺貨（黃色 🟡）**：可用量 $> 0$，但低於 1.5 個月安全水位。
-
-#### 7.4 入庫推估與 Telegram 單鍵續約
-* **入庫預估**：ETA 到港日 $+ 10$ 個工作日（跳過週六、日）。
-* **30 天帳齡續約**：保留單滿 30 天未出貨，自動推播業務 Telegram，訊息帶單次 Token 快速連結（一鍵展期 14 天或取消保留），發送端開啟 `disable_web_page_preview: true`。
+#### 5.3 `transferSalesDeliveryTask(rowIdx, newSalesName)`
+* **檔案來源**：`Code_SalesDelivery.js:294`
+* **寫入目標**：`LOGISTICS_SS_ID` $\to$ `業務配送清單`
+* **執行動作**：更新 `派遣司機` 欄位為 `newSalesName`。
 
 ---
 
-### 8. 📐 上架追蹤（SHELF TRACKING）
+### 6. 保留系統、缺貨進榜與戰情室（`Reserve_Main.js`、`Reserve_Service.js`、`Code_Customer.js`）
 
-#### 8.1 系列分齡漏斗
-* **全新品（fresh）**：首次進貨日 30 天以內。
-* **新品（new）**：首次進貨日 30 天至 1 年以內。
-* **常態品（normal）**：首次進貨日超過 1 年。
+#### 6.1 `webGetData(action, payload)` 路由器（`Reserve_Main.js:205`）
+* **Actions 清單**：
+  - `log_open`：記錄開啟系統。
+  - `auth_heartbeat`：身分心跳檢測。
+  - `get_audit_logs`：查詢審計日誌。
+  - `get_inventory_history`：品項庫存歷程。
+  - `run_inventory_snapshot`：觸發每日快照。
+  - `get_reserve_data`：完整保留單資料。
+  - `update_progress`：更新保留進度。
+  - `delete_product`：刪除保留單品項。
+  - `get_restock_alerts`：補貨預警列表。
+  - `get_shortage_board`：缺貨公佈欄。
+  - `update_shortage_tracking`：修改缺貨追蹤。
+  - `add_shortage_tracking`：手動新增缺貨追蹤。
+  - `confirm_discontinue`：品項確認不續辦。
+  - `close_shortage_product`：產品完結結案。
+  - `confirm_safe_stock`：確認安全水位。
+  - `generate_restock_order_list`：生成補貨清單。
+  - `run_product_analysis`：執行產品分析。
+  - `get_war_room_data`：戰情室主數據。
+  - `getProductInsight` / `getProductInsightBatch`：品項深入洞察。
+  - `get_probation_entry_dates`：新品試辦入庫日。
+  - `send_war_room_email`：手動寄送戰情室週報。
 
-#### 8.2 上架陳列率與系列標準化
-* 透過編號反查「編號價目表」之標準官方中文系列，消除「尼彩染霞」、「沙漠玫瑰 浮光月影」等非標準名稱。
-* 跨業務統計各新品在各大經銷商的實體陳列率（在架店家數 vs 未上架店家數）。
-* 連動缺貨進榜，品項缺貨時在追蹤面板亮紅標，警示業務暫緩推廣。
+#### 6.2 戰情室演算法（`Reserve_Service.js`）
+* **去峰值月均銷（Shaved Monthly Average）**：計算過去 12 個月出貨，**剔除單月最高峰**後取平均。
+* **安全水位**：$1.5 \times \text{去峰月均銷}$。
+* **目標備貨**：$3.0 \times \text{去峰月均銷}$。
+* **缺貨分級算法（`classifyShortageLevel_`）**：
+  - 一級缺貨（紅）：可用量 $\le 0$ 且無在途貨櫃。
+  - 二級缺貨（橘）：可用量 $\le 0$ 但在途已出港。
+  - 三級缺貨（黃）：可用量 $> 0$ 但低於安全水位。
+* **入庫預估日**：ETA 到港日 $+ 10$ 個工作日（跳過週末）。
 
----
-
-### 9. 📖 電子目錄（E-BOOK）
-
-* **首頁直通**：首頁第 9 格按鈕直通 Ebook 雜誌型錄（`https://bigt.cc/line/ebook.html`）。
-* **品號直達**：庫存查詢卡片點擊「目錄」帶品號開啟（`?s=SKU`）。
-* **客戶端視角（Client View）**：帶入 `&v=1`，隱藏內部庫存數與進價，支援業務一鍵複製客戶專用型錄連結。
-
----
-
-### 10. 🧰 常用工具（TOOLS）
-
-首頁第 10 格點擊彈出抽屜式 BottomSheet（`#tools-menu`），納入 3 大工具：
-1. **到貨明細（INCOMING CARGO）**：
-   - 點擊開啟全螢幕獨立頁面（`#page-incoming-cargo`）。
-   - **Memoization 執行期快取**：`_masterMapMemoryCache_` 確保主檔只解析一次，150 筆在途品項換算 0.2 秒完成。
-   - **全集團共用主快取**（`INCOMING_CARGO_MASTER_v3`，1 小時 TTL）。
-   - **前端 0ms 秒開**：`cargoBranchCache` 客戶端快取，分公司切換無轉圈。
-2. **磁磚百科（TILE SEARCH）**：直通 `https://bigt.cc/web/search/`（文字搜尋、以圖找磚、全球圖庫）。
-3. **請款神器（EXPENSE）**：直通 `https://expense.gyc-apps.workers.dev`。
-
----
-
-### 11. 🚨 頂部跑馬燈與通知系統（MARQUEE）
-
-#### 11.1 缺貨進榜跑馬燈（`getLatestStockoutEntries`）
-* 來源：「缺貨進榜追蹤」分頁。
-* **過濾條件**：
-  - 入榜日期在 **14 天以內**（`ts >= Date.now() - 14 * 86400000`）。
-  - 排除已解除狀態（`已到貨|已解封|解封|恢復|已復原|復原|已結案|已補貨|補貨完成`）。
-* **排序規則**：嚴重度優先（完全缺貨 > 嚴重缺貨 > 快要斷貨 > 即將缺貨）$\to$ 入榜日期新到舊 $\to$ 列號。
-* **顯示格式**：坪數取整數，精簡標籤。如：`10/27 完全缺貨：RN612101F 庫0坪/保0坪`（紅色高亮，前 3 名輪播）。
-
-#### 11.2 版面異動通知
-* 近 7 天內有新增或下架版面時，頂部徽章提示異動數量。
+#### 6.3 `createReservation(payload)`
+* **檔案來源**：`Code_Customer.js:224`
+* **寫入目標**：`RESERVE_SS_ID` $\to$ `保留單`
+* **插入位置**：使用 `sheet.insertRowsBefore(2, newRows.length)`，新單**插在第 2 列**。
 
 ---
 
-### 12. 👁️ 全知視角（GOD VIEW / 主管每日總覽）
+### 7. 上架追蹤模組（`ShelfTracking.js`）
 
-* 主管專屬頁面（`#page-god-view`）。
-* **全體業務出勤狀況**：上班打卡時間、打卡地點、是否遲到。
-* **今日拜訪時間軸**：依時間順序即時串流全體業務填寫的工作日誌與完工配送紀錄。
-* **客戶到訪排行**：近 30 天拜訪次數最多的經銷客戶 Top 排行。
-* **近 5 日動態軌跡**：主管可橫向切換檢視前 5 個工作日的全體外勤記錄。
-
----
-
-### 13. 🔐 身分驗證與白名單權限體系（AUTH & RBAC）
-
-* **帳號中心**：對齊「鈦傳速物流」之「系統白名單」（`1M-Ewy58fQs-QmqzO5nERoXDCm7lm6S_mrrAIR1mUOtA`）。
-* **Token 機制**：30 天 HMAC-SHA256 簽署憑證，常用自動展延。
-* **4 級權限控制**：
-  - `open`：客戶端視角（`view=client`），免登入，敏感財務數據全遮蔽。
-  - `staff`：業務、行政、倉管（一般功能）。
-  - `admin`：主管、行政（可看全知視角）。
-  - `king`：最高主管（機密中心：薪資、金鑰、白名單設定）。
-* **60 秒即時生效**：白名單異動或停用後，雙層快取機制確保全裝置 60 秒內即時失效登出。
+#### 7.1 `getShelfTrackingData(forceRefresh)`
+* **檔案來源**：`ShelfTracking.js:22`
+* **讀取目標**：`CONFIG.SS_ID_MAIN` $\to$ `編號價目表`，以及 `CONFIG.SS_ID_BUSINESS` $\to$ `版面上架清單`
+* **系列分齡規則**：
+  - `fresh` 全新品：首次進貨日 30 天以內。
+  - `new` 新品：首次進貨日 30 天至 1 年以內。
+  - `normal` 常態品：首次進貨日超過 1 年。
+* **系列名稱標準化**：透過品號反查「編號價目表」之標準系列名，修正人工輸入之非標準系列名稱。
 
 ---
 
-## 參、整併至外部版時最容易出錯的「十大地雷」
+### 8. 客戶分析模組（`CustomerAnalysis.js`）
 
-### ⚠️ 地雷 1：Google Drive 縮圖 403 權限崩潰（最大外顯 Bug）
-* **成因**：試算表中原填寫的 Google Drive 連結，若分享權限不是「公開」，外部瀏覽器存取縮圖時會回傳 403 Forbidden。舊程式碼若在 `onerror` 寫 `display: none`，會露出深黑底色，形成難看的「空黑洞」。
-* **解法**：
-  1. 外部版主檔匯入時，最優先匹配 `R2_` 開頭欄位（直接吃 Cloudflare R2 全球 CDN：`pub-98cd476501d5474480c785e41e1eec1d.r2.dev`）。
-  2. 若無圖或破圖，觸發 `isR2Url` / `tileFallbackUrl` 智慧備援，並切換至全寬無圖自適應版面，杜絕黑塊。
+#### 8.1 外部戰情室 API 串接
+* **端點**：`https://bigt.cc/sleeping-beauty/api.php`（Header 帶 `X-App-Token`）
+* **Actions**：`customer-analysis`（快取 30 分）、`customer-timeline`、`customer-warroom`、`customer-sales-breakdown`、`customer-detail`。
 
-### ⚠️ 地雷 2：試算表表頭別名五花八門（對齊失敗）
-* **成因**：高雅瓷叫「單片連結網址」，安帝嘉叫「雲端圖片」，喜悅納叫「雲端圖片連結」，甚至還有「單片照片」、「圖片連結」。
-* **解法**：`fields.ts` 中的別名清單必須保持寬容，並把精確的 `R2_單片1`、`R2_主圖URL` 排在最前。
+#### 8.2 客戶名稱 5 層正規化（`caDisplayCustomerName_`）
+1. ASCII Trim（排除全形空白 `U+3000`）。
+2. 符號剝除 `()（）【】[]「」『』,，.。/／:：`。
+3. 13 家固定合併字典。
+4. 前綴例外字截斷。
+5. 11 個例外保護詞。
+6. 25 個公司後綴迴圈剝除至穩定。
+7. 截取前 4 字。
 
-### ⚠️ 地雷 3：千分位逗號導致數字被截斷（隱蔽數值災難）
-* **成因**：試算表儲存格若被設為貨幣或千分位格式，讀出字串為 `"1,200"`。JavaScript `parseFloat("1,200")` 的結果是 **`1`**（逗號後全部被丟棄）！
-* **解法**：全系統所有數字轉換必須強制：`parseFloat(String(val || 0).replace(/,/g, ''))`。
+#### 8.3 真樣品 vs 門市陳列分流（`caClassifySample_`）
+面積門檻 $6000\text{ cm}^2$。備註含「扣」、或大磚 $>1$ 片、或小磚 $>6$ 片 $\implies$ 門市陳列（`display`）；其餘 $\implies$ 真樣品（`sample`）。
 
-### ⚠️ 地雷 4：在途貨櫃與主檔查詢的 RPC 爆炸（速度慢的主因）
-* **成因**：在遍歷 150 筆貨櫃品項的迴圈中，如果每筆都呼叫一次 Supabase 或 CacheManager 查產品主檔，會產生數百次網路連線，造成頁面轉圈 20 秒以上。
-* **解法**：在函數開頭**一次性將主檔預載為記憶體字典（Map）**，迴圈內僅做 `map[sku]` 記憶體查詢（0.1ms）。
+#### 8.4 拿樣成交中位數追蹤（`caSampleConversion`）
+計算 $\text{Gap} = \text{firstSale} - \text{firstSampleDate}$（排除負值與 $\ge 3$ 年樣本）。有效樣本 $\ge 3$ 筆計算中位數，拿樣未成交且超過中位數者列入優先追蹤清單。
 
-### ⚠️ 地雷 5：多租戶（Tenant）白名單業務混淆
-* **成因**：高雅瓷、安帝嘉、喜悅納各有一份業務白名單，且包含已離職人員。若直接拿銷售報表的所有姓名當業務篩選，會出現離職同仁或打錯的錯字。
-* **解法**：外部版必須讀取各租戶的 `whitelist_sales`，嚴格過濾只有在職同仁能成為篩選標籤。
-
-### ⚠️ 地雷 6：ETA 日期字串排序錯亂
-* **成因**：日期若先被格式化成中文「8月19日(週三)」，拿中文進行文字排序會導致「10月」排在「8月」前面。
-* **解法**：原始資料解析時立即保留 `etaTs`（毫秒時間戳），排序一律以數值 `etaTs` 比對，顯示時才轉中文。
-
-### ⚠️ 地雷 7：多並行上傳造成資料庫列錯位（Race Condition）
-* **成因**：業務一口氣上傳多張照片與版面，若未加鎖，多個請求同時寫入試算表最後一列時會互相覆蓋。
-* **解法**：內部版已用 `LockService.getScriptLock()`；外部版遷入 Supabase 時必須利用 PostgreSQL 的交易（Transaction）或 Row Level Lock，確保品項與主表外鍵關聯完整。
-
-### ⚠️ 地雷 8：睡美人與停產標籤判定不一致
-* **成因**：停產與睡美人定義容易混淆。停產是指「工廠不再生產、清完為止」；睡美人是指「長期庫存高於安全水位且週轉極低」。
-* **解法**：停產看主檔的停產標記；睡美人嚴格看戰情室月均銷與庫存天數比值。
-
-### ⚠️ 地雷 9：業務配送與智慧物流表雙向同步中斷
-* **成因**：外部版如果直接改了派單狀態，但沒有回寫物流 Google Sheet，小姐在物流辦公室看表會以為還沒送達。
-* **解法**：必須保留 `syncDeliveryToSheet` 橋接器，業務端 App 回報時即時透過 Google API 更新物流表狀態。
-
-### ⚠️ 地雷 10：高雅瓷專屬商業規則（不要錯套到安喜）
-* **特別注意**：
-  - 睡美人業績加成、金友利折算、漢樺/波爾泰 1/3 分攤是**高雅瓷特有規則**。
-  - 安帝嘉與喜悅納不需要套用這些折半或提成計算，外部版實作時必須以 `tenant.slug === 'gaoya'` 作為開關保護。
+#### 8.5 `addDisplayNote_impl_(customerName, note, series, photoUrl, salesName)`
+* **檔案來源**：`CustomerAnalysis.js:520`
+* **寫入目標**：`CONFIG.SS_ID_BUSINESS` $\to$ `版面詢問紀錄`
+* **欄位結構**：`["建立時間", "客戶名稱", "版面連結", "系列", "業務姓名", "詢問內容"]`。
 
 ---
 
-## 肆、外部版（ait-layout）整合施工清單
+### 9. 國貿貨櫃與到貨明細（`IncomingCargo.js`）
 
-當您在 `/Users/titankou2002/Projects/ait-layout` 開啟新對話時，直接執行以下任務清單：
+#### 9.1 `getIncomingCargoData(forceRefresh, branchFilter)`
+* **檔案來源**：`IncomingCargo.js:15`
+* **讀取目標**：`13la6Rx4cuLFg0lcbtG-q0YZcq_vBA83l9TcA7T7MNiY` $\to$ `到貨明細(唯讀)`
+* **快取架構**：
+  1. `_masterMapMemoryCache_`：執行期記憶體快取產品主檔。
+  2. `INCOMING_CARGO_MASTER_v3`：全集團貨櫃共用快取（TTL 1 小時）。
+* **單位換算**：
+  $$\text{總片數} = \text{箱數} \times \text{每箱片數}$$
+  $$\text{總坪數} = \text{總片數} \div \text{每坪片數}$$
 
-- [ ] **Task 1: 主頁新增「常用工具」選單（ToolsMenu）**
-  - 參照內部版 `script.html:4361`，在 `HomePage.tsx` 新增第 10 格常用工具。
-  - 納入「到貨明細」頁面（移植 `IncomingCargo.js` 的換算與主快取邏輯）。
-  - 納入磁磚百科與請款神器連結。
-- [ ] **Task 2: 實作「客戶分析（CustomerAnalysis）」**
-  - 在 `src/pages/` 新增 `CustomerAnalysisPage.tsx`，打通 `features.ts: customer_analysis`（改為 `ready: true`）。
-  - 對接戰情室 API（`https://bigt.cc/sleeping-beauty/api.php`）或 Supabase 歷史銷貨視圖。
-  - 實作客戶名稱 5 層正規化（`caDisplayCustomerName_`）。
-  - 實作 8 級健康度分級與呼吸閃爍效果（`blink: true`）。
-  - 實作真樣品 vs 陳列分流、拿樣成交中位數與逾期成交預警。
-  - 實作常銷商品前 10 名（出貨案件歸納）與遺忘產品三色帶矩陣。
-  - 實作「該上版」拓銷推薦矩陣。
-- [ ] **Task 3: 升級庫存查詢穿透功能**
-  - 在 `InventoryPage.tsx` 增加跨分公司庫存檢視按鈕（查看安帝嘉/喜悅納/高雅瓷）。
-  - 點擊可用量彈出保留單明細（被誰保留、哪個工地、到期日）。
-- [ ] **Task 4: 開通高雅瓷租戶（Tenant: `gaoya`）**
-  - 在 Supabase `tenants` 資料表新增高雅瓷設定。
-  - 將高雅瓷編號價目表（`1G5q-...`）匯入 Supabase 商品主檔，圖片全面導向 Cloudflare R2。
+---
+
+### 10. AI 智慧查詢助理（`AIQuery.js`）
+
+#### 10.1 `aiAssistantAsk_impl_(question, deviceId, bypassPassword)`
+* **檔案來源**：`AIQuery.js:89`
+* **頻率防刷限制**：
+  - 單一裝置每分鐘最多 5 次（`AI_RATE_LIMIT_PER_DEVICE_PER_MIN`）。
+  - 全站每分鐘最多 30 次（`AI_RATE_LIMIT_GLOBAL_PER_MIN`）。
+  - 繞過密碼：`0319`。
+* **模型分派**：
+  - 優先讀取 `GEMINI_API_KEY`（使用 `gemini-2.5-flash`，強制 `responseSchema` 結構化輸出）。
+  - 次選讀取 `ANTHROPIC_API_KEY`（使用 `claude-haiku-4-5-20251001`，強制 `tool_use`）。
+* **意圖解析 Domain**：
+  - `reserve` $\to$ 呼叫 `_aiQueryReserve_(item)`：查保留天數、保留坪數、客戶保留。
+  - `sales` $\to$ 呼叫 `_aiQuerySales_(item)`：查近 N 個月銷售金額、品項銷額。
+  - `inventory` $\to$ 呼叫 `_aiQueryInventory_(item)`：查品項可用庫存。
+* **單次結果筆數上限**：80 筆（`AI_RESULT_LIMIT`）。
+
+---
+
+### 11. 人事出缺勤、請假與薪資精算（`Attendance.js`）
+
+#### 11.1 `getAttendanceStaffList_impl_()` / `saveAttendanceStaff_impl_(data)`
+* **檔案來源**：`Attendance.js:62` / `Attendance.js:78`
+* **目標分頁**：`ATT_SHEET_ID` $\to$ `員工資料`
+* **員工 ID 規則**：`EMP` + 3 碼流水號（例如 `EMP001`）。
+
+#### 11.2 `getTodayAttendance_impl_()`
+* **檔案來源**：`Attendance.js:121`
+* **目標分頁**：`打卡紀錄`、`請假紀錄`、`系統設定`
+* **遲到判定**：
+  讀取 `系統設定` 之 `平日遲到門檻`（預設 `09:00`）。打卡時間大於門檻即計算遲到分鐘數。
+
+#### 11.3 `savePunchRecord_impl_(data)`
+* **檔案來源**：`Attendance.js:201`
+* **目標分頁**：`打卡紀錄`
+* **工時與加班計算**：
+  $$\text{工時} = \frac{\text{下班時間(分)} - \text{上班時間(分)}}{60}$$
+  $$\text{加班工時} = \max(0, \text{工時} - 8)$$
+
+#### 11.4 `submitStaffLeave_impl_(data)` / `reviewStaffLeave_impl_(leaveId, status, reviewer)`
+* **檔案來源**：`Attendance.js:310`
+* **目標分頁**：`請假紀錄`
+* **假單 ID 規則**：`L` + `YYYYMM` + 3 碼流水號（例如 `L202610001`）。
+
+#### 11.5 `calculateSalary_impl_(empId, yearMonth)`
+* **檔案來源**：`Attendance.js:520`
+* **計算邏輯**：
+  - 應發金額：$\text{底薪} + \text{全勤獎金}(若無遲到缺勤) + \text{餐費} + \text{電話費} + \text{加班費}$。
+  - 應扣金額：$\text{請假扣款}(\text{事假全扣/病假半扣}) + \text{勞保自付} + \text{健保自付}$。
+
+---
+
+### 12. LINE Bot 出缺勤 Webhook（`LineBot.js`）
+
+#### 12.1 `doPost(e)`
+* **檔案來源**：`LineBot.js:11`
+* **核心邏輯**：
+  1. 立即回傳 HTTP 200。
+  2. 將請求暫存至 `PropertiesService` 之 `LINE_QUEUE`（上限 50 筆）。
+  3. 背景由排程觸發 `processLineBotQueue_impl_` 處理。
+
+#### 12.2 `processLineBotQueue_impl_()`
+* **檔案來源**：`LineBot.js:41`
+* **驗證機制**：使用 `LINE_CHANNEL_SECRET` 執行 HMAC-SHA256 驗證 `X-Line-Signature`。
+* **文字指令對照**：
+  - `#綁定 姓名` $\implies$ 綁定員工 LINE User ID。
+  - `上班` / `上班打卡` $\implies$ 執行 `_handlePunchIn`，檢核 09:00 遲到。
+  - `下班` / `下班打卡` $\implies$ 執行 `_handlePunchOut`，計算工時與加班。
+  - `#請假 假別 開始日期 結束日期` $\implies$ 登記請假。
+  - `出勤查詢` / `特休查詢` $\implies$ 回傳個人考勤與特休剩餘天數。
+
+---
+
+### 13. 保留系統定時排程、通知與快照（`Reserve_Notify.js`、`Reserve_Email.js`、`Reserve_Snapshot.js`、`Reserve_Telegram.js`）
+
+#### 13.1 帳齡通知（`Reserve_Notify.js`）
+* **階段一（30 天）**：跟進提醒（Email + Telegram 私訊業務）。
+* **階段二（45 天）**：未更新警告（Email 業務 + 主管，Telegram 群組 Tag）。
+* **階段三（60 天）**：逾期待處理（Email 給主管，人工評估刪除）。
+* **額滿告警**：保留量達庫存 80%（`RESERVE_FULL_RATIO = 0.8`）即發出緊急通知。
+
+#### 13.2 保留週報（`Reserve_Email.js`）
+* 每週一 09:00 自動觸發 `sendWeeklyReserveEmail`。業務只收個人名下保留清單，主管收全公司彙總清單。
+
+#### 13.3 庫存每日快照（`Reserve_Snapshot.js`）
+* 每天凌晨 03:30 觸發 `recordDailyInventorySnapshot`。
+* `庫存快照_最新`：覆寫最新各品項庫存與保留。
+* `庫存每日快照`：**僅在品項數值有變動（Delta）時新增一列**，極致節省試算表儲存空間。
+
+#### 13.4 Telegram 推播（`Reserve_Telegram.js`）
+* 發送時強制設定 `disable_web_page_preview: true`，防範 Telegram 爬蟲預覽網址時將單次續保/取消 Nonce Token 提前消耗。
+
+---
+
+### 14. 身分驗證、白名單與金鑰體系（`Auth.js`、`AitGuard.js`、`Code.js`）
+
+#### 14.1 4 級 RBAC 權限體系
+* `open`：免登入（客戶查詢庫存、產品圖庫）。
+* `staff`：業務同仁（報表、配送、日誌、打卡、保留單）。
+* `admin`：主管（全知視角、各業務日報彙整）。
+* `king`：最高權限（機密中心、薪資計算、獎金設定、員工管理）。
+
+#### 14.2 直達金鑰與白名單管理（`Code.js`）
+* `getSalesDirectKey` / `verifySalesKey_impl_`：業務免密碼直達連結金鑰。
+* `getClientDirectKey` / `verifyClientDirectAccess_impl_`：客戶白名單專屬金鑰。
+* `syncToLogisticsWhitelist_`：白名單異動時同步回寫物流系統白名單。
+
+---
+
+## 參、Google Sheets ↔ Supabase 雙向同步核心規則
+
+在非 GAS 環境中，Google Sheets 是後勤人員的手動維護介面，Supabase 是前端高速讀寫資料庫，兩者必須維持雙向即時一致：
+
+### 1. 寫回 Google Sheets 規則
+* **廢除實體列號（Row Index）相依**：所有寫回修改（如更新配送狀態、下架版面、更新保留進度）必須使用**業務單號（Order ID）或客戶名稱 + SKU** 動態比對尋列，嚴禁使用靜態行號。
+* **字串標準化清洗**：寫入前強制進行全域 Unicode NFKC 正規化，剝除零寬空格（`\u200B`）與前後多餘空白。
+* **未稅金額防線**：業績與獎金計算一律以試算表之「未稅金額」為基準。
+
+### 2. 試算表異動同步回 Supabase
+* 透過 Google Drive / Sheets Webhook 或定時輪詢（Polling Cron），讀取最後修改時間，增量將試算表變更同步回 Supabase。
+
+---
+
+## 肆、非 GAS 技術架構對照表（GAS API $\to$ Cloudflare / Supabase）
+
+| GAS 原有元件 | 非 GAS 對照實作方案 |
+|---|---|
+| `SpreadsheetApp.openById().getSheetByName()` | Google Sheets API v4 (`spreadsheets.values.get` / `batchUpdate`) 或直接查 Supabase DB |
+| `sheet.insertSheet(name)` (自體建表) | 呼叫 Sheets API `AddSheetRequest` 並注入壹.2 節之表頭欄位 |
+| `CacheManager.getLarge()` / `putLarge()` | Cloudflare KV、Upstash Redis、或 Supabase 記憶體快取 |
+| `LockService.getScriptLock()` | PostgreSQL Row-Level Lock (`SELECT ... FOR UPDATE`) 或 Redis Redlock |
+| `Utilities.formatDate()` | `date-fns-tz` 或 `dayjs`，時區固定 `'Asia/Taipei'` |
+| `UrlFetchApp.fetch()` | 標準 Node.js / Fetch API |
+| `PropertiesService.getScriptProperties()` | Cloudflare Environment Variables / Supabase Secrets |
+| `MailApp.sendEmail()` | Resend、SendGrid、或 Cloudflare Email Workers |
+| `ScriptApp.newTrigger()` | Cloudflare Cron Triggers 或 Supabase `pg_cron` / GitHub Actions |
