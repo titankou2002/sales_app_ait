@@ -2313,6 +2313,116 @@
       setTimeout(function () { if (!adminGodCache[s]) adminGodFetch(s); }, 600 + k * 500);
     });
   }
+  // 📅 計算基準日期的前一個工作日（週一退至上週五，週日退至上週五，週六退至上週五，其餘退前一天）
+  function fwGetPrevWorkDay(baseDateStr) {
+    const d = baseDateStr ? fwParseDate(baseDateStr) : new Date();
+    const day = d.getDay();
+    let shiftDays = 1;
+    if (day === 1) shiftDays = 3;      // 週一 -> 上週五
+    else if (day === 0) shiftDays = 2; // 週日 -> 上週五
+    else if (day === 6) shiftDays = 1; // 週六 -> 上週五
+    else shiftDays = 1;                // 週二 ~ 週五 -> 前一天
+    const prev = new Date(d);
+    prev.setDate(d.getDate() - shiftDays);
+    return adminGodFmt(prev);
+  }
+
+  // 🏷️ 集中顯示任務分類與樣式
+  var FW_TASK_CONDENSE_MAP_ = [
+    { key: '送樣', match: ['樣', '送樣品', '樣品'], color: '#f87171', bg: 'rgba(248,113,113,0.15)' },
+    { key: '放帳單', match: ['帳', '款', '送帳單', '放帳單', '對帳', '收款'], color: '#60a5fa', bg: 'rgba(96,165,250,0.15)' },
+    { key: '送貨', match: ['送貨', '入店', '送貨入店', '配送'], color: '#4ade80', bg: 'rgba(74,222,128,0.15)' },
+    { key: '上架', match: ['版面上架', '上架'], color: '#a78bfa', bg: 'rgba(167,139,250,0.15)' },
+    { key: '下架', match: ['版面下架', '下架'], color: '#fb923c', bg: 'rgba(251,146,60,0.15)' },
+    { key: '巡視', match: ['版面巡視', '巡視', '巡'], color: '#2dd4bf', bg: 'rgba(45,212,191,0.15)' },
+    { key: '版面更新', match: ['版面更新', '業務更新', '更新版面'], color: '#c084fc', bg: 'rgba(192,132,252,0.15)' },
+    { key: '退貨', match: ['退貨', '收退', '入店退貨'], color: '#facc15', bg: 'rgba(250,204,21,0.15)' },
+    { key: '聊天', match: ['聊天', '拜訪', '客情', '吃飯', '下午茶'], color: '#e879f9', bg: 'rgba(232,121,249,0.15)' }
+  ];
+
+  function fwShortCustName(name) {
+    if (!name) return '';
+    let s = String(name).trim();
+    s = s.replace(/\s*[（\(].*?[）\)]/g, '').trim();
+    return s || String(name).trim();
+  }
+
+  function fwClassifyTaskLabel_(summary) {
+    const s = String(summary || '').trim();
+    if (!s) return { key: '拜訪', color: '#facc15', bg: 'rgba(250,204,21,0.15)' };
+    for (let i = 0; i < FW_TASK_CONDENSE_MAP_.length; i++) {
+      const item = FW_TASK_CONDENSE_MAP_[i];
+      for (let k = 0; k < item.match.length; k++) {
+        if (s.includes(item.match[k])) return item;
+      }
+    }
+    return { key: s.slice(0, 4) || '任務', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
+  }
+
+  // 🚀 純任務集中顯示演算法：將「同任務」客戶聚合在一行（例如：送樣 三能、統信 / 放帳單 百磚、大永），大幅降低行數
+  function renderCondensedVisitsHtml(logs) {
+    if (!logs || !logs.length) return '<div style="opacity:0.25; font-size:12px; padding:3px 0;">無拜訪紀錄</div>';
+
+    const cleanLogs = groupVisitsForDisplay(logs);
+    const groupMap = {}; // taskKey -> { info, pureCusts: [], detailLogs: [] }
+    const orderList = [];
+
+    cleanLogs.forEach(v => {
+      const custName = fwShortCustName(v.customer) || v.customer;
+      const taskInfo = fwClassifyTaskLabel_(v.summary);
+      const tKey = taskInfo.key;
+
+      if (!groupMap[tKey]) {
+        groupMap[tKey] = { info: taskInfo, pureCusts: [], detailLogs: [] };
+        orderList.push(tKey);
+      }
+
+      const d = String(v.detail || '').trim();
+      if (d && d.length > 2) {
+        groupMap[tKey].detailLogs.push({ customer: custName, detail: d, time: v.time });
+      } else {
+        if (!groupMap[tKey].pureCusts.includes(custName)) {
+          groupMap[tKey].pureCusts.push(custName);
+        }
+      }
+    });
+
+    let html = '<div style="display:flex; flex-direction:column; gap:6px;">';
+    orderList.forEach(tKey => {
+      const grp = groupMap[tKey];
+      // 純任務集中單行顯示
+      if (grp.pureCusts.length > 0) {
+        html += `
+          <div style="display:flex; align-items:baseline; gap:8px; font-size:13px; line-height:1.5;">
+            <span style="font-size:11px; font-weight:900; color:${grp.info.color}; background:${grp.info.bg}; border-radius:6px; padding:2px 7px; flex-shrink:0;">${tKey}</span>
+            <span style="color:#f1f5f9; font-weight:700;">${grp.pureCusts.join('、')}</span>
+          </div>
+        `;
+      }
+      // 具體個別詳細備註紀錄
+      grp.detailLogs.forEach(dl => {
+        html += `
+          <div style="font-size:12.5px; line-height:1.4; padding-left:2px;">
+            <span style="font-size:11px; font-weight:800; color:${grp.info.color}; background:${grp.info.bg}; border-radius:6px; padding:2px 6px; margin-right:6px;">${tKey}</span>
+            <b style="color:#fff;">${dl.customer}</b>
+            <span style="color:rgba(255,255,255,0.45); font-size:11.5px; margin-left:6px;">${dl.detail}</span>
+          </div>
+        `;
+      });
+    });
+    html += '</div>';
+    return html;
+  }
+
+  window.toggleAdminGodRecent = function(boxId, arrowId) {
+    const el = document.getElementById(boxId);
+    const arrow = document.getElementById(arrowId);
+    if (!el) return;
+    const isHidden = (el.style.display === 'none' || !el.style.display);
+    el.style.display = isHidden ? 'flex' : 'none';
+    if (arrow) arrow.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+  };
+
   window.adminGodShiftDay = function (n) {
     const el = document.getElementById('admin-god-date');
     const cur = (el && el.value) || adminGodCurrent;
@@ -2327,8 +2437,8 @@
 
     const dateEl = document.getElementById('admin-god-date');
     const now = new Date();
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const targetDate = selectedDate || adminGodFmt(yesterday);
+    // 預設為「前一工作日」
+    const targetDate = selectedDate || fwGetPrevWorkDay();
     adminGodCurrent = targetDate;
     if (dateEl) dateEl.value = targetDate;
     const wd = document.getElementById('admin-god-wd'); if (wd) wd.textContent = adminGodWd(targetDate);
@@ -2340,7 +2450,9 @@
     const staleMs = isToday ? 60000 : 5 * 60000;          // 今天 1 分鐘、過去日期 5 分鐘內視為新鮮
 
     if (cached) {
-      renderAdminGodView(cached.data);                     // 秒開
+      try {
+        renderAdminGodView(cached.data);                     // 秒開
+      } catch (e) { console.warn("Cached render error:", e); }
       adminGodPrefetch(targetDate);
       if (Date.now() - cached.ts < staleMs) return;        // 還新鮮，不用再問伺服器
       if (spin) spin.style.display = 'inline-block';       // 背景更新
@@ -2353,8 +2465,15 @@
       if (spin) spin.style.display = 'none';
       if (adminGodCurrent !== targetDate) return;          // 已切到別天，丟棄
       if (res && res.success) {
-        if (dateEl && res.chosenDate && !selectedDate) dateEl.value = res.chosenDate;
-        renderAdminGodView(res.data);
+        // 嚴格以 targetDate 為準，絕不被伺服器舊快取蓋成別天
+        if (dateEl) dateEl.value = targetDate;
+        if (wd) wd.textContent = adminGodWd(targetDate);
+        try {
+          renderAdminGodView(res.data);
+        } catch (renderErr) {
+          console.error("renderAdminGodView error:", renderErr);
+          if (content) content.innerHTML = `<div style="text-align:center; padding:30px; color:#f87171;">渲染日誌發生問題：${renderErr.message}</div>`;
+        }
         adminGodPrefetch(targetDate);
       } else if (!cached) {
         showToast(res ? ("抓取資料失敗：" + res.msg) : "系統連線異常，請重試", "error");
@@ -2371,28 +2490,21 @@
     }
 
     // 📐 響應式排版：畫面夠寬（平板/桌機）時三欄並排一次看三人，手機窄螢幕自動退回單欄堆疊
-    // 📐 響應式排版：畫面夠寬（平板/桌機）時三欄並排一次看三人，手機窄螢幕自動退回單欄堆疊
     let html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:15px; padding:10px 15px 15px;">';
     reports.forEach(r => {
-      // 🚀 極簡化介面：同客戶連續版面更換/異動自動歸戶合併，避免洗版
+      // 🚀 當日拜訪紀錄：採用純任務集中顯示，大幅降低行數
       let visitsHtml = '';
       if (r.visits && r.visits.length > 0) {
-        const groupedVisits = groupVisitsForDisplay(r.visits);
-        visitsHtml = groupedVisits.map(v => `
-        <div style="display:flex; gap:12px; margin-bottom:8px; background:rgba(0,0,0,0.15); padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,0.03);">
-          <div style="color:#facc15; font-family:monospace; font-weight:900; font-size:14px; min-width:45px;">${v.time}</div>
-          <div style="flex:1;">
-            <div style="color:#fff; font-weight:700; font-size:15px; margin-bottom:2px;">${v.customer}</div>
-            <div style="color:rgba(255,255,255,0.7); font-size:13px;">${v.summary}</div>
-            ${v.detail ? `<div style="color:rgba(255,255,255,0.4); font-size:11px; margin-top:4px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:4px;">${v.detail.replace(/\n/g, '<br>')}</div>` : ''}
+        visitsHtml = `
+          <div style="background:rgba(0,0,0,0.18); padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.03);">
+            ${renderCondensedVisitsHtml(r.visits)}
           </div>
-        </div>
-      `).join('');
+        `;
       } else {
-        visitsHtml = '<div style="text-align:center; padding:25px; opacity:0.25; font-size:13px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">尚無拜訪紀錄</div>';
+        visitsHtml = '<div style="text-align:center; padding:18px; opacity:0.25; font-size:13px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">尚無拜訪紀錄</div>';
       }
 
-      // 🖥️ 下半部：電腦指派行程（按日期分組：今天 8/5 排最上面，昨天 8/4 排下面）
+      // 🖥️ 下半部：電腦指派行程（按日期分組）
       const fwTaskColors = { '送貨': '#4ade80', '樣品': '#facc15', '入店': '#60a5fa', '退貨': '#f87171' };
       let assignedHtml = '';
       if (r.assignedTasks && r.assignedTasks.length > 0) {
@@ -2432,9 +2544,9 @@
           const itemsHtml = dateGroups[dKey].map(t => {
             const tColor = fwTaskColors[t.shippingType] || '#c084fc';
             return `
-            <div style="display:flex; gap:10px; align-items:center; margin-bottom:6px; background:rgba(0,0,0,0.15); padding:9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.03);">
-              <span style="font-size:11px; font-weight:800; color:${tColor}; min-width:34px;">${t.shippingType}</span>
-              <span style="flex:1; color:#fff; font-size:13px;">${t.customer}${t.address ? `<span style="color:rgba(255,255,255,0.35); font-size:11px;"> ${t.address}</span>` : ''}</span>
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:5px; background:rgba(0,0,0,0.15); padding:7px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03);">
+              <span style="font-size:11px; font-weight:800; color:${tColor}; min-width:32px;">${t.shippingType}</span>
+              <span style="flex:1; color:#fff; font-size:12.5px;">${t.customer}${t.address ? `<span style="color:rgba(255,255,255,0.35); font-size:11px;"> ${t.address}</span>` : ''}</span>
               <span style="font-size:11px; font-weight:700; color:${t.isFinished ? '#4ade80' : 'rgba(255,255,255,0.4)'};">${t.status}</span>
             </div>
           `;
@@ -2442,27 +2554,60 @@
 
           return `
             <div style="margin-top:6px;">
-              <div style="font-size:11px; font-weight:800; color:${headerColor}; margin-bottom:6px; opacity:0.9;">${headerTitle}</div>
+              <div style="font-size:11px; font-weight:800; color:${headerColor}; margin-bottom:5px; opacity:0.9;">${headerTitle}</div>
               <div>${itemsHtml}</div>
             </div>
           `;
         }).join('');
       } else {
-        assignedHtml = '<div style="margin-top:6px;"><div style="font-size:11px; font-weight:800; color:#c084fc; margin-bottom:6px; opacity:0.8;">🖥 今日行程（電腦指派）</div><div style="text-align:center; padding:14px; opacity:0.2; font-size:12px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:12px;">無電腦指派任務</div></div>';
+        assignedHtml = '<div style="margin-top:6px;"><div style="font-size:11px; font-weight:800; color:#c084fc; margin-bottom:4px; opacity:0.8;">🖥 今日行程（電腦指派）</div><div style="text-align:center; padding:10px; opacity:0.2; font-size:11.5px; background:rgba(0,0,0,0.1); border:1px dashed rgba(255,255,255,0.05); border-radius:10px;">無電腦指派任務</div></div>';
+      }
+
+      // 📜 近 5 日拜訪紀錄（預設收折，純任務集中顯示）
+      let recent5Html = '';
+      const r5 = r.recent5Days || [];
+      if (r5.length > 0) {
+        const totalRecentCusts = r5.reduce((sum, item) => sum + (item.count || 0), 0);
+        const boxId = `admin-god-recent-${r.employeeName.replace(/\s/g, '')}`;
+        const arrowId = `admin-god-arrow-${r.employeeName.replace(/\s/g, '')}`;
+        recent5Html = `
+          <div style="margin-top:12px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.08);">
+            <div onclick="toggleAdminGodRecent('${boxId}', '${arrowId}')"
+                 style="display:flex; align-items:center; justify-content:space-between; cursor:pointer; padding:6px 10px; border-radius:8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);">
+              <div style="display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:800; color:#cbd5e1;">
+                <span>📜 近 5 日紀錄</span>
+                <span style="font-size:11px; color:#facc15; background:rgba(250,204,21,0.12); padding:1px 6px; border-radius:8px;">${r5.length} 天・共 ${totalRecentCusts} 家</span>
+              </div>
+              <div id="${arrowId}" style="opacity:0.5; font-size:12px; transition:transform 0.2s;">▾</div>
+            </div>
+            <div id="${boxId}" style="display:none; margin-top:8px; flex-direction:column; gap:6px;">
+              ${r5.map(dayItem => `
+                <div style="background:rgba(0,0,0,0.22); border:1px solid rgba(255,255,255,0.04); border-radius:10px; padding:8px 10px;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:5px;">
+                    <span style="font-size:12px; font-weight:900; color:#facc15;">${dayItem.dateDisplay || dayItem.date}</span>
+                    <span style="font-size:11px; color:rgba(255,255,255,0.35);">${dayItem.count} 家</span>
+                  </div>
+                  ${renderCondensedVisitsHtml(dayItem.logs)}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
       }
 
       html += `
-      <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:16px; padding:16px; box-shadow:0 4px 12px rgba(0,0,0,0.2); min-width:0;">
-        <div style="margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05);">
+      <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:16px; padding:15px; box-shadow:0 4px 12px rgba(0,0,0,0.2); min-width:0;">
+        <div style="margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:space-between;">
           <span style="font-size:17px; font-weight:800; color:#fff;">${r.employeeName}</span>
-          <span style="float:right; font-size:12px; font-weight:600; background:${r.visitCount > 0 ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)'}; color:${r.visitCount > 0 ? '#4ade80' : '#888'}; padding:3px 8px; border-radius:6px;">${r.visitCount} 家</span>
+          <span style="font-size:12px; font-weight:700; background:${r.visitCount > 0 ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)'}; color:${r.visitCount > 0 ? '#4ade80' : '#888'}; padding:3px 9px; border-radius:6px;">${r.visitCount} 家</span>
         </div>
-        <div class="admin-visit-list" style="max-height:70vh; overflow-y:auto;">
+        <div class="admin-visit-list">
           ${visitsHtml}
         </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.08);">
+        <div style="margin-top:10px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.08);">
           ${assignedHtml}
         </div>
+        ${recent5Html}
       </div>
     `;
     });
@@ -2867,10 +3012,8 @@
     const container = document.getElementById('fw-omni-container');
     const dateInput = document.getElementById('fw-omni-date');
 
-    const now = new Date();
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const yStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
-    const targetDate = dateStr || yStr;
+    // 預設為「前一工作日」
+    const targetDate = dateStr || fwGetPrevWorkDay();
 
     if (dateInput) dateInput.value = targetDate;
 
