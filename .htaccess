@@ -1,0 +1,30 @@
+# 禁止瀏覽器與手機主畫面 App 快取入口 HTML，確保即時生效
+<FilesMatch "\.(html|htm)$">
+  Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+  Header set Pragma "no-cache"
+  Header set Expires "0"
+</FilesMatch>
+
+RewriteEngine On
+
+# 業務開啟 bigt.cc/ait/inventory.html（排除 ?old=1 與外部客戶查詢連結）直接 302 導向新版
+RewriteCond %{QUERY_STRING} !(^|&)old=1(&|$) [NC]
+RewriteCond %{QUERY_STRING} !view=client [NC]
+RewriteCond %{QUERY_STRING} !customer [NC]
+RewriteCond %{QUERY_STRING} !clientName [NC]
+RewriteCond %{QUERY_STRING} (^|&)view=reserve(&|$) [NC,OR]
+RewriteCond %{QUERY_STRING} (^|&)rsv= [NC]
+RewriteRule ^inventory\.html$ https://bigt.cc/layout/elitile/reserve [R=302,L]
+
+RewriteCond %{QUERY_STRING} !(^|&)old=1(&|$) [NC]
+RewriteCond %{QUERY_STRING} !view=client [NC]
+RewriteCond %{QUERY_STRING} !customer [NC]
+RewriteCond %{QUERY_STRING} !clientName [NC]
+RewriteCond %{QUERY_STRING} (^|&)view=inventory(&|$) [NC]
+RewriteRule ^inventory\.html$ https://bigt.cc/layout/elitile/inventory [R=302,L]
+
+RewriteCond %{QUERY_STRING} !(^|&)old=1(&|$) [NC]
+RewriteCond %{QUERY_STRING} !view=client [NC]
+RewriteCond %{QUERY_STRING} !customer [NC]
+RewriteCond %{QUERY_STRING} !clientName [NC]
+RewriteRule ^inventory\.html$ https://bigt.cc/layout/elitile/ [R=302,L]
