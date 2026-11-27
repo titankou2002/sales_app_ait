@@ -4,6 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
+  <!-- 🚀 2026-11-27 無感切換至新版高雅瓷業務系統（保留 ?old=1 逃生門與外部客戶查詢不變） -->
+  <script>
+    (function () {
+      const qs = new URLSearchParams(window.location.search);
+      const q = window.location.search;
+      const isOld = qs.get('old') === '1';
+      const isClient = q.includes('view=client') || q.includes('customer') || q.includes('clientName');
+      if (!isOld && !isClient) {
+        const view = (qs.get('view') || '').toLowerCase();
+        let target = 'https://bigt.cc/layout/elitile/';
+        if (view === 'reserve') target = 'https://bigt.cc/layout/elitile/reserve';
+        else if (view === 'inventory') target = 'https://bigt.cc/layout/elitile/inventory';
+        window.location.replace(target);
+      }
+    })();
+  </script>
+
   <script>
     const currentQuery = window.location.search;
     const isClient = currentQuery.includes("view=client") || currentQuery.includes("customer") || currentQuery.includes("clientName");
